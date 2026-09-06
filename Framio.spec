@@ -15,10 +15,10 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=extra_binaries,
-    datas=[],
+    datas=[('icon.ico', '.'), ('icon.png', '.')],
     hiddenimports=[
         'requests', 'cv2', 'numpy', 'PIL', 'imageio', 'imageio_ffmpeg',
-        'PyQt6.QtSvg', 'pyaudiowpatch', '_portaudiowpatch', 'keyboard'
+        'PyQt6.QtSvg', 'pyaudiowpatch', '_portaudiowpatch', 'keyboard', 'mss'
     ],
     hookspath=[],
     hooksconfig={},
