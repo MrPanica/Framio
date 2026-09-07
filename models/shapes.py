@@ -12,7 +12,8 @@ import copy
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QBrush, QFont, QFontMetrics, QPolygonF,
-    QPainterPath, QPixmap, QImage, QPainterPathStroker, QLinearGradient
+    QPainterPath, QPixmap, QImage, QPainterPathStroker, QLinearGradient,
+    QTransform
 )
 from utils.i18n import tr
 
@@ -79,13 +80,18 @@ def get_filtered_pixmap(source_pixmap: QPixmap, filter_type: str, intensity: int
         try:
             from utils.image_filters import apply_filter
             import numpy as np
-            qimg = source_pixmap.toImage().convertToFormat(QImage.Format.Format_BGR888)
+            qimg = source_pixmap.toImage().convertToFormat(QImage.Format.Format_RGB32)
             w, h = qimg.width(), qimg.height()
+            bpl = qimg.bytesPerLine()
             ptr = qimg.bits()
-            ptr.setsize(h * qimg.bytesPerLine())
-            arr = np.frombuffer(ptr, np.uint8).reshape((h, qimg.bytesPerLine() // 3, 3))[:, :w, :]
-            res = apply_filter(arr.copy(), ft)
-            res_img = QImage(res.data, w, h, res.strides[0], QImage.Format.Format_BGR888)
+            ptr.setsize(h * bpl)
+            arr_bgra = np.frombuffer(ptr, np.uint8).reshape((h, bpl // 4, 4))[:, :w, :]
+            arr_bgr = arr_bgra[:, :, :3]
+            res_bgr = apply_filter(arr_bgr.copy(), ft)
+            res_bgra = np.empty((h, w, 4), dtype=np.uint8)
+            res_bgra[:, :, :3] = res_bgr
+            res_bgra[:, :, 3] = 255
+            res_img = QImage(res_bgra.data, w, h, res_bgra.strides[0], QImage.Format.Format_RGB32).copy()
             return QPixmap.fromImage(res_img)
         except Exception:
             return source_pixmap
@@ -97,7 +103,7 @@ class BaseShape:
         self.color = color
         self.stroke_width = stroke_width
         self.visible = True
-        self.name = "Фигура"
+        self.name = tr("obj_shape", "Фигура")
         self.is_gradient = False
         self.gradient_color1 = color
         self.gradient_color2 = "#00C0FF"
@@ -183,7 +189,7 @@ class PenShape(BaseShape):
         self.points = []
         self.is_highlighter = is_highlighter
         self.alpha = max(10, min(255, alpha))
-        self.name = "Маркер" if is_highlighter else "Карандаш"
+        self.name = tr("obj_highlighter", "Маркер") if is_highlighter else tr("obj_pen", "Карандаш")
 
     def add_point(self, pt: QPointF):
         if not self.points:
@@ -298,7 +304,7 @@ class LineShape(BaseShape):
         self.p1 = p1
         self.p2 = p2
         self.line_style = line_style  # "solid", "dashed", "dotted"
-        self.name = "Линия"
+        self.name = tr("obj_line", "Линия")
 
     def hit_test(self, pt: QPointF, tolerance: float = 6.0) -> bool:
         if not self.visible:
@@ -378,7 +384,7 @@ class ArrowShape(BaseShape):
         self.p2 = p2
         self.arrow_style = arrow_style  # "classic", "barbed", "double", "stealth", "dashed"
         self.filled = filled
-        self.name = "Стрелка"
+        self.name = tr("obj_arrow", "Стрелка")
 
     def hit_test(self, pt: QPointF, tolerance: float = 6.0) -> bool:
         if not self.visible:
@@ -529,7 +535,7 @@ class RectangleShape(BaseShape):
         self.gradient_color1 = gradient_color1 or color
         self.gradient_color2 = gradient_color2
         self.is_rounded = is_rounded
-        self.name = "Залитый прямоугольник" if filled else "Прямоугольник"
+        self.name = tr("obj_filled_rect", "Залитый прямоугольник") if filled else tr("obj_rect", "Прямоугольник")
 
     def hit_test(self, pt: QPointF, tolerance: float = 6.0) -> bool:
         if not self.visible:
@@ -572,49 +578,65 @@ class RectangleShape(BaseShape):
     def draw(self, painter: QPainter, offset: QPointF = QPointF(0, 0), source_pixmap: QPixmap = None):
         if not self.visible:
             return
-        painter.save()
-        rot = getattr(self, "rotation", 0.0)
-        if rot != 0.0:
-            c = self.get_bounding_rect().center() - offset
-            painter.translate(c)
-            painter.rotate(rot)
-            painter.translate(-c)
         r = self.rect.translated(-offset.x(), -offset.y()).normalized()
+        rot = getattr(self, "rotation", 0.0)
 
         if (self.is_mosaic or self.is_blur) and source_pixmap is not None:
             px_size = getattr(self, "pixel_size", 8)
             blur_rad = getattr(self, "blur_radius", 15)
             censor_pix = get_pixelated_pixmap(source_pixmap, px_size) if self.is_mosaic else get_blurred_pixmap(source_pixmap, blur_rad)
-            clip_path = QPainterPath()
-            if self.is_rounded:
-                clip_path.addRoundedRect(r, 6, 6)
-            else:
-                clip_path.addRect(r)
-
             if censor_pix is not None:
+                clip_path = QPainterPath()
+                if rot != 0.0:
+                    c = r.center()
+                    t = QTransform()
+                    t.translate(c.x(), c.y())
+                    t.rotate(rot)
+                    t.translate(-c.x(), -c.y())
+                    local_p = QPainterPath()
+                    if self.is_rounded:
+                        local_p.addRoundedRect(r, 6, 6)
+                    else:
+                        local_p.addRect(r)
+                    clip_path = t.map(local_p)
+                else:
+                    if self.is_rounded:
+                        clip_path.addRoundedRect(r, 6, 6)
+                    else:
+                        clip_path.addRect(r)
+
+                painter.save()
                 painter.setClipPath(clip_path)
                 painter.drawPixmap(-int(offset.x()), -int(offset.y()), censor_pix)
-                painter.setClipping(False)
+                painter.restore()
+                return
+
+        painter.save()
+        if rot != 0.0:
+            c = self.get_bounding_rect().center() - offset
+            painter.translate(c)
+            painter.rotate(rot)
+            painter.translate(-c)
+
+        if self.is_mosaic:
+            pen = QPen(QColor(56, 189, 248, 180), self.stroke_width, Qt.PenStyle.DashLine, Qt.PenCapStyle.SquareCap, Qt.PenJoinStyle.MiterJoin)
+            painter.setPen(pen)
+            painter.setBrush(QColor(15, 23, 42, 120))
+        elif self.is_blur:
+            pen = QPen(QColor(147, 197, 253, 180), self.stroke_width, Qt.PenStyle.DashLine, Qt.PenCapStyle.SquareCap, Qt.PenJoinStyle.MiterJoin)
+            painter.setPen(pen)
+            painter.setBrush(QColor(30, 41, 59, 120))
         else:
-            if self.is_mosaic:
-                pen = QPen(QColor(56, 189, 248, 180), self.stroke_width, Qt.PenStyle.DashLine, Qt.PenCapStyle.SquareCap, Qt.PenJoinStyle.MiterJoin)
-                painter.setPen(pen)
-                painter.setBrush(QColor(15, 23, 42, 120))
-            elif self.is_blur:
-                pen = QPen(QColor(147, 197, 253, 180), self.stroke_width, Qt.PenStyle.DashLine, Qt.PenCapStyle.SquareCap, Qt.PenJoinStyle.MiterJoin)
-                painter.setPen(pen)
-                painter.setBrush(QColor(30, 41, 59, 120))
+            pen = QPen(QColor(self.color), self.stroke_width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.SquareCap, Qt.PenJoinStyle.MiterJoin)
+            painter.setPen(pen)
+            if self.filled:
+                painter.setBrush(self.get_fill_brush(r))
             else:
-                pen = QPen(QColor(self.color), self.stroke_width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.SquareCap, Qt.PenJoinStyle.MiterJoin)
-                painter.setPen(pen)
-                if self.filled:
-                    painter.setBrush(self.get_fill_brush(r))
-                else:
-                    painter.setBrush(Qt.BrushStyle.NoBrush)
-            if self.is_rounded:
-                painter.drawRoundedRect(r, 6, 6)
-            else:
-                painter.drawRect(r)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+        if self.is_rounded:
+            painter.drawRoundedRect(r, 6, 6)
+        else:
+            painter.drawRect(r)
 
         painter.restore()
 
@@ -629,7 +651,7 @@ class CircleShape(BaseShape):
         self.is_gradient = is_gradient
         self.gradient_color1 = gradient_color1 or color
         self.gradient_color2 = gradient_color2
-        self.name = "Залитый круг" if filled else "Круг / Овал"
+        self.name = tr("obj_filled_circle", "Залитый круг") if filled else tr("obj_circle", "Круг / Овал")
 
     def hit_test(self, pt: QPointF, tolerance: float = 6.0) -> bool:
         if not self.visible:
@@ -673,43 +695,56 @@ class CircleShape(BaseShape):
     def draw(self, painter: QPainter, offset: QPointF = QPointF(0, 0), source_pixmap: QPixmap = None):
         if not self.visible:
             return
-        painter.save()
-        rot = getattr(self, "rotation", 0.0)
-        if rot != 0.0:
-            c = self.get_bounding_rect().center() - offset
-            painter.translate(c)
-            painter.rotate(rot)
-            painter.translate(-c)
         r = self.rect.translated(-offset.x(), -offset.y()).normalized()
+        rot = getattr(self, "rotation", 0.0)
 
         if (self.is_mosaic or self.is_blur) and source_pixmap is not None:
             px_size = getattr(self, "pixel_size", 8)
             blur_rad = getattr(self, "blur_radius", 15)
             censor_pix = get_pixelated_pixmap(source_pixmap, px_size) if self.is_mosaic else get_blurred_pixmap(source_pixmap, blur_rad)
-            clip_path = QPainterPath()
-            clip_path.addEllipse(r)
-
             if censor_pix is not None:
+                clip_path = QPainterPath()
+                if rot != 0.0:
+                    c = r.center()
+                    t = QTransform()
+                    t.translate(c.x(), c.y())
+                    t.rotate(rot)
+                    t.translate(-c.x(), -c.y())
+                    local_p = QPainterPath()
+                    local_p.addEllipse(r)
+                    clip_path = t.map(local_p)
+                else:
+                    clip_path.addEllipse(r)
+
+                painter.save()
                 painter.setClipPath(clip_path)
                 painter.drawPixmap(-int(offset.x()), -int(offset.y()), censor_pix)
-                painter.setClipping(False)
+                painter.restore()
+                return
+
+        painter.save()
+        if rot != 0.0:
+            c = self.get_bounding_rect().center() - offset
+            painter.translate(c)
+            painter.rotate(rot)
+            painter.translate(-c)
+
+        if self.is_mosaic:
+            pen = QPen(QColor(56, 189, 248, 180), self.stroke_width, Qt.PenStyle.DashLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(QColor(15, 23, 42, 120))
+        elif self.is_blur:
+            pen = QPen(QColor(147, 197, 253, 180), self.stroke_width, Qt.PenStyle.DashLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(QColor(30, 41, 59, 120))
         else:
-            if self.is_mosaic:
-                pen = QPen(QColor(56, 189, 248, 180), self.stroke_width, Qt.PenStyle.DashLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-                painter.setPen(pen)
-                painter.setBrush(QColor(15, 23, 42, 120))
-            elif self.is_blur:
-                pen = QPen(QColor(147, 197, 253, 180), self.stroke_width, Qt.PenStyle.DashLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-                painter.setPen(pen)
-                painter.setBrush(QColor(30, 41, 59, 120))
+            pen = QPen(QColor(self.color), self.stroke_width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            if self.filled:
+                painter.setBrush(self.get_fill_brush(r))
             else:
-                pen = QPen(QColor(self.color), self.stroke_width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-                painter.setPen(pen)
-                if self.filled:
-                    painter.setBrush(self.get_fill_brush(r))
-                else:
-                    painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawEllipse(r)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(r)
 
         painter.restore()
 
@@ -728,7 +763,7 @@ class TextShape(BaseShape):
         self.has_bg = has_bg
         self.bg_color = bg_color
         self.bg_alpha = bg_alpha
-        self.name = "Текст"
+        self.name = tr("obj_text", "Текст")
 
     def hit_test(self, pt: QPointF, tolerance: float = 6.0) -> bool:
         if not self.visible:
@@ -812,6 +847,9 @@ class RegionalEffectShape(BaseShape):
     """
     Инструмент применения эффекта к прямоугольной области:
     мозаика, размытие, ч/б, инверсия, повышенная контрастность, сепия.
+    Работает как физическая диафрагма/апертура: вращается и масштабируется
+    только граница рамки, в то время как изображение рабочего стола под ней
+    остаётся неподвижным и фильтруется на месте 1:1.
     """
     def __init__(self, rect: QRectF, effect_type: str = "mosaic", intensity: int = 8, cached_pixmap: QPixmap = None):
         super().__init__(color=effect_type, stroke_width=1)
@@ -820,6 +858,8 @@ class RegionalEffectShape(BaseShape):
         self.intensity = intensity
         self.cached_pixmap = cached_pixmap
         self._cached_rect = None
+        self._cached_needed_rect = None
+        self._cache_key = None
         self.name = self._format_name(effect_type)
 
     @staticmethod
@@ -835,15 +875,34 @@ class RegionalEffectShape(BaseShape):
         }
         return names.get(etype, f"Effect: {etype}")
 
+    def get_rotated_polygon(self, offset: QPointF = QPointF(0, 0)) -> QPolygonF:
+        r = self.rect.translated(-offset.x(), -offset.y()).normalized()
+        rot = getattr(self, "rotation", 0.0)
+        if rot == 0.0:
+            return QPolygonF(r)
+        c = r.center()
+        t = QTransform()
+        t.translate(c.x(), c.y())
+        t.rotate(rot)
+        t.translate(-c.x(), -c.y())
+        return t.map(QPolygonF(r))
+
     def hit_test(self, pt: QPointF, tolerance: float = 6.0) -> bool:
         if not self.visible:
             return False
-        return self.rect.normalized().contains(pt)
+        return self.get_rotated_polygon().containsPoint(pt, Qt.FillRule.OddEvenFill)
+
+    def hit_test_rotated(self, pt: QPointF, tolerance: float = 6.0) -> bool:
+        if not self.visible:
+            return False
+        return self.get_rotated_polygon().containsPoint(pt, Qt.FillRule.OddEvenFill)
 
     def translate(self, dx: float, dy: float):
         self.rect.translate(dx, dy)
         self.cached_pixmap = None
         self._cached_rect = None
+        self._cached_needed_rect = None
+        self._cache_key = None
 
     def scale_from_origin(self, sx: float, sy: float, origin: QPointF):
         r = self.rect.normalized()
@@ -854,6 +913,8 @@ class RegionalEffectShape(BaseShape):
         self.rect = QRectF(min(nl, nr), min(nt, nb), abs(nr - nl), abs(nb - nt))
         self.cached_pixmap = None
         self._cached_rect = None
+        self._cached_needed_rect = None
+        self._cache_key = None
 
     def get_bounding_rect(self) -> QRectF:
         return self.rect.normalized()
@@ -866,54 +927,102 @@ class RegionalEffectShape(BaseShape):
         new_shape.rotation = getattr(self, "rotation", 0.0)
         new_shape.cached_pixmap = None
         new_shape._cached_rect = None
+        new_shape._cached_needed_rect = None
+        new_shape._cache_key = None
         return new_shape
 
     def set_intensity(self, intensity: int, background_pixmap: QPixmap = None):
         self.intensity = max(2, min(50, intensity))
         self.cached_pixmap = None
         self._cached_rect = None
+        self._cached_needed_rect = None
+        self._cache_key = None
         if background_pixmap is not None:
             self.update_effect(background_pixmap)
 
     def update_effect(self, background_pixmap: QPixmap):
-        if background_pixmap is None or self.rect.isEmpty():
+        if background_pixmap is None or background_pixmap.isNull():
+            self.cached_pixmap = None
+            self._cached_rect = None
+            self._cached_needed_rect = None
+            self._cache_key = None
             return
+
         r = self.rect.normalized()
-        rx, ry, rw, rh = int(r.x()), int(r.y()), int(r.width()), int(r.height())
-        if rw < 2 or rh < 2:
+        if r.width() < 2 or r.height() < 2:
+            self.cached_pixmap = None
+            self._cached_rect = None
+            self._cached_needed_rect = None
+            self._cache_key = None
             return
-        bg_rect = background_pixmap.rect()
-        target_rect = r.toRect().intersected(bg_rect)
-        if target_rect.width() < 2 or target_rect.height() < 2:
+
+        rot = getattr(self, "rotation", 0.0)
+        global_poly = self.get_rotated_polygon(QPointF(0, 0))
+        poly_br = global_poly.boundingRect().toRect()
+        needed_rect = poly_br.intersected(background_pixmap.rect())
+
+        if needed_rect.width() < 2 or needed_rect.height() < 2:
+            self.cached_pixmap = None
+            self._cached_rect = None
+            self._cached_needed_rect = None
+            self._cache_key = None
             return
-        cropped = background_pixmap.copy(target_rect)
+
+        cropped = background_pixmap.copy(needed_rect)
         self.cached_pixmap = get_filtered_pixmap(cropped, self.effect_type, self.intensity)
+        self._cached_needed_rect = needed_rect
         self._cached_rect = QRectF(r)
+        self._cache_key = (
+            needed_rect.x(), needed_rect.y(), needed_rect.width(), needed_rect.height(),
+            round(rot, 2), self.intensity, self.effect_type, id(background_pixmap)
+        )
 
     def draw(self, painter: QPainter, offset: QPointF = QPointF(0, 0), source_pixmap: QPixmap = None):
         if not self.visible:
             return
 
-        painter.save()
-        rot = getattr(self, "rotation", 0.0)
-        if rot != 0.0:
-            c = self.get_bounding_rect().center() - offset
-            painter.translate(c)
-            painter.rotate(rot)
-            painter.translate(-c)
+        canvas_poly = self.get_rotated_polygon(offset)
 
-        r = self.rect.translated(-offset.x(), -offset.y()).normalized()
-        r_norm = self.rect.normalized()
-        if (self.cached_pixmap is None or getattr(self, "_cached_rect", None) != r_norm) and source_pixmap is not None:
-            self.update_effect(source_pixmap)
+        if source_pixmap is not None:
+            rot = getattr(self, "rotation", 0.0)
+            global_poly = self.get_rotated_polygon(QPointF(0, 0))
+            poly_br = global_poly.boundingRect().toRect()
+            needed_rect = poly_br.intersected(source_pixmap.rect())
 
-        if self.cached_pixmap is not None:
-            painter.drawPixmap(int(r.x()), int(r.y()), self.cached_pixmap)
+            cur_key = (
+                needed_rect.x(), needed_rect.y(), needed_rect.width(), needed_rect.height(),
+                round(rot, 2), self.intensity, self.effect_type, id(source_pixmap)
+            )
+
+            if cur_key != getattr(self, "_cache_key", None) or self.cached_pixmap is None:
+                if needed_rect.width() >= 2 and needed_rect.height() >= 2:
+                    cropped = source_pixmap.copy(needed_rect)
+                    self.cached_pixmap = get_filtered_pixmap(cropped, self.effect_type, self.intensity)
+                    self._cached_needed_rect = needed_rect
+                    self._cached_rect = QRectF(self.rect.normalized())
+                    self._cache_key = cur_key
+                else:
+                    self.cached_pixmap = None
+                    self._cached_needed_rect = None
+
+        if self.cached_pixmap is not None and getattr(self, "_cached_needed_rect", None) is not None:
+            painter.save()
+            clip_path = QPainterPath()
+            clip_path.addPolygon(canvas_poly)
+            painter.setClipPath(clip_path)
+
+            draw_x = self._cached_needed_rect.x() - int(offset.x())
+            draw_y = self._cached_needed_rect.y() - int(offset.y())
+            painter.drawPixmap(draw_x, draw_y, self.cached_pixmap)
+            painter.restore()
         else:
-            painter.setPen(QPen(QColor(56, 189, 248, 200), 1.5, Qt.PenStyle.DashLine))
-            painter.setBrush(QColor(15, 23, 42, 160))
-            painter.drawRect(r)
-        painter.restore()
+            painter.save()
+            pen_color = QColor(147, 197, 253, 200) if self.effect_type == "blur" else QColor(56, 189, 248, 200)
+            brush_color = QColor(30, 41, 59, 140) if self.effect_type == "blur" else QColor(15, 23, 42, 160)
+            painter.setPen(QPen(pen_color, 1.5, Qt.PenStyle.DashLine))
+            painter.setBrush(brush_color)
+            painter.drawPolygon(canvas_poly)
+            painter.restore()
 
 
 class MosaicShape(RegionalEffectShape):
@@ -923,7 +1032,7 @@ class MosaicShape(RegionalEffectShape):
     def __init__(self, rect: QRectF, pixel_size: int = 5, cached_pixmap: QPixmap = None):
         super().__init__(rect, effect_type="mosaic", intensity=pixel_size, cached_pixmap=cached_pixmap)
         self.pixel_size = self.intensity
-        self.name = "Мозаика (Цензура)"
+        self.name = tr("obj_mosaic", "Мозаика (Цензура)")
 
     @property
     def cached_mosaic(self):
@@ -937,44 +1046,19 @@ class MosaicShape(RegionalEffectShape):
         self.intensity = max(3, min(30, pixel_size))
         self.pixel_size = self.intensity
         self.cached_pixmap = None
+        self._cached_rect = None
+        self._cached_needed_rect = None
+        self._cache_key = None
         if background_pixmap is not None:
             self.update_effect(background_pixmap)
 
     def update_mosaic(self, background_pixmap: QPixmap):
         self.update_effect(background_pixmap)
 
-    def draw(self, painter: QPainter, offset: QPointF = QPointF(0, 0), source_pixmap: QPixmap = None):
-        if not self.visible:
-            return
-        painter.save()
-        rot = getattr(self, "rotation", 0.0)
-        if rot != 0.0:
-            c = self.get_bounding_rect().center() - offset
-            painter.translate(c)
-            painter.rotate(rot)
-            painter.translate(-c)
-
-        r = self.rect.translated(-offset.x(), -offset.y()).normalized()
-        if self.cached_pixmap is None and source_pixmap is not None:
-            self.update_effect(source_pixmap)
-
-        if self.cached_pixmap is not None:
-            painter.drawPixmap(int(r.x()), int(r.y()), self.cached_pixmap)
-        else:
-            painter.setPen(QPen(QColor(56, 189, 248, 200), 1.5, Qt.PenStyle.DashLine))
-            painter.setBrush(QColor(15, 23, 42, 160))
-            painter.drawRect(r)
-            step = max(8, int(self.pixel_size * 2))
-            painter.setPen(QPen(QColor(255, 255, 255, 40), 1))
-            x = r.left() + step
-            while x < r.right():
-                painter.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()))
-                x += step
-            y = r.top() + step
-            while y < r.bottom():
-                painter.drawLine(QPointF(r.left(), y), QPointF(r.right(), y))
-                y += step
-        painter.restore()
+    def clone(self):
+        new_shape = super().clone()
+        new_shape.pixel_size = self.pixel_size
+        return new_shape
 
 
 class BlurShape(RegionalEffectShape):
@@ -984,7 +1068,7 @@ class BlurShape(RegionalEffectShape):
     def __init__(self, rect: QRectF, blur_radius: int = 15, cached_pixmap: QPixmap = None):
         super().__init__(rect, effect_type="blur", intensity=blur_radius, cached_pixmap=cached_pixmap)
         self.blur_radius = self.intensity
-        self.name = "Размытие (Блюр)"
+        self.name = tr("obj_blur", "Размытие (Блюр)")
 
     @property
     def cached_blur(self):
@@ -998,39 +1082,17 @@ class BlurShape(RegionalEffectShape):
         self.intensity = max(3, min(50, radius))
         self.blur_radius = self.intensity
         self.cached_pixmap = None
+        self._cached_rect = None
+        self._cached_needed_rect = None
+        self._cache_key = None
         if background_pixmap is not None:
             self.update_effect(background_pixmap)
 
     def update_blur(self, background_pixmap: QPixmap):
         self.update_effect(background_pixmap)
 
-    def draw(self, painter: QPainter, offset: QPointF = QPointF(0, 0), source_pixmap: QPixmap = None):
-        if not self.visible:
-            return
-        painter.save()
-        rot = getattr(self, "rotation", 0.0)
-        if rot != 0.0:
-            c = self.get_bounding_rect().center() - offset
-            painter.translate(c)
-            painter.rotate(rot)
-            painter.translate(-c)
-
-        r = self.rect.translated(-offset.x(), -offset.y()).normalized()
-        r_norm = self.rect.normalized()
-        if (self.cached_pixmap is None or getattr(self, "_cached_rect", None) != r_norm) and source_pixmap is not None:
-            self.update_effect(source_pixmap)
-
-        if self.cached_pixmap is not None:
-            painter.drawPixmap(int(r.x()), int(r.y()), self.cached_pixmap)
-        else:
-            painter.setPen(QPen(QColor(147, 197, 253, 200), 1.5, Qt.PenStyle.DashLine))
-            painter.setBrush(QColor(30, 41, 59, 140))
-            painter.drawRect(r)
-            painter.setPen(QPen(QColor(255, 255, 255, 30), 1))
-            step = 16
-            x = r.left()
-            while x < r.right() + r.height():
-                painter.drawLine(QPointF(x, r.top()), QPointF(x - r.height(), r.bottom()))
-                x += step
-        painter.restore()
+    def clone(self):
+        new_shape = super().clone()
+        new_shape.blur_radius = self.blur_radius
+        return new_shape
 

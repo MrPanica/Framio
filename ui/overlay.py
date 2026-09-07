@@ -715,7 +715,7 @@ class OverlayWindow(QWidget):
 
             if old_state and new_state and not is_click_only and target_shape:
                 cmd = HistoryCommand(
-                    f"Трансформация {target_shape.name}",
+                    tr("hist_cmd_transform", "Трансформация {name}", name=target_shape.name),
                     do_func=lambda s=target_shape, ns=new_state: (self._apply_shape_geometry(s, ns), self._on_layers_changed()),
                     undo_func=lambda s=target_shape, os=old_state: (self._apply_shape_geometry(s, os), self._on_layers_changed())
                 )
@@ -896,7 +896,7 @@ class OverlayWindow(QWidget):
             self._on_layers_changed()
 
         cmd = HistoryCommand(
-            f"Свойства: {shape.name}",
+            tr("hist_cmd_props", "Свойства: {name}", name=shape.name),
             do_func=lambda s=shape, p=new_props: apply_props(s, p),
             undo_func=lambda s=shape, p=old_props: apply_props(s, p)
         )
@@ -907,12 +907,12 @@ class OverlayWindow(QWidget):
             return
         clone = shape.clone()
         clone.translate(16, 16)
-        clone.name = f"{shape.name} (копия)"
+        clone.name = tr("obj_clone_name", "{name} (копия)", name=shape.name)
         self.layer_manager.add_shape(clone)
         self.last_active_shape = clone
 
         cmd = HistoryCommand(
-            f"Дублирование {shape.name}",
+            tr("hist_cmd_dup", "Дублирование {name}", name=shape.name),
             do_func=lambda s=clone: (self.layer_manager.add_shape(s) if s not in self.layer_manager.shapes else None, self._on_layers_changed()),
             undo_func=lambda s=clone: (self.layer_manager.remove_shape(s.id), self._on_layers_changed())
         )
@@ -934,7 +934,7 @@ class OverlayWindow(QWidget):
                 self.layer_manager.layers_changed.emit()
 
         cmd = HistoryCommand(
-            f"Удаление {shape.name}",
+            tr("hist_cmd_delete", "Удаление {name}", name=shape.name),
             do_func=lambda s=shape: (self.layer_manager.remove_shape(s.id), self._on_layers_changed()),
             undo_func=lambda s=shape, i=idx: (restore_shape(s, i), self._on_layers_changed())
         )
@@ -947,16 +947,16 @@ class OverlayWindow(QWidget):
         old_idx = self.layer_manager.shapes.index(shape)
         if action == "front":
             self.layer_manager.bring_to_front(shape)
-            desc = f"{shape.name} на передний план"
+            desc = tr("hist_cmd_front", "{name} на передний план", name=shape.name)
         elif action == "back":
             self.layer_manager.send_to_back(shape)
-            desc = f"{shape.name} на задний план"
+            desc = tr("hist_cmd_back", "{name} на задний план", name=shape.name)
         elif action == "up":
             self.layer_manager.move_shape_up(shape)
-            desc = f"{shape.name} выше"
+            desc = tr("hist_cmd_up", "{name} выше", name=shape.name)
         elif action == "down":
             self.layer_manager.move_shape_down(shape)
-            desc = f"{shape.name} ниже"
+            desc = tr("hist_cmd_down", "{name} ниже", name=shape.name)
         else:
             return
 
@@ -1136,7 +1136,7 @@ class OverlayWindow(QWidget):
 
             self.layer_manager.add_shape(shape)
             cmd = HistoryCommand(
-                f"Добавлен {shape.name}",
+                tr("hist_cmd_add", "Добавлен {name}", name=shape.name),
                 do_func=lambda s=shape: self.layer_manager.add_shape(s),
                 undo_func=lambda s=shape: self.layer_manager.remove_shape(s.id)
             )
@@ -1202,7 +1202,7 @@ class OverlayWindow(QWidget):
             )
             self.layer_manager.add_shape(shape)
             cmd = HistoryCommand(
-                f"Текст: '{text[:12]}'",
+                tr("hist_cmd_text", "Текст: '{text}'", text=text[:12]),
                 do_func=lambda s=shape: self.layer_manager.add_shape(s),
                 undo_func=lambda s=shape: self.layer_manager.remove_shape(s.id)
             )
@@ -1967,7 +1967,7 @@ class OverlayWindow(QWidget):
             self.scrolling_hud.close()
             self.scrolling_hud = None
         self._notify(
-            "Ошибка длинного скриншота",
+            tr("scroll_err_title", "Ошибка длинного скриншота"),
             err_msg,
             QSystemTrayIcon.MessageIcon.Warning,
             3000

@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QWidget
 )
 from models.history import HistoryManager
+from utils.i18n import tr
 
 class HistoryDialog(QFrame):
     def __init__(self, history_manager: HistoryManager, parent=None):
@@ -46,11 +47,11 @@ class HistoryDialog(QFrame):
         main_layout.setSpacing(6)
 
         header = QHBoxLayout()
-        title = QLabel("История действий")
+        title = QLabel(tr("hist_dialog_title", "История действий"))
         title.setStyleSheet("font-weight: bold; color: #98c379;")
         header.addWidget(title)
 
-        btn_clear = QPushButton("Сброс")
+        btn_clear = QPushButton(tr("hist_btn_reset", "Сброс"))
         btn_clear.setFixedWidth(50)
         btn_clear.clicked.connect(self.history_manager.clear)
         header.addWidget(btn_clear)
@@ -82,7 +83,7 @@ class HistoryDialog(QFrame):
         redo_stack = self.history_manager.redo_stack
 
         if not undo_stack and not redo_stack:
-            lbl_empty = QLabel("История пуста")
+            lbl_empty = QLabel(tr("hist_empty", "История пуста"))
             lbl_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl_empty.setStyleSheet("color: #7f848e; font-style: italic; padding: 10px;")
             self.list_layout.insertWidget(0, lbl_empty)
@@ -108,7 +109,7 @@ class HistoryDialog(QFrame):
 
         # Проходим по отмененным действиям
         for j, cmd in enumerate(redo_stack):
-            btn = QPushButton(f"↩  {cmd.description} (отменено)")
+            btn = QPushButton(f"↩  {cmd.description} ({tr('hist_undone', 'отменено')})")
             btn.setStyleSheet("""
                 QPushButton {
                     background-color: #1a1d24;

@@ -391,7 +391,7 @@ class RecordingFrameWindow(QWidget):
         self.lbl_mode_icon = QLabel()
         mode_color = "#ef4444" if self.mode == "video" else "#a855f7"
         self.lbl_mode_icon.setPixmap(create_themed_icon("record", is_dark=True, size=12, custom_color=mode_color).pixmap(12, 12))
-        self.lbl_mode_icon.setToolTip("Индикатор активной записи")
+        self.lbl_mode_icon.setToolTip(tr("rec_status_active", "Индикатор активной записи"))
         self.lbl_mode_icon.setCursor(Qt.CursorShape.SizeAllCursor)
         layout.addWidget(self.lbl_mode_icon)
 
@@ -399,7 +399,7 @@ class RecordingFrameWindow(QWidget):
         self.lbl_mode = QLabel(f"⋮⋮ {mode_text}")
         self.lbl_mode.setStyleSheet(f"color: {self.accent_color.name()}; font-weight: bold;")
         self.lbl_mode.setCursor(Qt.CursorShape.SizeAllCursor)
-        self.lbl_mode.setToolTip("Потяните за шапку, чтобы переместить рамку записи по экрану")
+        self.lbl_mode.setToolTip(tr("rec_tip_drag", "Потяните за шапку, чтобы переместить рамку записи по экрану"))
         layout.addWidget(self.lbl_mode)
 
         # 1.1 Нативная иконка целевого приложения / окна
@@ -428,14 +428,14 @@ class RecordingFrameWindow(QWidget):
         # 3. Таймер
         self.lbl_timer = QLabel("00:00")
         self.lbl_timer.setCursor(Qt.CursorShape.SizeAllCursor)
-        self.lbl_timer.setToolTip("Длительность текущей записи и число записанных кадров")
+        self.lbl_timer.setToolTip(tr("rec_tip_duration", "Длительность текущей записи и число записанных кадров"))
         layout.addWidget(self.lbl_timer)
 
         # 4. Разрешение
         self.lbl_size = QLabel(f"{self.inner_w}×{self.inner_h}")
         self.lbl_size.setStyleSheet("color: #a1a1aa; font-family: Consolas, monospace;")
         self.lbl_size.setCursor(Qt.CursorShape.SizeAllCursor)
-        self.lbl_size.setToolTip("Текущий размер выделенной области записи в пикселях")
+        self.lbl_size.setToolTip(tr("rec_tip_resolution", "Текущий размер выделенной области записи в пикселях"))
         layout.addWidget(self.lbl_size)
 
         layout.addStretch()
@@ -488,7 +488,7 @@ class RecordingFrameWindow(QWidget):
         self.btn_lock = QPushButton()
         self.btn_lock.setIcon(create_themed_icon("unlock", is_dark=True, size=14))
         self.btn_lock.setIconSize(QSize(14, 14))
-        self.btn_lock.setToolTip("Зафиксировать рамку от случайного изменения размера")
+        self.btn_lock.setToolTip(tr("rec_tip_lock", "Зафиксировать рамку от случайного изменения размера"))
         self.btn_lock.setFixedSize(28, 26)
         self.btn_lock.clicked.connect(self._toggle_lock)
         layout.addWidget(self.btn_lock)
@@ -497,7 +497,7 @@ class RecordingFrameWindow(QWidget):
         self.btn_settings = QPushButton()
         self.btn_settings.setIcon(create_themed_icon("settings", is_dark=True, size=14))
         self.btn_settings.setIconSize(QSize(14, 14))
-        self.btn_settings.setToolTip("Параметры записи (выбор приложения / отдельного окна)")
+        self.btn_settings.setToolTip(tr("rec_tip_target_win", "Параметры записи (выбор приложения / отдельного окна)"))
         self.btn_settings.setFixedSize(28, 26)
         self.btn_settings.clicked.connect(self._show_settings_popup)
         layout.addWidget(self.btn_settings)
@@ -510,7 +510,7 @@ class RecordingFrameWindow(QWidget):
         btn_cancel = QPushButton()
         btn_cancel.setIcon(create_themed_icon("close", is_dark=True, size=13, custom_color="#fca5a5"))
         btn_cancel.setIconSize(QSize(13, 13))
-        btn_cancel.setToolTip("Отменить запись без сохранения и удалить файл [Esc]")
+        btn_cancel.setToolTip(tr("rec_tip_cancel", "Отменить запись без сохранения и удалить файл [Esc]"))
         btn_cancel.setFixedSize(26, 26)
         btn_cancel.setStyleSheet("""
             QPushButton {
@@ -548,7 +548,7 @@ class RecordingFrameWindow(QWidget):
             else:
                 ico = get_window_qicon(0, size=16)
                 self.lbl_target_icon.setPixmap(ico.pixmap(16, 16))
-                self.lbl_target_icon.setToolTip("Записывается вся область экрана под рамкой")
+                self.lbl_target_icon.setToolTip(tr("rec_tip_all_screens", "Записывается вся область экрана под рамкой"))
 
     def _on_window_changed(self, hwnd):
         self.target_hwnd = hwnd
@@ -575,11 +575,11 @@ class RecordingFrameWindow(QWidget):
             return
         if self.record_mic:
             self.btn_mic.setIcon(create_themed_icon("mic", is_dark=True, size=14, custom_color="#38bdf8"))
-            self.btn_mic.setToolTip("Микрофон включен (кликните для отключения)")
+            self.btn_mic.setToolTip(tr("rec_tip_mic_on", "Микрофон включен (кликните для отключения)"))
             self.btn_mic.setStyleSheet("")
         else:
             self.btn_mic.setIcon(create_themed_icon("mic_off", is_dark=True, size=14, custom_color="#ef4444"))
-            self.btn_mic.setToolTip("Микрофон отключен (кликните для включения)")
+            self.btn_mic.setToolTip(tr("rec_tip_mic_off", "Микрофон отключен (кликните для включения)"))
             self.btn_mic.setStyleSheet("background-color: #3f1d1d; border: 1px solid #7f1d1d;")
 
     def _toggle_system(self):
@@ -593,11 +593,11 @@ class RecordingFrameWindow(QWidget):
             return
         if self.record_system:
             self.btn_system.setIcon(create_themed_icon("speaker", is_dark=True, size=14, custom_color="#38bdf8"))
-            self.btn_system.setToolTip("Системный звук включен (кликните для отключения)")
+            self.btn_system.setToolTip(tr("rec_tip_sys_on", "Системный звук включен (кликните для отключения)"))
             self.btn_system.setStyleSheet("")
         else:
             self.btn_system.setIcon(create_themed_icon("speaker_off", is_dark=True, size=14, custom_color="#ef4444"))
-            self.btn_system.setToolTip("Системный звук отключен (кликните для включения)")
+            self.btn_system.setToolTip(tr("rec_tip_sys_off", "Системный звук отключен (кликните для включения)"))
             self.btn_system.setStyleSheet("background-color: #3f1d1d; border: 1px solid #7f1d1d;")
 
     def _on_tool_selected(self, tool_name: str):
@@ -763,11 +763,11 @@ class RecordingFrameWindow(QWidget):
         self.is_locked = not self.is_locked
         if self.is_locked:
             self.btn_lock.setIcon(create_themed_icon("lock", is_dark=True, size=14))
-            self.btn_lock.setToolTip("Разблокировать рамку для изменения размера")
+            self.btn_lock.setToolTip(tr("rec_tip_unlock", "Разблокировать рамку для изменения размера"))
             self.btn_lock.setStyleSheet("background-color: #b45309;")
         else:
             self.btn_lock.setIcon(create_themed_icon("unlock", is_dark=True, size=14))
-            self.btn_lock.setToolTip("Зафиксировать рамку от случайного изменения размера")
+            self.btn_lock.setToolTip(tr("rec_tip_lock", "Зафиксировать рамку от случайного изменения размера"))
             self.btn_lock.setStyleSheet("")
         self.update()
 
@@ -880,9 +880,11 @@ class RecordingFrameWindow(QWidget):
         app_inst = getattr(QApplication.instance(), "app_instance", None)
         if app_inst:
             is_gif = self.mode == "gif"
+            title = tr("notif_rec_saving_gif", "Сохранение GIF...") if is_gif else tr("notif_rec_saving_video", "Сохранение видео...")
+            body = tr("rec_exporting_wait", "Идёт оптимизация и кодирование в высоком качестве (в фоне)...")
             app_inst.show_notification(
-                "⏳ Сохранение GIF..." if is_gif else "⏳ Сохранение видео...",
-                "Идёт оптимизация и кодирование в высоком качестве (в фоне)...",
+                f"⏳ {title}",
+                body,
                 timeout=3500
             )
 

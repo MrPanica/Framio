@@ -90,7 +90,7 @@ class DimensionBadge(QFrame):
         self.btn_fullscreen.setFixedSize(18, 18)
         self.btn_fullscreen.setIconSize(QSize(12, 12))
         self.btn_fullscreen.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_fullscreen.setToolTip("Выбрать весь экран (Ctrl+A)")
+        self.btn_fullscreen.setToolTip(tr("action_fullscreen_tip", "Выбрать весь экран (Ctrl+A)"))
         self.btn_fullscreen.setIcon(create_themed_icon("maximize", is_dark=True, size=12, custom_color="#d4d4d8"))
         self.btn_fullscreen.clicked.connect(self.fullscreen_clicked.emit)
         layout.addWidget(self.btn_fullscreen)
@@ -190,7 +190,7 @@ class ColorPalettePopup(QFrame):
         self.btn_blur = QPushButton()
         self.btn_blur.setIcon(create_themed_icon("blur", is_dark=True, size=14))
         self.btn_blur.setFixedSize(24, 22)
-        self.btn_blur.setToolTip("Размытие (Блюр)")
+        self.btn_blur.setToolTip(tr("tool_blur", "Размытие (Блюр)"))
         self.btn_blur.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_blur.setStyleSheet(f"""
             QPushButton {{
@@ -340,14 +340,14 @@ class RecordingHud(QFrame):
         layout.addWidget(self.time_label)
 
         # Пауза / продолжить
-        self.btn_pause = ModernButton("", "Пауза записи")
+        self.btn_pause = ModernButton("", tr("action_pause_rec", "Пауза записи"))
         self.btn_pause.setIcon(create_themed_icon("pause", is_dark=True, size=14))
         self.btn_pause.setFixedSize(30, 26)
         self.btn_pause.clicked.connect(self._toggle_pause)
         layout.addWidget(self.btn_pause)
 
         # Стоп
-        self.btn_stop = ModernButton("Стоп", "Завершить и сохранить запись")
+        self.btn_stop = ModernButton(tr("action_stop_rec", "Стоп"), tr("action_stop_rec_tip", "Завершить и сохранить запись"))
         self.btn_stop.setIcon(create_themed_icon("stop", is_dark=True, size=13))
         self.btn_stop.setStyleSheet("""
             QPushButton {

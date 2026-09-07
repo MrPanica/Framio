@@ -89,7 +89,7 @@ class HotkeyRecorderButton(QPushButton):
         """)
 
         if self.target_line_edit:
-            self.target_line_edit.setText("Нажмите клавишу...")
+            self.target_line_edit.setText(tr("settings_btn_listening_key", "Нажмите клавишу..."))
             self.target_line_edit.setFocus()
 
         # 1. Устанавливаем фильтр событий приложения Qt для отслеживания всех клавиш
@@ -993,9 +993,9 @@ class SettingsDialog(QDialog):
         # Карточка 1: Язык интерфейса
         card_lang = SettingCard(tr("settings_lang_group", "Язык интерфейса / Interface Language"))
         self.combo_lang = QComboBox()
-        self.combo_lang.addItem("Автоматически (системный) / Auto (System)", "auto")
-        self.combo_lang.addItem("Русский (Russian)", "ru")
-        self.combo_lang.addItem("English (Английский)", "en")
+        self.combo_lang.addItem(tr("settings_lang_auto", "Автоматически (системный) / Auto (System)"), "auto")
+        self.combo_lang.addItem(tr("settings_lang_ru", "Русский (Russian)"), "ru")
+        self.combo_lang.addItem(tr("settings_lang_en", "English (Английский)"), "en")
 
         cur_lang = getattr(self.cfg, "language", "auto")
         idx = 0
@@ -1128,7 +1128,7 @@ class SettingsDialog(QDialog):
         """)
 
     def _pick_default_color(self):
-        color = QColorDialog.getColor(QColor(self._current_default_color), self, "Выберите цвет аннотаций")
+        color = QColorDialog.getColor(QColor(self._current_default_color), self, tr("settings_annot_picker_title", "Выберите цвет аннотаций"))
         if color.isValid():
             self._current_default_color = color.name().upper()
             self._update_color_button()

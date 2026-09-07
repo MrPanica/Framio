@@ -555,7 +555,7 @@ class RecordingDrawingCanvas(QWidget):
 
             if old_state and new_state and not is_click_only and target_shape:
                 cmd = HistoryCommand(
-                    f"Трансформация {target_shape.name}",
+                    tr("hist_cmd_transform", "Трансформация {name}", name=target_shape.name),
                     do_func=lambda s=target_shape, ns=new_state: (self._apply_shape_geometry(s, ns), self.update()),
                     undo_func=lambda s=target_shape, os=old_state: (self._apply_shape_geometry(s, os), self.update())
                 )
@@ -578,7 +578,7 @@ class RecordingDrawingCanvas(QWidget):
 
                 if abs(total_dx) > 3 or abs(total_dy) > 3:
                     cmd = HistoryCommand(
-                        f"Перемещение {target_shape.name}",
+                        tr("hist_cmd_move", "Перемещение {name}", name=target_shape.name),
                         do_func=lambda s=target_shape, dx=total_dx, dy=total_dy: (s.translate(dx, dy), self.update()),
                         undo_func=lambda s=target_shape, dx=total_dx, dy=total_dy: (s.translate(-dx, -dy), self.update())
                     )
@@ -714,7 +714,7 @@ class RecordingDrawingCanvas(QWidget):
             )
             self.layer_manager.add_shape(shape)
             cmd = HistoryCommand(
-                f"Текст: {txt[:10]}",
+                tr("hist_cmd_text", "Текст: '{text}'", text=txt[:10]),
                 do_func=lambda s=shape: self.layer_manager.add_shape(s) if s not in self.layer_manager.shapes else None,
                 undo_func=lambda s=shape: self.layer_manager.remove_shape(s.id)
             )

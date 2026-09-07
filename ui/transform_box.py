@@ -202,6 +202,12 @@ class ShapeTransformBox:
                 # Привязка к 15 градусам при зажатом Shift
                 angle = round(angle / 15.0) * 15.0
             self.shape.rotation = angle % 360.0
+            if hasattr(self.shape, "cached_pixmap"):
+                self.shape.cached_pixmap = None
+            if hasattr(self.shape, "_cache_key"):
+                self.shape._cache_key = None
+            if hasattr(self.shape, "_cached_needed_rect"):
+                self.shape._cached_needed_rect = None
 
         # 3. Изменение размера / масштабирование
         else:
@@ -277,6 +283,10 @@ class ShapeTransformBox:
             self.shape.cached_blur = None
         if hasattr(self.shape, "_cached_rect"):
             self.shape._cached_rect = None
+        if hasattr(self.shape, "_cached_needed_rect"):
+            self.shape._cached_needed_rect = None
+        if hasattr(self.shape, "_cache_key"):
+            self.shape._cache_key = None
 
     def finish_drag(self) -> tuple[BaseShape | None, BaseShape | None]:
         """Завершает перетаскивание и возвращает кортеж (исходное состояние, итоговое состояние) для Undo/Redo."""

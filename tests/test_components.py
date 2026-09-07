@@ -1395,11 +1395,102 @@ def test_regional_effect_dynamic_resampling_and_alt_inspector():
     print("  -> Динамический ресэмплинг эффектов, симметрия i18n и инспектор объектов Alt проверены успешно.")
 
 
+def test_rotated_regional_effect_stencil_and_i18n():
+    print("[TEST] Проверка оптического трафарета повернутых эффектов и локализации фигур...")
+    from PyQt6.QtGui import QPixmap, QColor, QImage, QPainter
+    from PyQt6.QtCore import QRectF, QPointF
+    from models.shapes import RegionalEffectShape, RectangleShape, TextShape, ArrowShape
+    from utils.i18n import set_language, tr, TRANSLATIONS
+
+    # 1. Проверка локализации фигур в EN и RU
+    set_language("en")
+    assert RegionalEffectShape(QRectF(0, 0, 10, 10), effect_type="blur").name == "Blur (Censor)"
+    assert RegionalEffectShape(QRectF(0, 0, 10, 10), effect_type="grayscale").name == "Grayscale (Area)"
+    assert RegionalEffectShape(QRectF(0, 0, 10, 10), effect_type="mosaic").name == "Mosaic (Censor)"
+    assert RegionalEffectShape(QRectF(0, 0, 10, 10), effect_type="invert").name == "Invert (Area)"
+    assert RegionalEffectShape(QRectF(0, 0, 10, 10), effect_type="vibrant").name == "Vibrant (Area)"
+    assert RegionalEffectShape(QRectF(0, 0, 10, 10), effect_type="sepia").name == "Sepia (Area)"
+    assert RectangleShape(QRectF(0, 0, 10, 10)).name == "Rectangle"
+    assert TextShape(QRectF(0, 0, 10, 10)).name == "Text"
+    assert ArrowShape(QPointF(0, 0), QPointF(10, 10)).name == "Arrow"
+
+    set_language("ru")
+    assert RegionalEffectShape(QRectF(0, 0, 10, 10), effect_type="blur").name == "Размытие (Блюр)"
+    assert RegionalEffectShape(QRectF(0, 0, 10, 10), effect_type="grayscale").name == "Чёрно-белый (Область)"
+    assert RegionalEffectShape(QRectF(0, 0, 10, 10), effect_type="mosaic").name == "Мозаика (Цензура)"
+    assert RegionalEffectShape(QRectF(0, 0, 10, 10), effect_type="invert").name == "Инверсия (Область)"
+    assert RegionalEffectShape(QRectF(0, 0, 10, 10), effect_type="vibrant").name == "Насыщенность (Область)"
+    assert RegionalEffectShape(QRectF(0, 0, 10, 10), effect_type="sepia").name == "Сепия (Область)"
+    assert RectangleShape(QRectF(0, 0, 10, 10)).name == "Прямоугольник"
+    assert TextShape(QRectF(0, 0, 10, 10)).name == "Текст"
+    assert ArrowShape(QPointF(0, 0), QPointF(10, 10)).name == "Стрелка"
+
+    # 2. Проверка неподвижности фонового изображения под повернутой областью эффекта (оптический трафарет)
+    # Создаем фон 200x200: верхняя половина (y < 100) чистый красный (255, 0, 0), нижняя половина (y >= 100) чистый синий (0, 0, 255)
+    bg_img = QImage(200, 200, QImage.Format.Format_RGB32)
+    for y in range(200):
+        color = QColor(255, 0, 0) if y < 100 else QColor(0, 0, 255)
+        for x in range(200):
+            bg_img.setPixelColor(x, y, color)
+    bg_pix = QPixmap.fromImage(bg_img)
+
+    # Создаем эффект ч/б размером 60x60 с центром в (100, 100)
+    # В не повернутом состоянии rect: [70, 70, 60, 60], верхняя часть y in [70, 99], нижняя y in [100, 130]
+    stencil_shape = RegionalEffectShape(QRectF(70, 70, 60, 60), effect_type="grayscale")
+    stencil_shape.rotation = 45.0
+
+    # Проверяем hit_test_rotated:
+    # Центр (100, 100) внутри
+    assert stencil_shape.hit_test_rotated(QPointF(100, 100))
+    # Вершина повернутого ромба (100, 70 - 30 * (sqrt(2)-1) ~ 57.57) внутри
+    assert stencil_shape.hit_test_rotated(QPointF(100, 65))
+    # Угол исходного квадрата (72, 72) вне 45-градусного ромба
+    assert not stencil_shape.hit_test_rotated(QPointF(72, 72))
+
+    # Отрисовываем трафарет
+    canvas_img = QImage(200, 200, QImage.Format.Format_ARGB32_Premultiplied)
+    canvas_img.fill(0)
+    p = QPainter(canvas_img)
+    stencil_shape.draw(p, source_pixmap=bg_pix)
+    p.end()
+
+    # Точка (100, 85) лежит выше границы y=100 и внутри ромба -> должна быть оттенком серого от красного (R=G=B > 50)
+    top_pt_col = canvas_img.pixelColor(100, 85)
+    assert top_pt_col.alpha() == 255, "Пиксель внутри трафарета должен быть непрозрачным"
+    assert top_pt_col.red() == top_pt_col.green() == top_pt_col.blue()
+    assert top_pt_col.red() > 50, f"Красная область должна стать светлым серым, получили {top_pt_col.red()}"
+
+    # Точка (100, 115) лежит ниже границы y=100 и внутри ромба -> должна быть оттенком серого от синего (R=G=B < 40)
+    bot_pt_col = canvas_img.pixelColor(100, 115)
+    assert bot_pt_col.alpha() == 255, "Пиксель внутри трафарета должен быть непрозрачным"
+    assert bot_pt_col.red() == bot_pt_col.green() == bot_pt_col.blue()
+    assert bot_pt_col.red() < 40, f"Синяя область должна стать темным серым, получили {bot_pt_col.red()}"
+
+    # Вне ромба (например угол 72, 72) холст должен оставаться пустым (альфа 0)
+    corner_col = canvas_img.pixelColor(72, 72)
+    assert corner_col.alpha() == 0, "Угол за пределами повернутого трафарета не должен закрашиваться"
+
+    # 3. Проверка растягивания и масштабирования повернутого эффекта: эффект не исчезает и адаптирует область
+    stencil_shape.scale_from_origin(1.5, 1.5, QPointF(100, 100))
+    canvas_img.fill(0)
+    p = QPainter(canvas_img)
+    stencil_shape.draw(p, source_pixmap=bg_pix)
+    p.end()
+
+    # После увеличения в 1.5 раза угол (72, 72) теперь покрыт расширенным ромбом!
+    scaled_corner_col = canvas_img.pixelColor(72, 72)
+    assert scaled_corner_col.alpha() == 255, "При масштабировании повернутая область должна расширяться без пропадания эффекта"
+    assert scaled_corner_col.red() == scaled_corner_col.green() == scaled_corner_col.blue()
+
+    print("  -> Оптический трафарет повернутых эффектов и локализация проверены успешно.")
+
+
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
         tmp_p = Path(tmp_dir)
         test_models_and_history()
+        test_rotated_regional_effect_stencil_and_i18n()
         test_regional_effect_dynamic_resampling_and_alt_inspector()
         test_regional_effects_and_whole_screen_filter_reset()
         test_shape_transform_box_and_flyouts()
@@ -1434,4 +1525,5 @@ if __name__ == "__main__":
     print("\n[OK] ВСЕ ТЕСТЫ УСПЕШНО ПРОЙДЕНЫ!")
     import sys
     sys.exit(0)
+
 

@@ -236,7 +236,7 @@ class ScrollingCaptureHUD(QWidget):
         # 5. Кнопка Сделать кадр (по высоте рамки)
         self.btn_step = QPushButton(tr("scroll_hud_step", "Сделать кадр"))
         self.btn_step.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_step.setToolTip("Захватить текущий экран и склеить с предыдущими (по высоте рамки)")
+        self.btn_step.setToolTip(tr("scroll_step_tip", "Захватить текущий экран и склеить с предыдущими (по высоте рамки)"))
         self.btn_step.clicked.connect(self.step_clicked.emit)
         h_layout.addWidget(self.btn_step)
 
