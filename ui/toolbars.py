@@ -272,11 +272,11 @@ def show_smart_popup(anchor, popup: QWidget):
     popup.show()
 
 
-def show_side_smart_popup(anchor, popup: QWidget, prefer_side: str = "left"):
+def show_side_smart_popup(anchor, popup: QWidget, prefer_side: str = "right"):
     """
     Умное позиционирование выпадающей панели СБОКУ от кнопки (в стиле Photoshop / Figma):
-    По умолчанию открывается СЛЕВА от вертикальной панели инструментов.
-    Если слева места до границы экрана недостаточно, открывается СПРАВА.
+    По умолчанию открывается СПРАВА (наружу от области выделения).
+    Если справа места до границы экрана недостаточно, открывается СЛЕВА.
     По вертикали центрируется относительно кнопки anchor и удерживается в пределах видимого экрана.
     """
     popup.adjustSize()

@@ -139,6 +139,10 @@ TRANSLATIONS = {
 
         # --- Контекстное меню фигур и слои ---
         "shape_menu_props": "Изменить свойства ({name})...",
+        "shape_menu_props_clean": "Параметры фигуры...",
+        "shape_menu_text_props": "Параметры текста (шрифт, цвет)...",
+        "text_editor_move": "Текст",
+        "text_editor_close_tip": "Отмена (Esc)",
         "shape_menu_dup": "Дублировать (Ctrl+D)",
         "shape_menu_order": "Порядок слоёв",
         "shape_menu_front": "На передний план",
@@ -764,6 +768,10 @@ TRANSLATIONS = {
 
         # --- Shape Context Menu & Layers ---
         "shape_menu_props": "Edit properties ({name})...",
+        "shape_menu_props_clean": "Shape parameters...",
+        "shape_menu_text_props": "Text parameters (font, color)...",
+        "text_editor_move": "Text",
+        "text_editor_close_tip": "Cancel (Esc)",
         "shape_menu_dup": "Duplicate (Ctrl+D)",
         "shape_menu_order": "Layer Order",
         "shape_menu_front": "Bring to Front",

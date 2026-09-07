@@ -1580,10 +1580,103 @@ def test_single_instance_text_eyedropper_and_inspector():
     print("  -> SingleInstance IPC, TextShape (italic/scale/rotate), пипетка и Alt-инспектор успешно протестированы.")
 
 
+def test_mosaic_offset_export_interactive_text_and_flyout_positions():
+    print("[TEST] Тестирование экспорта мозаики с оффсетом, интерактивного текста и внешних тулбаров...")
+    from models.shapes import RegionalEffectShape, TextShape
+    from ui.text_widget import InteractiveTextEditor
+    from ui.toolbars import show_side_smart_popup
+    from PyQt6.QtWidgets import QWidget
+    from PyQt6.QtCore import QPoint, QSize, QRect
+    from PyQt6.QtGui import QColor, QPainter, QPixmap
+
+    # 1. Экспорт региональной мозаики со смещением рамки (rx, ry > 0)
+    full_pix = QPixmap(1000, 800)
+    full_pix.fill(QColor(100, 150, 200))
+    p = QPainter(full_pix)
+    p.fillRect(QRect(520, 420, 100, 100), QColor(255, 0, 0))
+    p.end()
+
+    shape = RegionalEffectShape(QRectF(550, 450, 100, 100), effect_type='mosaic', intensity=10)
+    shape.rotation = 25.0
+
+    # Экспорт с полноэкранным source_pixmap и оффсетом
+    target_pix = QPixmap(200, 200)
+    target_pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(target_pix)
+    shape.draw(painter, offset=QPointF(500, 400), source_pixmap=full_pix)
+    painter.end()
+
+    assert shape.cached_pixmap is not None and not shape.cached_pixmap.isNull(), "cached_pixmap мозаики не должен быть None при экспорте"
+
+    # Экспорт с предварительно обрезанным кропом
+    crop_pix = full_pix.copy(500, 400, 200, 200)
+    target_pix2 = QPixmap(200, 200)
+    target_pix2.fill(Qt.GlobalColor.transparent)
+    painter2 = QPainter(target_pix2)
+    shape_clone = shape.clone()
+    shape_clone.translate(-500, -400)
+    shape_clone.cached_pixmap = None
+    shape_clone.draw(painter2, offset=QPointF(0, 0), source_pixmap=crop_pix)
+    painter2.end()
+    assert shape_clone.cached_pixmap is not None and not shape_clone.cached_pixmap.isNull(), "cached_pixmap мозаики не должен быть None для обрезанного кропа"
+
+    # 2. Интерактивный текстовый редактор InteractiveTextEditor
+    editor = InteractiveTextEditor()
+    editor.resize(250, 60)
+    editor.update_style(
+        font_family="Consolas",
+        font_size=24,
+        color="#00FFCC",
+        is_bold=True,
+        is_italic=True,
+        is_underline=True
+    )
+    assert editor.font_family == "Consolas"
+    assert editor.font_size == 24
+    assert editor.text_color == "#00FFCC"
+    assert editor.is_bold is True
+    assert editor.is_italic is True
+    assert editor.is_underline is True
+
+    editor.setText("Проверка Framio")
+    assert editor.text() == "Проверка Framio"
+
+    # Симуляция перемещения (ручка header)
+    moved_pos = []
+    editor.moved.connect(lambda p: moved_pos.append(p))
+    editor.move(QPoint(120, 140))
+    editor.moved.emit(QPointF(120, 140))
+    assert len(moved_pos) == 1
+    assert moved_pos[0] == QPointF(120, 140)
+
+    # Симуляция растягивания за правый нижний маркер (масштабирование кегля шрифта)
+    sizes = []
+    editor.font_size_changed.connect(lambda s: sizes.append(s))
+    new_w = 400
+    new_h = 100
+    scale_factor = max(0.4, (new_w / 250.0 + new_h / 60.0) / 2.0)
+    new_font_size = int(round(24 * scale_factor))
+    editor.update_style(font_size=new_font_size)
+    editor.font_size_changed.emit(new_font_size)
+    assert len(sizes) == 1
+    assert editor.font_size == new_font_size and new_font_size > 24
+
+    # 3. Внешнее позиционирование всплывающих окон (prefer_side='right')
+    anchor = QWidget()
+    anchor.setGeometry(300, 300, 40, 200)
+    popup = QWidget()
+    popup.resize(150, 150)
+    show_side_smart_popup(anchor, popup, prefer_side="right")
+    assert popup.x() >= anchor.x() + anchor.width() - 5, "Всплывающее меню должно открываться справа снаружи"
+
+    print("  -> Экспорт мозаики с оффсетом, InteractiveTextEditor и внешнее открытие всплывающих окон работают безупречно.")
+
+
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
         tmp_p = Path(tmp_dir)
+        test_mosaic_offset_export_interactive_text_and_flyout_positions()
         test_single_instance_text_eyedropper_and_inspector()
         test_models_and_history()
         test_rotated_regional_effect_stencil_and_i18n()

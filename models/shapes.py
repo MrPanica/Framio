@@ -1013,35 +1013,47 @@ class RegionalEffectShape(BaseShape):
             rot = getattr(self, "rotation", 0.0)
             global_poly = self.get_rotated_polygon(QPointF(0, 0))
             poly_br = global_poly.boundingRect().toRect()
-            needed_rect = poly_br.intersected(source_pixmap.rect())
+
+            # Определяем систему координат source_pixmap:
+            # 1) Если source_pixmap полноэкранный (overlay):
+            if poly_br.intersects(source_pixmap.rect()):
+                needed_rect = poly_br.intersected(source_pixmap.rect())
+                draw_x = needed_rect.x() - int(offset.x())
+                draw_y = needed_rect.y() - int(offset.y())
+            else:
+                # 2) Если source_pixmap уже обрезан со смещением offset (локальный crop_pix):
+                local_br = canvas_poly.boundingRect().toRect()
+                needed_rect = local_br.intersected(source_pixmap.rect())
+                draw_x = needed_rect.x()
+                draw_y = needed_rect.y()
 
             cur_key = (
                 needed_rect.x(), needed_rect.y(), needed_rect.width(), needed_rect.height(),
-                round(rot, 2), self.intensity, self.effect_type, id(source_pixmap)
+                round(rot, 2), self.intensity, self.effect_type, id(source_pixmap),
+                int(offset.x()), int(offset.y())
             )
 
             if cur_key != getattr(self, "_cache_key", None) or self.cached_pixmap is None:
                 if needed_rect.width() >= 2 and needed_rect.height() >= 2:
                     cropped = source_pixmap.copy(needed_rect)
                     self.cached_pixmap = get_filtered_pixmap(cropped, self.effect_type, self.intensity)
-                    self._cached_needed_rect = needed_rect
-                    self._cached_rect = QRectF(self.rect.normalized())
+                    self._cached_draw_x = draw_x
+                    self._cached_draw_y = draw_y
                     self._cache_key = cur_key
                 else:
                     self.cached_pixmap = None
-                    self._cached_needed_rect = None
+            else:
+                self._cached_draw_x = draw_x
+                self._cached_draw_y = draw_y
 
-        if self.cached_pixmap is not None and getattr(self, "_cached_needed_rect", None) is not None:
+        if self.cached_pixmap is not None and hasattr(self, "_cached_draw_x"):
             painter.save()
             clip_path = QPainterPath()
             clip_path.addPolygon(canvas_poly)
             painter.setClipPath(clip_path)
-
-            draw_x = self._cached_needed_rect.x() - int(offset.x())
-            draw_y = self._cached_needed_rect.y() - int(offset.y())
-            painter.drawPixmap(draw_x, draw_y, self.cached_pixmap)
+            painter.drawPixmap(self._cached_draw_x, self._cached_draw_y, self.cached_pixmap)
             painter.restore()
-        else:
+        elif source_pixmap is None:
             painter.save()
             pen_color = QColor(147, 197, 253, 200) if self.effect_type == "blur" else QColor(56, 189, 248, 200)
             brush_color = QColor(30, 41, 59, 140) if self.effect_type == "blur" else QColor(15, 23, 42, 160)

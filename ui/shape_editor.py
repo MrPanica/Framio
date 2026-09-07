@@ -543,8 +543,9 @@ class ShapeEditPopup(QFrame):
         self.shape.bg_alpha = int(val * 255 / 100)
         self.shape_modified.emit()
 
-    def _set_color(self, c: str):
         self.shape.color = c
+        if isinstance(self.shape, TextShape):
+            self._sync_to_parent_tool_config("color", c)
         if hasattr(self, "lbl_grain") and hasattr(self, "slider_grain"):
             is_mos = (c == "mosaic")
             self.lbl_grain.setVisible(is_mos)
@@ -628,6 +629,12 @@ class ShapeEditPopup(QFrame):
         self.shape.alpha = int(val * 255 / 100)
         self.shape_modified.emit()
 
+    def _sync_to_parent_tool_config(self, key: str, val):
+        p = self.parent()
+        if p and hasattr(p, "right_toolbar") and hasattr(p.right_toolbar, "tools_config"):
+            tcfg = p.right_toolbar.tools_config.setdefault("text", {})
+            tcfg[key] = val
+
     def _on_text_changed(self, txt: str):
         self.shape.text = txt
         self.shape.name = tr("shape_edit_text_prefix", "Текст: '{txt}'", txt=txt[:10]) if txt else tr("shape_edit_text_default", "Текст")
@@ -635,26 +642,31 @@ class ShapeEditPopup(QFrame):
 
     def _on_text_font_changed(self, fam: str):
         self.shape.font_family = fam
+        self._sync_to_parent_tool_config("font_family", fam)
         self.shape_modified.emit()
 
     def _on_text_size_changed(self, val: int):
         self.shape.font_size = val
         self.lbl_font_size.setText(tr("prop_font_size", "Размер шрифта: {val} pt", val=val))
+        self._sync_to_parent_tool_config("size", val)
         self.shape_modified.emit()
 
     def _on_text_bold_toggled(self, checked: bool):
         self.shape.is_bold = checked
         style_toggle_btn(self.btn_bold, checked, self.is_dark)
+        self._sync_to_parent_tool_config("is_bold", checked)
         self.shape_modified.emit()
 
     def _on_text_underline_toggled(self, checked: bool):
         self.shape.is_underline = checked
         style_toggle_btn(self.btn_underline, checked, self.is_dark)
+        self._sync_to_parent_tool_config("is_underline", checked)
         self.shape_modified.emit()
 
     def _on_text_italic_toggled(self, checked: bool):
         self.shape.is_italic = checked
         style_toggle_btn(self.btn_italic, checked, self.is_dark)
+        self._sync_to_parent_tool_config("is_italic", checked)
         self.shape_modified.emit()
 
     def _pick_screen_color(self):

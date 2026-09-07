@@ -51,6 +51,7 @@ from .toolbars import (
 from .icons import create_themed_icon, create_tool_cursor
 from .shape_editor import ShapeEditPopup
 from .widgets import DimensionBadge
+from .text_widget import InteractiveTextEditor
 from .layers_dialog import LayersDialog
 from .history_dialog import HistoryDialog
 from .settings_dialog import SettingsDialog
@@ -141,11 +142,13 @@ class OverlayWindow(QWidget):
         self.layers_dialog = None
         self.history_dialog = None
 
-        # Редактор текста
-        self.text_editor = QLineEdit(self)
+        # Интерактивный редактор текста с ручкой перемещения и ресайзом
+        self.text_editor = InteractiveTextEditor(self)
         self.text_editor.hide()
-        self.text_editor.returnPressed.connect(self._commit_text)
-        self.text_editor.editingFinished.connect(self._commit_text)
+        self.text_editor.committed.connect(self._commit_text)
+        self.text_editor.cancelled.connect(self._cancel_text_editing)
+        self.text_editor.font_size_changed.connect(self._on_editor_font_size_changed)
+        self.text_editor.moved.connect(self._on_editor_moved)
         self.editing_existing_text_shape = None
 
         # Режим пипетки (взятие цвета с экрана)
@@ -188,7 +191,7 @@ class OverlayWindow(QWidget):
 
         # Правая панель
         self.right_toolbar.tool_changed.connect(self._on_tool_changed)
-        self.right_toolbar.tool_settings_updated.connect(self.update)
+        self.right_toolbar.tool_settings_updated.connect(self._on_tool_settings_updated)
         self.right_toolbar.layers_clicked.connect(self._show_layers_dialog)
         self.right_toolbar.history_clicked.connect(self._show_history_dialog)
         self.right_toolbar.undo_clicked.connect(self.history_manager.undo)
@@ -414,16 +417,21 @@ class OverlayWindow(QWidget):
         scr_w = self.width()
         scr_h = self.height()
 
-        # Правая панель инструментов
+        # Правая панель инструментов: по возможности снаружи справа, иначе снаружи слева, иначе внутри
         rx = r.right() + 6
         if rx + w_right > scr_w:
-            rx = r.right() - w_right - 6
+            if r.left() - w_right - 6 >= 0:
+                rx = r.left() - w_right - 6
+            else:
+                rx = r.right() - w_right - 6
         ry = r.top()
         if ry + h_right > scr_h:
             ry = scr_h - h_right - 6
+        if ry < 6:
+            ry = 6
         self.right_toolbar.move(int(rx), int(ry))
 
-        # Нижняя панель действий
+        # Нижняя панель действий: по возможности снаружи снизу, иначе снаружи сверху, иначе внутри
         bx = r.right() - w_bot
         if bx + w_bot > scr_w:
             bx = scr_w - w_bot - 6
@@ -431,7 +439,12 @@ class OverlayWindow(QWidget):
             bx = 6
         by = r.bottom() + 8
         if by + h_bot > scr_h:
-            by = r.bottom() - h_bot - 8
+            if r.top() - h_bot - 8 >= 0:
+                by = r.top() - h_bot - 8
+            else:
+                by = r.bottom() - h_bot - 8
+        if by < 6:
+            by = 6
         self.bottom_toolbar.move(int(bx), int(by))
 
         # Бейдж размеров
@@ -521,6 +534,7 @@ class OverlayWindow(QWidget):
                 for shape in reversed(self.layer_manager.shapes):
                     if shape.visible and shape.hit_test_rotated(pos):
                         self.transform_box.set_shape(shape)
+                        self._sync_toolbar_to_text_shape(shape)
                         self.is_transforming = True
                         self.transform_box.start_drag(HandleType.INSIDE, pos)
                         self.right_clicked_shape = shape
@@ -578,6 +592,7 @@ class OverlayWindow(QWidget):
             for shape in reversed(self.layer_manager.shapes):
                 if shape.visible and shape.hit_test_rotated(pos):
                     self.transform_box.set_shape(shape)
+                    self._sync_toolbar_to_text_shape(shape)
                     self.is_transforming = True
                     self.transform_box.start_drag(HandleType.INSIDE, pos)
                     self.shape_drag_initial_pos = pos
@@ -869,11 +884,12 @@ class OverlayWindow(QWidget):
         act_text_edit = None
         if isinstance(shape, TextShape):
             act_text_edit = menu.addAction(create_themed_icon("edit", is_dark, 14), tr("action_edit_text", "Редактировать текст..."))
+            act_edit = menu.addAction(create_themed_icon("settings", is_dark, 14), tr("shape_menu_text_props", "Параметры текста (шрифт, цвет)..."))
             menu.addSeparator()
-
-        # 1. Изменить свойства
-        act_edit = menu.addAction(create_themed_icon("settings", is_dark, 14), tr("shape_menu_props", name=shape.name))
-        menu.addSeparator()
+        else:
+            # 1. Изменить свойства
+            act_edit = menu.addAction(create_themed_icon("settings", is_dark, 14), tr("shape_menu_props_clean", "Параметры фигуры..."))
+            menu.addSeparator()
 
         # 2. Дублировать
         act_dup = menu.addAction(create_themed_icon("copy", is_dark, 14), tr("shape_menu_dup"))
@@ -1206,90 +1222,148 @@ class OverlayWindow(QWidget):
             )
             self.history_manager.push_already_done(cmd)
 
+    def _on_tool_settings_updated(self):
+        cfg = self.right_toolbar.tools_config.get(self.current_tool, {})
+        col = self.right_toolbar.current_color
+
+        # 1. Если сейчас открыт встроенный интерактивный текстовый редактор:
+        if hasattr(self, "text_editor") and self.text_editor.isVisible():
+            self.text_editor.update_style(
+                font_family=cfg.get("font_family"),
+                font_size=cfg.get("size"),
+                color=col if col and col not in ("mosaic", "blur") else None,
+                is_bold=cfg.get("is_bold"),
+                is_italic=cfg.get("is_italic"),
+                is_underline=cfg.get("is_underline"),
+                has_bg=cfg.get("has_bg"),
+                bg_color=cfg.get("bg_color"),
+                bg_alpha=cfg.get("bg_alpha")
+            )
+
+        # 2. Если на холсте выбрана текстовая фигура (в transform_box или last_active_shape):
+        target_shape = None
+        if hasattr(self, "transform_box") and self.transform_box.is_active():
+            target_shape = self.transform_box.shape
+        elif getattr(self, "last_active_shape", None):
+            target_shape = self.last_active_shape
+
+        if target_shape and isinstance(target_shape, TextShape) and target_shape in self.layer_manager.shapes:
+            text_cfg = self.right_toolbar.tools_config.get(ToolType.TEXT, {})
+            eff_cfg = {**text_cfg, **cfg}
+            if "font_family" in eff_cfg:
+                target_shape.font_family = eff_cfg["font_family"]
+            if "size" in eff_cfg:
+                target_shape.font_size = eff_cfg["size"]
+            if "color" in eff_cfg and eff_cfg["color"] not in ("mosaic", "blur"):
+                target_shape.color = eff_cfg["color"]
+            elif col and col not in ("mosaic", "blur"):
+                target_shape.color = col
+            if "is_bold" in eff_cfg:
+                target_shape.is_bold = eff_cfg["is_bold"]
+            if "is_italic" in eff_cfg:
+                target_shape.is_italic = eff_cfg["is_italic"]
+            if "is_underline" in eff_cfg:
+                target_shape.is_underline = eff_cfg["is_underline"]
+            if "has_bg" in eff_cfg:
+                target_shape.has_bg = eff_cfg["has_bg"]
+            if "bg_color" in eff_cfg:
+                target_shape.bg_color = eff_cfg["bg_color"]
+            if "bg_alpha" in eff_cfg:
+                target_shape.bg_alpha = eff_cfg["bg_alpha"]
+            self._invalidate_layers_cache()
+
+        self.update()
+
+    def _sync_toolbar_to_text_shape(self, shape: TextShape):
+        if not isinstance(shape, TextShape):
+            return
+        tcfg = self.right_toolbar.tools_config.setdefault(ToolType.TEXT, {})
+        tcfg["font_family"] = shape.font_family
+        tcfg["size"] = shape.font_size
+        tcfg["color"] = shape.color
+        tcfg["is_bold"] = shape.is_bold
+        tcfg["is_italic"] = getattr(shape, "is_italic", False)
+        tcfg["is_underline"] = shape.is_underline
+        tcfg["has_bg"] = getattr(shape, "has_bg", False)
+        tcfg["bg_color"] = getattr(shape, "bg_color", "#000000")
+        tcfg["bg_alpha"] = getattr(shape, "bg_alpha", 180)
+        self.right_toolbar._update_color_swatch()
+        if hasattr(self.right_toolbar, "properties_flyout") and self.right_toolbar.properties_flyout.isVisible():
+            self.right_toolbar.properties_flyout.load_tool(ToolType.TEXT, tcfg)
+
+    def _on_editor_font_size_changed(self, new_size: int):
+        tcfg = self.right_toolbar.tools_config.setdefault(ToolType.TEXT, {})
+        tcfg["size"] = new_size
+        if hasattr(self.right_toolbar, "properties_flyout") and self.right_toolbar.properties_flyout.isVisible():
+            self.right_toolbar.properties_flyout.slider_size.blockSignals(True)
+            self.right_toolbar.properties_flyout.slider_size.setValue(new_size)
+            self.right_toolbar.properties_flyout.slider_size.blockSignals(False)
+            self.right_toolbar.properties_flyout.lbl_size.setText(tr("prop_font_size", "Размер шрифта: {val} pt", val=new_size))
+
+    def _on_editor_moved(self, new_pos: QPointF):
+        self.text_editor_pos = new_pos
+
+    def _cancel_text_editing(self):
+        self.text_editor.clear()
+        self.text_editor.hide()
+        self.editing_existing_text_shape = None
+        self.update()
+
     def _open_text_editor(self, pos: QPointF, color: str, font_size: int):
-        # Если в предыдущем поле ввода остался набранный текст — сохраняем его, а не удаляем
         if self.text_editor.isVisible() and self.text_editor.text().strip():
             self._commit_text()
 
         cfg = self.right_toolbar.get_current_settings()
         self.editing_existing_text_shape = None
         self.text_editor_pos = pos
-        self.text_editor_color = cfg.get("color", color)
-        self.text_editor_font_size = cfg.get("size", font_size)
-        self.text_editor_font_family = cfg.get("font_family", "Segoe UI")
-        self.text_editor_is_bold = cfg.get("is_bold", True)
-        self.text_editor_is_italic = cfg.get("is_italic", False)
-        self.text_editor_is_underline = cfg.get("is_underline", False)
-        self.text_editor_has_bg = cfg.get("has_bg", False)
-        self.text_editor_bg_color = cfg.get("bg_color", "#000000")
-        self.text_editor_bg_alpha = cfg.get("bg_alpha", 180)
 
-        weight = "bold" if self.text_editor_is_bold else "normal"
-        style = "italic" if self.text_editor_is_italic else "normal"
-        decor = "underline" if self.text_editor_is_underline else "none"
-        bg_css = "rgba(0, 0, 0, 200)" if self.text_editor_has_bg else "rgba(20, 22, 28, 160)"
+        col = cfg.get("color", color)
+        if not col or col in ("mosaic", "blur"):
+            col = "#FF2E2E"
 
-        self.text_editor.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {bg_css};
-                color: {self.text_editor_color};
-                font-family: '{self.text_editor_font_family}', sans-serif;
-                font-size: {self.text_editor_font_size}pt;
-                font-weight: {weight};
-                font-style: {style};
-                text-decoration: {decor};
-                border: 1px dashed {self.text_editor_color};
-                padding: 2px 4px;
-            }}
-        """)
-        self.text_editor.setFixedWidth(280)
-        self.text_editor.move(int(pos.x()), int(pos.y()))
+        self.text_editor.update_style(
+            font_family=cfg.get("font_family", "Segoe UI"),
+            font_size=cfg.get("size", font_size),
+            color=col,
+            is_bold=cfg.get("is_bold", True),
+            is_italic=cfg.get("is_italic", False),
+            is_underline=cfg.get("is_underline", False),
+            has_bg=cfg.get("has_bg", False),
+            bg_color=cfg.get("bg_color", "#000000"),
+            bg_alpha=cfg.get("bg_alpha", 180)
+        )
         self.text_editor.clear()
+        self.text_editor.move(int(pos.x()), int(pos.y()))
         self.text_editor.show()
         self.text_editor.setFocus()
 
     def _edit_existing_text(self, shape: TextShape):
-        """Открывает встроенный текстовый редактор для редактирования существующей надписи."""
+        """Открывает встроенный интерактивный текстовый редактор для редактирования существующей надписи."""
         if not shape:
             return
         if self.text_editor.isVisible() and self.text_editor.text().strip():
             self._commit_text()
 
         self.editing_existing_text_shape = shape
+        self._sync_toolbar_to_text_shape(shape)
         br = shape.get_bounding_rect()
-        self.text_editor_pos = br.topLeft()
-        self.text_editor_color = shape.color
-        self.text_editor_font_size = shape.font_size
-        self.text_editor_font_family = shape.font_family
-        self.text_editor_is_bold = shape.is_bold
-        self.text_editor_is_italic = getattr(shape, "is_italic", False)
-        self.text_editor_is_underline = shape.is_underline
-        self.text_editor_has_bg = getattr(shape, "has_bg", False)
-        self.text_editor_bg_color = getattr(shape, "bg_color", "#000000")
-        self.text_editor_bg_alpha = getattr(shape, "bg_alpha", 180)
+        editor_pos = QPointF(br.left() - 4, max(4.0, br.top() - 24))
+        self.text_editor_pos = editor_pos
 
-        weight = "bold" if self.text_editor_is_bold else "normal"
-        style = "italic" if self.text_editor_is_italic else "normal"
-        decor = "underline" if self.text_editor_is_underline else "none"
-        bg_css = "rgba(0, 0, 0, 200)" if self.text_editor_has_bg else "rgba(20, 22, 28, 160)"
-
-        self.text_editor.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {bg_css};
-                color: {self.text_editor_color};
-                font-family: '{self.text_editor_font_family}', sans-serif;
-                font-size: {self.text_editor_font_size}pt;
-                font-weight: {weight};
-                font-style: {style};
-                text-decoration: {decor};
-                border: 1px dashed {self.text_editor_color};
-                padding: 2px 4px;
-            }}
-        """)
-        self.text_editor.setFixedWidth(max(280, int(br.width() + 24)))
-        self.text_editor.move(int(br.left()), int(br.top()))
+        self.text_editor.update_style(
+            font_family=shape.font_family,
+            font_size=shape.font_size,
+            color=shape.color,
+            is_bold=shape.is_bold,
+            is_italic=getattr(shape, "is_italic", False),
+            is_underline=shape.is_underline,
+            has_bg=getattr(shape, "has_bg", False),
+            bg_color=getattr(shape, "bg_color", "#000000"),
+            bg_alpha=getattr(shape, "bg_alpha", 180)
+        )
         self.text_editor.setText(shape.text)
         self.text_editor.selectAll()
+        self.text_editor.move(int(editor_pos.x()), int(editor_pos.y()))
         self.text_editor.show()
         self.text_editor.setFocus()
 
@@ -1298,13 +1372,34 @@ class OverlayWindow(QWidget):
         if not self.text_editor.isVisible() and existing_shape is None:
             return
         text = self.text_editor.text().strip()
+        f_fam = self.text_editor.font_family
+        f_size = self.text_editor.font_size
+        f_col = self.text_editor.text_color
+        f_bold = self.text_editor.is_bold
+        f_italic = self.text_editor.is_italic
+        f_under = self.text_editor.is_underline
+        f_has_bg = self.text_editor.has_bg
+        f_bg_col = self.text_editor.bg_color
+        f_bg_alpha = self.text_editor.bg_alpha
+
         self.text_editor.clear()
         self.text_editor.hide()
         self.editing_existing_text_shape = None
 
+        # Запоминаем параметры шрифта для всех последующих надписей
+        tcfg = self.right_toolbar.tools_config.setdefault(ToolType.TEXT, {})
+        tcfg["font_family"] = f_fam
+        tcfg["size"] = f_size
+        tcfg["color"] = f_col
+        tcfg["is_bold"] = f_bold
+        tcfg["is_italic"] = f_italic
+        tcfg["is_underline"] = f_under
+        tcfg["has_bg"] = f_has_bg
+        tcfg["bg_color"] = f_bg_col
+        tcfg["bg_alpha"] = f_bg_alpha
+
         if existing_shape:
             if not text:
-                # Если текст стерт полностью — удаляем фигуру
                 cmd = HistoryCommand(
                     tr("hist_cmd_delete", "Удаление фигуры"),
                     do_func=lambda s=existing_shape: self.layer_manager.remove_shape(s.id),
@@ -1312,40 +1407,45 @@ class OverlayWindow(QWidget):
                 )
                 self.layer_manager.remove_shape(existing_shape.id)
                 self.history_manager.push_already_done(cmd)
-            elif text != existing_shape.text:
+            elif text != existing_shape.text or f_size != existing_shape.font_size or f_fam != existing_shape.font_family:
                 old_text = existing_shape.text
+                old_size = existing_shape.font_size
+                old_fam = existing_shape.font_family
                 cmd = HistoryCommand(
                     tr("hist_cmd_text", "Текст: '{text}'", text=text[:12]),
-                    do_func=lambda s=existing_shape, t=text: setattr(s, "text", t),
-                    undo_func=lambda s=existing_shape, t=old_text: setattr(s, "text", t)
+                    do_func=lambda s=existing_shape, t=text, sz=f_size, fm=f_fam: (setattr(s, "text", t), setattr(s, "font_size", sz), setattr(s, "font_family", fm)),
+                    undo_func=lambda s=existing_shape, t=old_text, sz=old_size, fm=old_fam: (setattr(s, "text", t), setattr(s, "font_size", sz), setattr(s, "font_family", fm))
                 )
                 existing_shape.text = text
+                existing_shape.font_size = f_size
+                existing_shape.font_family = f_fam
                 self.history_manager.push_already_done(cmd)
+            self._invalidate_layers_cache()
             self.update()
             return
 
         if text:
             from PyQt6.QtGui import QFontMetrics
-            font = QFont(self.text_editor_font_family, int(self.text_editor_font_size))
-            font.setBold(self.text_editor_is_bold)
-            font.setItalic(getattr(self, "text_editor_is_italic", False))
-            font.setUnderline(self.text_editor_is_underline)
+            font = QFont(f_fam, int(f_size))
+            font.setBold(f_bold)
+            font.setItalic(f_italic)
+            font.setUnderline(f_under)
             fm = QFontMetrics(font)
-            # Точный baseline с учетом ascent шрифта
-            baseline_pos = self.text_editor_pos + QPointF(4, fm.ascent() + 2)
+            # Точный baseline с учетом ascent шрифта и высоты заголовка виджета (24px)
+            baseline_pos = self.text_editor_pos + QPointF(6, 24 + fm.ascent())
 
             shape = TextShape(
                 baseline_pos,
                 text,
-                color=self.text_editor_color,
-                font_size=self.text_editor_font_size,
-                font_family=self.text_editor_font_family,
-                is_bold=self.text_editor_is_bold,
-                is_italic=getattr(self, "text_editor_is_italic", False),
-                is_underline=self.text_editor_is_underline,
-                has_bg=getattr(self, "text_editor_has_bg", False),
-                bg_color=getattr(self, "text_editor_bg_color", "#000000"),
-                bg_alpha=getattr(self, "text_editor_bg_alpha", 180)
+                color=f_col,
+                font_size=f_size,
+                font_family=f_fam,
+                is_bold=f_bold,
+                is_italic=f_italic,
+                is_underline=f_under,
+                has_bg=f_has_bg,
+                bg_color=f_bg_col,
+                bg_alpha=f_bg_alpha
             )
             self.layer_manager.add_shape(shape)
             cmd = HistoryCommand(
@@ -1354,6 +1454,7 @@ class OverlayWindow(QWidget):
                 undo_func=lambda s=shape: self.layer_manager.remove_shape(s.id)
             )
             self.history_manager.push_already_done(cmd)
+            self._invalidate_layers_cache()
             self.update()
 
     # --- Инструмент «Пипетка» (Eyedropper) ---
@@ -2013,7 +2114,8 @@ class OverlayWindow(QWidget):
         painter.drawPixmap(0, 0, crop_pix)
 
         # Рисуем только пользовательские слои (без рамок ресайза и кнопок!)
-        self.layer_manager.draw_all(painter, offset=QPointF(rx, ry), source_pixmap=crop_pix)
+        source_for_layers = self.background_pixmap if self.background_pixmap is not None else crop_pix
+        self.layer_manager.draw_all(painter, offset=QPointF(rx, ry), source_pixmap=source_for_layers)
         painter.end()
 
         return result
