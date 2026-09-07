@@ -170,6 +170,10 @@ def test_constrained_shape_drawing_and_repeated_capture_mask_transform():
 
 def test_models_and_history():
     print("[TEST] Тестирование слоёв и истории Undo/Redo...")
+
+    # Тест проверяет русские имена фигур, поэтому не зависит от языка runner'а.
+    from utils.i18n import set_language
+    set_language("ru")
     
     layer_mgr = LayerManager()
     history_mgr = HistoryManager()
