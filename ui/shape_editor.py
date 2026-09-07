@@ -8,7 +8,7 @@
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRectF, QPointF
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QComboBox, QSlider, QColorDialog, QLineEdit, QWidget, QGridLayout
+    QComboBox, QSlider, QColorDialog, QLineEdit, QWidget, QGridLayout, QCheckBox
 )
 from PyQt6.QtGui import QColor, QFont
 
@@ -543,6 +543,7 @@ class ShapeEditPopup(QFrame):
         self.shape.bg_alpha = int(val * 255 / 100)
         self.shape_modified.emit()
 
+    def _set_color(self, c: str):
         self.shape.color = c
         if isinstance(self.shape, TextShape):
             self._sync_to_parent_tool_config("color", c)
@@ -634,6 +635,11 @@ class ShapeEditPopup(QFrame):
         if p and hasattr(p, "right_toolbar") and hasattr(p.right_toolbar, "tools_config"):
             tcfg = p.right_toolbar.tools_config.setdefault("text", {})
             tcfg[key] = val
+            if key == "color":
+                p.right_toolbar.current_color = val
+                p.right_toolbar._update_color_swatch()
+            if hasattr(p.right_toolbar, "properties_flyout") and p.right_toolbar.properties_flyout.isVisible():
+                p.right_toolbar.properties_flyout.load_tool("text", tcfg)
 
     def _on_text_changed(self, txt: str):
         self.shape.text = txt

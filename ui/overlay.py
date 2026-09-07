@@ -592,7 +592,10 @@ class OverlayWindow(QWidget):
             for shape in reversed(self.layer_manager.shapes):
                 if shape.visible and shape.hit_test_rotated(pos):
                     self.transform_box.set_shape(shape)
+                    self.last_active_shape = shape
                     self._sync_toolbar_to_text_shape(shape)
+                    if isinstance(shape, TextShape):
+                        self.right_toolbar.select_tool(ToolType.TEXT, show_options=True)
                     self.is_transforming = True
                     self.transform_box.start_drag(HandleType.INSIDE, pos)
                     self.shape_drag_initial_pos = pos
@@ -613,6 +616,21 @@ class OverlayWindow(QWidget):
 
         # Рисование фигур внутри рамки
         if self.selection_rect.contains(pos) and self.current_tool != ToolType.MOVE:
+            # 1. Если кликнули по существующему тексту или фигуре — активируем её вместо создания наложения!
+            for shape in reversed(self.layer_manager.shapes):
+                if shape.visible and shape.hit_test_rotated(pos):
+                    self.transform_box.set_shape(shape)
+                    self.last_active_shape = shape
+                    self._sync_toolbar_to_text_shape(shape)
+                    if isinstance(shape, TextShape):
+                        self.right_toolbar.select_tool(ToolType.TEXT, show_options=True)
+                    self.is_transforming = True
+                    self.transform_box.start_drag(HandleType.INSIDE, pos)
+                    self.shape_drag_initial_pos = pos
+                    self._set_cursor_if_needed(Qt.CursorShape.SizeAllCursor)
+                    self.update()
+                    return
+
             if self.transform_box.is_active():
                 self.transform_box.set_shape(None)
                 self.update()
@@ -1420,6 +1438,9 @@ class OverlayWindow(QWidget):
                 existing_shape.font_size = f_size
                 existing_shape.font_family = f_fam
                 self.history_manager.push_already_done(cmd)
+            self.last_active_shape = existing_shape
+            self.transform_box.set_shape(existing_shape)
+            self._sync_toolbar_to_text_shape(existing_shape)
             self._invalidate_layers_cache()
             self.update()
             return
@@ -1448,6 +1469,9 @@ class OverlayWindow(QWidget):
                 bg_alpha=f_bg_alpha
             )
             self.layer_manager.add_shape(shape)
+            self.last_active_shape = shape
+            self.transform_box.set_shape(shape)
+            self._sync_toolbar_to_text_shape(shape)
             cmd = HistoryCommand(
                 tr("hist_cmd_text", "Текст: '{text}'", text=text[:12]),
                 do_func=lambda s=shape: self.layer_manager.add_shape(s),
@@ -2048,11 +2072,31 @@ class OverlayWindow(QWidget):
         else:
             self.setCursor(Qt.CursorShape.CrossCursor)
 
-    def _on_filter_changed(self, filter_type):
+    def _apply_filter_state(self, filter_type: str):
         self.current_filter = filter_type
         if self.capture_worker:
             self.capture_worker.set_filter(filter_type)
+        if hasattr(self, "bottom_toolbar") and hasattr(self.bottom_toolbar, "sync_filter"):
+            self.bottom_toolbar.sync_filter(filter_type)
+        self._invalidate_layers_cache()
         self.update()
+
+    def _on_filter_changed(self, filter_type: str, from_history: bool = False):
+        if filter_type == self.current_filter:
+            return
+        old_filter = self.current_filter
+        self._apply_filter_state(filter_type)
+
+        if not from_history:
+            from utils.image_filters import get_localized_filter_names
+            flt_names = get_localized_filter_names()
+            f_label = flt_names.get(filter_type, filter_type)
+            cmd = HistoryCommand(
+                tr("hist_cmd_filter", "Фильтр: {name}", name=f_label),
+                do_func=lambda f=filter_type: self._apply_filter_state(f),
+                undo_func=lambda f=old_filter: self._apply_filter_state(f)
+            )
+            self.history_manager.push_already_done(cmd)
 
     def _on_lock_toggled(self, is_locked):
         self.is_locked = is_locked

@@ -1972,6 +1972,16 @@ class RightDrawingToolbar(QFrame):
         self.censor_flyout.censor_chosen.connect(self._on_censor_chosen)
         self.censor_flyout.filter_chosen.connect(self._on_filter_chosen)
 
+    @property
+    def current_color(self) -> str:
+        cfg = self.tools_config.get(self.current_tool, {})
+        return cfg.get("color", "#FF2E2E")
+
+    @current_color.setter
+    def current_color(self, val: str):
+        if self.current_tool in self.tools_config:
+            self.tools_config[self.current_tool]["color"] = val
+
     def set_tool_color(self, color: str):
         if self.current_tool in self.tools_config:
             self.tools_config[self.current_tool]["color"] = color
@@ -2104,9 +2114,19 @@ class RightDrawingToolbar(QFrame):
         self.filter_selected.emit(f_type)
 
     def _show_properties_flyout(self):
-        cfg = self.tools_config.setdefault(self.current_tool, {})
-        self.properties_flyout.load_tool(self.current_tool, cfg)
-        anchor = self.tool_buttons.get(self.current_tool, self.btn_color_swatch)
+        target_tool = self.current_tool
+        p = self.parent()
+        if p and hasattr(p, "transform_box") and p.transform_box.is_active():
+            act_s = p.transform_box.shape
+            if act_s and type(act_s).__name__ == "TextShape":
+                target_tool = ToolType.TEXT
+        elif p and getattr(p, "last_active_shape", None):
+            if type(p.last_active_shape).__name__ == "TextShape":
+                target_tool = ToolType.TEXT
+
+        cfg = self.tools_config.setdefault(target_tool, {})
+        self.properties_flyout.load_tool(target_tool, cfg)
+        anchor = self.tool_buttons.get(target_tool, self.btn_color_swatch)
         show_side_smart_popup(anchor, self.properties_flyout)
 
 
@@ -2332,7 +2352,14 @@ class BottomActionToolbar(QFrame):
             self.btn_filter.setIcon(create_themed_icon("filter", self.is_dark, size=16, custom_color="#ffffff"))
         self.filter_selected.emit(f_type)
 
+    def sync_filter(self, f_type: str):
+        self.current_filter = f_type
+        if f_type == FilterType.NONE:
+            self.btn_filter.setStyleSheet("")
+            self.btn_filter.setIcon(create_themed_icon("filter", self.is_dark, size=16))
+        else:
+            self.btn_filter.setStyleSheet("background-color: #2563eb; border: 1px solid #3b82f6; border-radius: 4px;")
+            self.btn_filter.setIcon(create_themed_icon("filter", self.is_dark, size=16, custom_color="#ffffff"))
+
     def reset_filter(self):
-        self.current_filter = FilterType.NONE
-        self.btn_filter.setStyleSheet("")
-        self.btn_filter.setIcon(create_themed_icon("filter", self.is_dark, size=16))
+        self.sync_filter(FilterType.NONE)

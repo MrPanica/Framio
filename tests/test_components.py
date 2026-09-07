@@ -1672,10 +1672,64 @@ def test_mosaic_offset_export_interactive_text_and_flyout_positions():
     print("  -> Экспорт мозаики с оффсетом, InteractiveTextEditor и внешнее открытие всплывающих окон работают безупречно.")
 
 
+def test_dynamic_text_editing_and_filter_history():
+    print("[TEST] Тестирование динамического изменения существующего текста и истории фильтров...")
+    from models.shapes import TextShape
+    from utils.image_filters import FilterType
+    from ui.shape_editor import ShapeEditPopup
+    from ui.overlay import OverlayWindow
+    from ui.toolbars import ToolType
+
+    ov = OverlayWindow()
+    ov.selection_rect = QRectF(100, 100, 500, 400)
+
+    # 1. История Undo/Redo для фильтра всей области
+    assert ov.current_filter == FilterType.NONE
+    assert len(ov.history_manager.undo_stack) == 0
+
+    ov._on_filter_changed(FilterType.GRAYSCALE)
+    assert ov.current_filter == FilterType.GRAYSCALE
+    assert len(ov.history_manager.undo_stack) == 1
+
+    ov.history_manager.undo()
+    assert ov.current_filter == FilterType.NONE
+
+    ov.history_manager.redo()
+    assert ov.current_filter == FilterType.GRAYSCALE
+
+    # 2. ShapeEditPopup: изменение цвета, шрифта, размера текста
+    ts = TextShape(QPointF(200, 200), "Тестовый текст", "#FF0000", font_size=16, font_family="Arial")
+    ov.layer_manager.add_shape(ts)
+    popup = ShapeEditPopup(ts, ov)
+    popup._set_color("#00FF00")
+    assert ts.color == "#00FF00"
+    popup._on_text_font_changed("Consolas")
+    assert ts.font_family == "Consolas"
+    popup._on_text_size_changed(28)
+    assert ts.font_size == 28
+    popup.close()
+
+    # 3. Динамическое изменение уже написанного текста через панель инструментов
+    ov.transform_box.set_shape(ts)
+    ov.right_toolbar.tools_config[ToolType.TEXT]["font_family"] = "Georgia"
+    ov.right_toolbar.tools_config[ToolType.TEXT]["size"] = 32
+    ov.right_toolbar.tools_config[ToolType.TEXT]["is_italic"] = True
+    ov.right_toolbar.set_tool_color("#123456")
+    ov._on_tool_settings_updated()
+
+    assert ts.font_family == "Georgia"
+    assert ts.font_size == 32
+    assert ts.color == "#123456"
+    assert ts.is_italic is True
+
+    print("  -> Динамическое изменение текста (шрифт, цвет, кегль) и Undo/Redo для фильтров работают корректно.")
+
+
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
         tmp_p = Path(tmp_dir)
+        test_dynamic_text_editing_and_filter_history()
         test_mosaic_offset_export_interactive_text_and_flyout_positions()
         test_single_instance_text_eyedropper_and_inspector()
         test_models_and_history()
