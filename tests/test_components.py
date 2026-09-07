@@ -1111,7 +1111,11 @@ def test_custom_countdown_and_live_mosaic():
     from ui.widgets import ColorPalettePopup
     from ui.recording_window import RecordingFrameWindow
     from models.shapes import MosaicShape
+    from utils.i18n import set_language
     from PyQt6.QtCore import QRectF
+
+    # Подписи таймера проверяются на русском, независимо от языка runner'а.
+    set_language("ru")
 
     # 1. Проверяем кастомный QSpinBox таймера
     vid_popup = VideoOptionsPopup()
