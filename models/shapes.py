@@ -749,6 +749,120 @@ class CircleShape(BaseShape):
         painter.restore()
 
 
+class CaptureMaskShape(BaseShape):
+    """Контур, ограничивающий область итогового скриншота или записи.
+
+    Маска хранится отдельно от аннотаций, но реализует тот же минимальный
+    контракт BaseShape, поэтому для неё можно переиспользовать transform box:
+    перемещение, масштабирование и поворот выполняются одинаково.
+    """
+
+    def __init__(self, kind="freeform", rect=None, points=None, color="#38BDF8", stroke_width=2):
+        super().__init__(color=color, stroke_width=stroke_width)
+        self.kind = kind if kind in {"freeform", "rect", "circle"} else "freeform"
+        self.rect = QRectF(rect) if rect is not None else QRectF()
+        self.points = [QPointF(p) for p in (points or [])]
+        self.is_capture_mask = True
+        self.name = tr("capture_mask_name", "Маска области записи")
+
+    def add_point(self, pt: QPointF):
+        if not self.points or (abs(pt.x() - self.points[-1].x()) + abs(pt.y() - self.points[-1].y()) >= 1.5):
+            self.points.append(QPointF(pt))
+
+    def _base_path(self) -> QPainterPath:
+        path = QPainterPath()
+        if self.kind == "freeform":
+            if len(self.points) < 3:
+                return path
+            path.moveTo(self.points[0])
+            for point in self.points[1:]:
+                path.lineTo(point)
+            path.closeSubpath()
+            return path
+
+        rect = self.rect.normalized()
+        if rect.isEmpty():
+            return path
+        if self.kind == "circle":
+            path.addEllipse(rect)
+        else:
+            path.addRect(rect)
+        return path
+
+    def path(self) -> QPainterPath:
+        path = self._base_path()
+        if path.isEmpty() or not self.rotation:
+            return path
+        center = path.boundingRect().center()
+        transform = QTransform()
+        transform.translate(center.x(), center.y())
+        transform.rotate(self.rotation)
+        transform.translate(-center.x(), -center.y())
+        return transform.map(path)
+
+    def hit_test(self, pt: QPointF, tolerance: float = 6.0) -> bool:
+        path = self.path()
+        if path.isEmpty():
+            return False
+        if path.contains(pt):
+            return True
+        stroker = QPainterPathStroker()
+        stroker.setWidth(max(float(self.stroke_width), tolerance * 2.0))
+        return stroker.createStroke(path).contains(pt)
+
+    def hit_test_rotated(self, pt: QPointF, tolerance: float = 6.0) -> bool:
+        # path() уже учитывает rotation; BaseShape здесь сделал бы поворот дважды.
+        return self.hit_test(pt, tolerance)
+
+    def translate(self, dx: float, dy: float):
+        delta = QPointF(dx, dy)
+        if self.kind == "freeform":
+            self.points = [point + delta for point in self.points]
+        else:
+            self.rect.translate(dx, dy)
+
+    def scale_from_origin(self, sx: float, sy: float, origin: QPointF):
+        if self.kind == "freeform":
+            self.points = [
+                QPointF(origin.x() + (point.x() - origin.x()) * sx,
+                        origin.y() + (point.y() - origin.y()) * sy)
+                for point in self.points
+            ]
+            return
+        rect = self.rect.normalized()
+        left = origin.x() + (rect.left() - origin.x()) * sx
+        top = origin.y() + (rect.top() - origin.y()) * sy
+        right = origin.x() + (rect.right() - origin.x()) * sx
+        bottom = origin.y() + (rect.bottom() - origin.y()) * sy
+        self.rect = QRectF(min(left, right), min(top, bottom), abs(right - left), abs(bottom - top))
+
+    def get_bounding_rect(self) -> QRectF:
+        # TransformBox ожидает неповёрнутый исходный прямоугольник и сам
+        # применяет rotation к рамке и маркерам.
+        path = self._base_path()
+        return path.boundingRect().adjusted(-2.0, -2.0, 2.0, 2.0) if not path.isEmpty() else QRectF()
+
+    def clone(self):
+        new_shape = super().clone()
+        new_shape.rect = QRectF(self.rect)
+        new_shape.points = [QPointF(point) for point in self.points]
+        new_shape.kind = self.kind
+        new_shape.is_capture_mask = True
+        return new_shape
+
+    def draw(self, painter: QPainter, offset: QPointF = QPointF(0, 0), source_pixmap: QPixmap = None):
+        path = self.path()
+        if not self.visible or path.isEmpty():
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(QPen(QColor(self.color), self.stroke_width, Qt.PenStyle.DashLine,
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path.translated(-offset.x(), -offset.y()))
+        painter.restore()
+
+
 class TextShape(BaseShape):
     def __init__(self, pos: QPointF, text: str = "", color="#FF2E2E", font_size=18,
                  font_family="Segoe UI", is_bold=True, is_italic=False, is_underline=False,
@@ -1133,4 +1247,3 @@ class BlurShape(RegionalEffectShape):
         new_shape = super().clone()
         new_shape.blur_radius = self.blur_radius
         return new_shape
-

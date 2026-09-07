@@ -21,6 +21,18 @@ user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 dwmapi = ctypes.windll.dwmapi
 
+class POINT(ctypes.Structure):
+    _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+
+# WindowFromPoint принимает POINT по значению, а HWND должен сохраняться на 64-битной Windows.
+user32.WindowFromPoint.restype = wintypes.HWND
+user32.WindowFromPoint.argtypes = [POINT]
+user32.GetAncestor.restype = wintypes.HWND
+user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+user32.GetWindow.restype = wintypes.HWND
+user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+
 # 64-битные типы аргументов и возвращаемых значений для предотвращения обрезания указателей
 user32.GetDC.restype = wintypes.HDC
 user32.GetDC.argtypes = [wintypes.HWND]
@@ -513,4 +525,3 @@ def capture_window_or_screen_bgr(rx: int, ry: int, rw: int, rh: int, target_hwnd
                     return cached
 
     return safe_grab_screen_bgr(rx, ry, rw, rh)
-

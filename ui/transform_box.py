@@ -274,7 +274,14 @@ class ShapeTransformBox:
             return
         for attr in ("rect", "p1", "p2", "points", "path", "pos", "font_size", "rotation"):
             if hasattr(src, attr):
-                setattr(self.shape, attr, getattr(src, attr))
+                value = getattr(src, attr)
+                # CaptureMaskShape exposes path() as a method. Не превращаем
+                # этот метод в устаревшее поле после первой трансформации:
+                # иначе rect уже будет новым, а отрисовка продолжит брать
+                # контур из предыдущего состояния.
+                if callable(value):
+                    continue
+                setattr(self.shape, attr, value)
         if hasattr(self.shape, "cached_pixmap"):
             self.shape.cached_pixmap = None
         if hasattr(self.shape, "cached_mosaic"):

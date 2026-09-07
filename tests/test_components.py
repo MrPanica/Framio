@@ -6,6 +6,7 @@
 import sys
 import os
 import time
+import math
 from pathlib import Path
 import numpy as np
 
@@ -24,17 +25,148 @@ if hasattr(sys.stderr, "reconfigure"):
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QPointF, QRectF
-from PyQt6.QtGui import QImage, QPainter
+from PyQt6.QtGui import QImage, QPainter, QColor
 
-from models.shapes import PenShape, LineShape, ArrowShape, RectangleShape, TextShape, MosaicShape
+from models.shapes import PenShape, LineShape, ArrowShape, RectangleShape, CircleShape, TextShape, MosaicShape, CaptureMaskShape
 from models.layers import LayerManager
 from models.history import HistoryManager, HistoryCommand
 from recorder.video_recorder import VideoRecorder
 from recorder.gif_recorder import GifRecorder
 from utils.image_filters import apply_filter, FilterType
 from utils.hotkey_manager import parse_hotkey_string
+from utils.capture_mask import apply_mask_to_bgr, apply_mask_to_qimage, mask_path_for_frame
 
 GLOBAL_APP = QApplication.instance() or QApplication(sys.argv)
+
+
+def test_capture_masks():
+    print("[TEST] Проверка масок произвольной формы, прямоугольника и овала...")
+
+    freeform = CaptureMaskShape(points=[QPointF(10, 10), QPointF(90, 10), QPointF(90, 90), QPointF(10, 90)])
+    assert freeform.path().contains(QPointF(50, 50))
+    assert not freeform.path().contains(QPointF(2, 2))
+    assert freeform.get_bounding_rect().width() > 70
+
+    rect = CaptureMaskShape(kind="rect", rect=QRectF(10, 10, 80, 40))
+    rect.rotate_by(30)
+    assert rect.path().contains(rect.path().boundingRect().center())
+
+    circle = CaptureMaskShape(kind="circle", rect=QRectF(10, 10, 80, 80))
+    frame = np.full((100, 100, 3), 255, dtype=np.uint8)
+    masked = apply_mask_to_bgr(frame, circle, (0, 0, 100, 100))
+    assert int(masked[50, 50, 0]) == 255
+    assert int(masked[0, 0, 0]) == 0
+
+    # Регрессия: при масштабировании области сначала нужно масштабировать,
+    # а уже затем вычитать координаты области. Иначе маска уезжает вправо-вниз.
+    shifted = CaptureMaskShape(kind="circle", rect=QRectF(90, 90, 20, 20))
+    mapped = mask_path_for_frame(shifted, 80, 80, (80, 80, 40, 40))
+    mapped_center = mapped.boundingRect().center()
+    assert abs(mapped_center.x() - 40.0) < 0.6
+    assert abs(mapped_center.y() - 40.0) < 0.6
+
+    source = QImage(100, 100, QImage.Format.Format_RGB32)
+    source.fill(QColor("#ff0000"))
+    clipped = apply_mask_to_qimage(source, circle, (0, 0, 100, 100))
+    assert clipped.format() == QImage.Format.Format_ARGB32
+    assert clipped.pixelColor(50, 50).alpha() > 0
+    assert clipped.pixelColor(0, 0).alpha() == 0
+    print("  -> Маска закрывается автоматически, поворачивается и единообразно применяется к кадрам.")
+
+
+def test_multiple_capture_masks_and_delete():
+    """Несколько масок образуют объединённую область и удаляются по одной."""
+    print("[TEST] Проверка нескольких масок области записи и удаления одной маски...")
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from ui.overlay import OverlayWindow
+
+    first = CaptureMaskShape(kind="circle", rect=QRectF(10, 10, 30, 30))
+    second = CaptureMaskShape(kind="circle", rect=QRectF(60, 10, 30, 30))
+    frame = np.full((50, 100, 3), 255, dtype=np.uint8)
+    combined = apply_mask_to_bgr(frame, [first, second], (0, 0, 100, 50))
+    assert int(combined[25, 25, 0]) == 255
+    assert int(combined[25, 75, 0]) == 255
+    assert int(combined[5, 50, 0]) == 0
+
+    overlay = SimpleNamespace(
+        capture_masks={0: [first, second]},
+        active_region_idx=0,
+        transform_box=MagicMock(),
+        active_editing_shape=first,
+        last_active_shape=first,
+        update=MagicMock(),
+        _invalidate_layers_cache=MagicMock(),
+    )
+    overlay.transform_box.shape = first
+    OverlayWindow._delete_capture_mask(overlay, first)
+
+    assert overlay.capture_masks[0] == [second]
+    overlay.transform_box.set_shape.assert_called_once_with(second)
+
+    draft = SimpleNamespace(
+        active_region_idx=0,
+        capture_masks={0: [second]},
+        temp_shape=first,
+        shape_origin_pos=QPointF(0, 0),
+        transform_box=MagicMock(),
+        _invalidate_layers_cache=MagicMock(),
+        update=MagicMock(),
+    )
+    OverlayWindow._finish_drawing_shape(draft)
+    assert draft.capture_masks[0] == [second, first]
+    print("  -> Две маски попадают в одну запись как объединённая область, отдельную маску можно удалить.")
+
+
+def test_constrained_shape_drawing_and_repeated_capture_mask_transform():
+    """Shift сохраняет квадратность, а маска не отрывается после повторного движения."""
+    print("[TEST] Проверка Shift-ограничения фигур и повторного перемещения маски...")
+    from ui.overlay import OverlayWindow
+    from ui.transform_box import HandleType, ShapeTransformBox
+
+    # Рисование прямоугольника/круга с Shift должно давать квадратную основу,
+    # чтобы круг оставался окружностью, а не превращался в овал.
+    for shape_type in (RectangleShape, CircleShape):
+        overlay = OverlayWindow.__new__(OverlayWindow)
+        overlay.shape_origin_pos = QPointF(100, 100)
+        overlay.temp_shape = shape_type(QRectF(100, 100, 0, 0))
+        overlay._update_drawing_shape(QPointF(180, 140), shift_pressed=True)
+        assert overlay.temp_shape.rect.width() == overlay.temp_shape.rect.height() == 80
+
+    line_overlay = OverlayWindow.__new__(OverlayWindow)
+    line_overlay.shape_origin_pos = QPointF(100, 100)
+    line_overlay.temp_shape = LineShape(QPointF(100, 100), QPointF(100, 100))
+    line_overlay._update_drawing_shape(QPointF(170, 130), shift_pressed=True)
+    line_angle = math.atan2(
+        line_overlay.temp_shape.p2.y() - line_overlay.temp_shape.p1.y(),
+        line_overlay.temp_shape.p2.x() - line_overlay.temp_shape.p1.x(),
+    )
+    assert abs(line_angle - math.radians(30)) < 0.01
+
+    # После двух последовательных перемещений контур маски и её bounding box
+    # должны описывать одну и ту же позицию. Раньше _apply_shape_geometry
+    # затирал методом path() одноимённое поле и оставлял отрисовку на первом
+    # положении после следующего drag.
+    mask = CaptureMaskShape(kind="circle", rect=QRectF(100, 100, 80, 60))
+    transform_box = ShapeTransformBox(mask)
+    first_center = mask.path().boundingRect().center()
+    transform_box.start_drag(HandleType.INSIDE, first_center)
+    transform_box.drag_to(first_center + QPointF(20, 10))
+    transform_box.finish_drag()
+
+    second_start = mask.get_bounding_rect().center()
+    transform_box.start_drag(HandleType.INSIDE, second_start)
+    transform_box.drag_to(second_start + QPointF(30, 15))
+    transform_box.finish_drag()
+
+    expected_center = first_center + QPointF(20 + 30, 10 + 15)
+    actual_center = mask.path().boundingRect().center()
+    assert abs(actual_center.x() - expected_center.x()) < 0.01
+    assert abs(actual_center.y() - expected_center.y()) < 0.01
+    assert abs(mask.get_bounding_rect().center().x() - actual_center.x()) < 0.01
+    assert abs(mask.get_bounding_rect().center().y() - actual_center.y()) < 0.01
+    print("  -> Shift даёт ровную геометрию, повторное перемещение маски остаётся синхронным.")
+
 
 def test_models_and_history():
     print("[TEST] Тестирование слоёв и истории Undo/Redo...")
@@ -170,8 +302,9 @@ def test_hotkey_parsing():
 def test_progress_signals():
     print("[TEST] Тестирование сигналов прогресса обработки (0-100%)...")
     from recorder.capture_worker import CaptureWorker
-    worker = CaptureWorker("video", "test.mp4", lambda: (0, 0, 100, 100))
+    worker = CaptureWorker("video", "test.mp4", lambda: (0, 0, 100, 100), fps=24)
     assert hasattr(worker, "save_progress")
+    assert worker.fps == 24, "CaptureWorker должен получать FPS из настроек записи"
 
     received = []
     worker.save_progress.connect(lambda f, p, s: received.append((f, p, s)))
@@ -271,7 +404,11 @@ def test_screen_capture_1to1():
 
 def test_window_enumeration_and_capture():
     print("[TEST] Тестирование перечисления окон и захвата...")
-    from utils.screen_lock import enumerate_recordable_windows, capture_window_or_screen_bgr
+    from utils.screen_lock import enumerate_recordable_windows, capture_window_or_screen_bgr, POINT, user32
+    # Проверяем ABI WindowFromPoint: Win32 принимает POINT по значению, а HWND не обрезается.
+    point_hwnd = user32.WindowFromPoint(POINT(0, 0))
+    assert int(point_hwnd or 0) >= 0
+    assert user32.WindowFromPoint.argtypes == [POINT]
     windows = enumerate_recordable_windows()
     assert isinstance(windows, list)
     print(f"  -> Найдено окон для захвата: {len(windows)}")
@@ -519,6 +656,8 @@ def test_settings_dialog_apply_without_close():
 
     dlg = SettingsDialog()
     dlg.show()
+    assert hasattr(dlg, "combo_fps"), "В настройках записи отсутствует выбор FPS"
+    assert dlg.combo_fps.currentText() in {"15", "24", "30", "60"}
     signals = []
     dlg.settings_applied.connect(lambda: signals.append(True))
 
@@ -528,6 +667,19 @@ def test_settings_dialog_apply_without_close():
     assert "✓" in dlg.lbl_status.text()
     dlg.close()
     print("  -> Кнопка «Применить» успешно сохраняет настройки и оставляет окно открытым.")
+
+
+def test_video_options_popup_has_fps():
+    print("[TEST] Проверка FPS непосредственно в параметрах записи видео...")
+    from ui.toolbars import VideoOptionsPopup
+
+    popup = VideoOptionsPopup()
+    assert hasattr(popup, "combo_fps"), "В popup параметров видео нет выбора FPS"
+    assert {popup.combo_fps.itemText(i) for i in range(popup.combo_fps.count())} >= {"15", "24", "30", "60"}
+    popup.combo_fps.setCurrentText("24")
+    assert popup.combo_fps.currentText() == "24"
+    popup.close()
+    print("  -> FPS доступен прямо в popup параметров записи видео.")
 
 
 def test_dynamic_frame_rescaling(tmp_path):
@@ -796,6 +948,10 @@ def test_i18n_and_video_drawing_enhancements(tmp_path):
     # Проверка смены языка через SettingsDialog
     idx_en = dlg.combo_lang.findData("en")
     dlg.combo_lang.setCurrentIndex(idx_en)
+    # Регрессия: язык применяется самим выбором, без Apply и без перезапуска.
+    assert dlg.cfg.language == "en"
+    assert get_current_language() == "en"
+    QApplication.processEvents()
     dlg._apply_settings()
     assert dlg.cfg.language == "en"
     assert get_current_language() == "en"
@@ -1124,9 +1280,13 @@ def test_blur_censor_palette_and_outside_click():
     assert g_opt.chk_countdown.isChecked() is False
     g_opt.deleteLater()
 
-    # 7. Тест защиты от случайного сброса рамки при клике снаружи
+    # 7. Одиночный клик снаружи ничего не меняет, но drag снаружи начинает
+    # новое одиночное выделение. В multi-region режиме старые зоны защищены.
     overlay = OverlayWindow()
     overlay.selection_rect = QRectF(100, 100, 300, 300)
+    overlay.regions = [QRectF(100, 100, 300, 300)]
+    overlay.active_region_idx = 0
+    overlay.is_adding_region = False
     # Клик снаружи (20, 20)
     press_evt = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(20, 20), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
     overlay.mousePressEvent(press_evt)
@@ -1139,12 +1299,16 @@ def test_blur_censor_palette_and_outside_click():
     assert getattr(overlay, "pending_outside_drag", False) is False
     assert overlay.selection_rect == QRectF(100, 100, 300, 300)  # Рамка всё ещё цела!
 
-    # Протяжка мышью снаружи (>6 px)
+    # Протяжка мышью снаружи без «+» или Ctrl заменяет одиночную зону.
     overlay.mousePressEvent(press_evt)
-    move_evt = QMouseEvent(QEvent.Type.MouseMove, QPointF(40, 40), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    move_evt = QMouseEvent(QEvent.Type.MouseMove, QPointF(80, 80), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
     overlay.mouseMoveEvent(move_evt)
     assert overlay.is_selecting is True
-    assert overlay.selection_rect != QRectF(100, 100, 300, 300)  # Новое выделение началось!
+    release_evt = QMouseEvent(QEvent.Type.MouseButtonRelease, QPointF(80, 80), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    overlay.mouseReleaseEvent(release_evt)
+    assert overlay.is_selecting is False
+    assert overlay.regions == [QRectF(20, 20, 60, 60)]
+    assert overlay.selection_rect == QRectF(20, 20, 60, 60)
     overlay.deleteLater()
 
     QApplication.processEvents()
@@ -1726,18 +1890,19 @@ def test_dynamic_text_editing_and_filter_history():
 
 
 def test_multi_region_selection_and_export():
-    """Тест мульти-выделения: добавление зон, переключение, удаление и составной экспорт."""
+    """Тест мульти-выделения: добавление зон, активная зона и раздельный экспорт."""
     print("[TEST] Тестирование мульти-выделения (multi-region)...")
     from unittest.mock import MagicMock, patch
-    from PyQt6.QtCore import QRectF
-    from PyQt6.QtGui import QPixmap, QScreen
+    from PyQt6.QtCore import QRectF, Qt, QEvent
+    from PyQt6.QtGui import QPixmap, QScreen, QMouseEvent
     from PyQt6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication(sys.argv)
 
     # Создаём экземпляр оверлея через мок экрана
+    from ui.overlay import OverlayWindow
+    real_overlay_init = OverlayWindow.__init__
     with patch("ui.overlay.OverlayWindow.__init__", lambda self, *a, **kw: None):
-        from ui.overlay import OverlayWindow
         ov = OverlayWindow.__new__(OverlayWindow)
         # Инициализируем минимально необходимые атрибуты
         ov.regions = []
@@ -1782,7 +1947,173 @@ def test_multi_region_selection_and_export():
         ov.active_region_idx = max(0, len(ov.regions) - 1)
         assert len(ov.regions) == 1, "После удаления одной из двух зон должна остаться одна"
 
-        # 8. Составной экспорт: united_rect для двух зон
+        # 8. Экспорт должен возвращать каждую зону отдельным изображением.
+        # Регрессия: раньше get_cropped_image() собирал общий прямоугольник.
+        ov = OverlayWindow.__new__(OverlayWindow)
+        ov.background_pixmap = QPixmap(640, 480)
+        ov.background_pixmap.fill(Qt.GlobalColor.white)
+        ov.dynamic_bg = False
+        ov.is_passthrough = False
+        from utils.image_filters import FilterType
+        ov.current_filter = FilterType.NONE
+        ov.layer_manager = type("LayerManager", (), {"draw_all": lambda *_a, **_kw: None})()
+        ov.regions = [QRF(10, 20, 120, 80), QRF(300, 100, 180, 120)]
+        ov.active_region_idx = 0
+        images = ov.get_cropped_images()
+        assert [(img.width(), img.height()) for img in images] == [(120, 80), (180, 120)]
+        assert (ov.get_cropped_image().width(), ov.get_cropped_image().height()) == (120, 80)
+
+        # Регрессия Windows DPI: safe_grab_screen_pixmap может вернуть
+        # физический QPixmap с DPR > 1. Координаты зон остаются логическими,
+        # поэтому crop обязан переводить их в физические координаты до copy().
+        dpi_pix = QPixmap(960, 720)
+        dpi_pix.setDevicePixelRatio(1.5)
+        dpi_pix.fill(Qt.GlobalColor.black)
+        dpi_painter = QPainter(dpi_pix)
+        dpi_painter.fillRect(300, 100, 180, 120, Qt.GlobalColor.blue)
+        dpi_painter.end()
+        ov.background_pixmap = dpi_pix
+        dpi_images = ov.get_cropped_images()
+        assert dpi_images[1].pixelColor(90, 60).blue() > 200, (
+            "DPI-aware crop должен брать вторую зону из физического QPixmap, "
+            "а не возвращать пустую/белую область"
+        )
+
+        ov.background_pixmap = QPixmap(640, 480)
+        ov.background_pixmap.fill(Qt.GlobalColor.white)
+        ov._set_images_on_clipboard(images)
+        clipboard_mime = QApplication.clipboard().mimeData()
+        clipboard_formats = clipboard_mime.formats()
+        assert "image/png" in clipboard_formats, "Обычная вставка должна получать настоящий PNG, а не путь"
+        assert bytes(clipboard_mime.data("image/png")), "PNG payload clipboard не должен быть пустым"
+        assert "application/x-framio-image-list" in clipboard_formats
+        import json
+        clipboard_payload = QApplication.clipboard().mimeData().data("application/x-framio-image-list")
+        assert len(json.loads(bytes(clipboard_payload))["images"]) == 2
+        clipboard_urls = QApplication.clipboard().mimeData().urls()
+        assert len(clipboard_urls) == 2, "В clipboard должны попасть file-URLs всех зон"
+        assert all(Path(url.toLocalFile()).exists() for url in clipboard_urls)
+
+        # Отмена диалога не должна зависать на скрытом overlay/Проводнике.
+        from types import SimpleNamespace
+        ov.cfg = SimpleNamespace(save_dir_screenshots=str(Path.cwd()), auto_copy_to_clipboard=False, play_sound=False)
+        ov.hide = MagicMock()
+        ov.show = MagicMock()
+        ov.raise_ = MagicMock()
+        ov.activateWindow = MagicMock()
+        with patch("ui.overlay.QFileDialog.getSaveFileName", return_value=("", "")) as save_dialog:
+            OverlayWindow.save_screenshot(ov, all_regions=True)
+        assert save_dialog.call_args.args[0] is None, "Native save dialog не должен иметь скрытый overlay-родитель"
+        ov.show.assert_called_once_with()
+        ov.raise_.assert_called_once_with()
+        ov.activateWindow.assert_called_once_with()
+
+        # Успешное сохранение из верхней панели должно создать отдельный файл
+        # для каждой зоны и закрыть overlay после завершения диалога.
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            save_base = Path(tmp_dir) / "from-header.png"
+            ov.close_overlay = MagicMock()
+            ov._notify = MagicMock()
+            ov.show.reset_mock()
+            with patch("ui.overlay.QFileDialog.getSaveFileName", return_value=(str(save_base), "PNG Image (*.png)")):
+                OverlayWindow.save_screenshot(ov, fmt="png", all_regions=True)
+            assert (Path(tmp_dir) / "from-header_zone-1.png").exists()
+            assert (Path(tmp_dir) / "from-header_zone-2.png").exists()
+            ov.close_overlay.assert_called_once_with()
+
+        # 8. Сохранение не должно зависеть от того, ввёл ли пользователь
+        # расширение в диалоге. Каждая зона получает отдельный PNG.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            save_base = Path(tmp_dir) / "all-zones"
+            saved = OverlayWindow._save_images_to_paths(images, save_base, "png")
+            assert [Path(path).name for path in saved] == ["all-zones_zone-1.png", "all-zones_zone-2.png"]
+            assert all(Path(path).exists() for path in saved)
+
+        # 9. Обычная запись работает только с активной зоной, а групповое действие — со всеми.
+        ov.recording_region_indices = {1}
+        assert [r.toRect() for r in ov.get_action_regions()] == [QRF(10, 20, 120, 80).toRect()]
+        assert len(ov.get_action_regions(all_regions=True)) == 1
+        assert ov.get_action_region_items(all_regions=True)[0][0] == 0
+        ov.recording_region_indices = {0}
+        assert ov.get_action_regions() == []
+        assert ov.get_action_region_items(all_regions=True)[0][0] == 1
+        ov.recording_region_indices = set()
+
+        # 9.1 Верхняя панель должна иметь отдельный переключатель добавления
+        # и включаемые массовые действия для доступных зон.
+        from ui.toolbars import RegionActionHeader
+        header = RegionActionHeader()
+        header.set_region_state(True, total_count=2, available_count=2)
+        assert header.btn_add.isChecked()
+        assert "выделите" in header.lbl_title.text().lower() or "select" in header.lbl_title.text().lower()
+        assert header.btn_mass_save.isEnabled()
+        assert header.btn_mass_video.isEnabled()
+        header.set_region_state(False, total_count=1, available_count=1)
+        assert not header.btn_add.isChecked()
+        assert hasattr(header, "btn_close")
+
+        # 10. Режим добавления включается явным нажатием «+».
+        ov.bottom_toolbar = type("Toolbar", (), {
+            "update_add_region_state": lambda *_: None,
+        })()
+        ov.setCursor = lambda *_: None
+        ov._set_cursor_if_needed = lambda *_: None
+        ov.update = lambda: None
+        ov.is_adding_region = False
+        ov.start_adding_region()
+        assert ov.is_adding_region is True
+
+        # 10.1 Кнопка «+» вооружает только следующее выделение. После этого
+        # внешний drag без Ctrl заменяет активную зону, а не создаёт третью.
+        ov = OverlayWindow.__new__(OverlayWindow)
+        real_overlay_init(ov)
+        ov.regions = [QRF(10, 10, 120, 80)]
+        ov.active_region_idx = 0
+        ov.is_adding_region = True
+        ov.mousePressEvent(QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(300, 100),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier
+        ))
+        ov.mouseMoveEvent(QMouseEvent(
+            QEvent.Type.MouseMove, QPointF(420, 220),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier
+        ))
+        ov.mouseReleaseEvent(QMouseEvent(
+            QEvent.Type.MouseButtonRelease, QPointF(420, 220),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier
+        ))
+        assert len(ov.get_valid_regions()) == 2
+        assert ov.active_region_idx == 1
+        assert ov.is_adding_region is False
+
+        # Теперь обычный внешний drag перевыделяет второй контур.
+        ov.mousePressEvent(QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(600, 300),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier
+        ))
+        ov.mouseMoveEvent(QMouseEvent(
+            QEvent.Type.MouseMove, QPointF(720, 420),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier
+        ))
+        ov.mouseReleaseEvent(QMouseEvent(
+            QEvent.Type.MouseButtonRelease, QPointF(720, 420),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier
+        ))
+        assert len(ov.get_valid_regions()) == 2
+        assert ov.regions[1] == QRF(600, 300, 120, 120)
+        assert ov._is_fullscreen_region(QRectF(0, 0, ov.width(), ov.height()))
+        assert not ov._is_fullscreen_region(QRectF(0, 0, 500, 300))
+        ov.deleteLater()
+
+        # 11. Составной экспорт больше не используется как результат screenshot/copy,
+        # но геометрия объединения остаётся полезной для обратной совместимости.
         r_a = QRectF(10, 10, 200, 150)
         r_b = QRectF(300, 100, 180, 120)
         united = r_a.united(r_b).toRect()
@@ -1791,15 +2122,278 @@ def test_multi_region_selection_and_export():
         assert united.left() <= 10 and united.top() <= 10
         assert united.right() >= (300 + 180 - 1) and united.bottom() >= (100 + 120 - 1)
 
-        # 9. Составной QPixmap ARGB32_Premultiplied
-        from PyQt6.QtGui import QPixmap, QPainter
-        from PyQt6.QtCore import Qt
+        # 12. Составной QPixmap ARGB32_Premultiplied
+        from PyQt6.QtGui import QPixmap
         pix = QPixmap(united.width(), united.height())
         pix.fill(Qt.GlobalColor.transparent)
         assert not pix.isNull(), "Составной пиксмап не должен быть пустым"
         assert pix.hasAlphaChannel(), "Составной пиксмап должен иметь альфа-канал"
 
-    print("  -> Мульти-выделение: добавление, переключение, удаление и составной экспорт работают корректно.")
+    print("  -> Мульти-выделение: добавление, активная зона, раздельный экспорт и clipboard payload работают корректно.")
+
+
+def test_recent_media_history():
+    """Проверяет быстрый in-app список материалов без отдельного окна."""
+    print("[TEST] Тестирование быстрого списка последних материалов...")
+    from unittest.mock import MagicMock
+    from PyQt6.QtGui import QImage
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QLabel, QVBoxLayout, QPushButton, QSizePolicy
+    from main import FramioApp, RecentMediaPanel
+
+    # Используем обычный объект-владелец: создание QObject через __new__
+    # без QObject.__init__ запрещено PyQt и не относится к проверяемой панели.
+    app = type("FakeFramioApp", (), {})()
+    app.recent_media = []
+    app._setup_tray_menu = lambda: None
+    app._recent_media_menu = lambda menu: FramioApp._recent_media_menu(app, menu)
+    image = QImage(8, 6, QImage.Format.Format_RGB32)
+    image.fill(Qt.GlobalColor.white)
+
+    FramioApp.add_recent_media(app, image=image, label="Clipboard screenshot")
+    FramioApp.add_recent_media(app, image=image, label="Second screenshot")
+    assert [item["label"] for item in app.recent_media] == ["Second screenshot", "Clipboard screenshot"]
+    assert app.recent_media[0]["image"].size() == image.size()
+
+    from PyQt6.QtWidgets import QMenu
+    menu = QMenu()
+    app._recent_media_menu(menu)
+    recent_submenu = menu.actions()[0].menu()
+    panel_action = recent_submenu.actions()[0]
+    panel = panel_action.defaultWidget()
+    assert isinstance(panel, RecentMediaPanel)
+    assert panel.width() <= 380, "Панель последних материалов должна оставаться компактной"
+    assert RecentMediaPanel.media_kind({"path": "capture.mp4"}) == "videos"
+    assert RecentMediaPanel.media_kind({"path": "capture.gif"}) == "gifs"
+    assert RecentMediaPanel.media_kind({"path": "capture.png"}) == "screenshots"
+    app._view_recent_media = MagicMock()
+    app._copy_recent_media = MagicMock()
+    card = panel._make_card({
+        "label": "A very long screenshot name that must be elided in the card title",
+        "path": "capture.png",
+        "image": image,
+    })
+    title_label = card.findChild(QLabel, "recentMediaLabel")
+    preview = card.findChild(QLabel, "recentMediaPreview")
+    assert title_label is not None and "…" in title_label.text()
+    assert title_label.toolTip().startswith("A very long screenshot name")
+    assert title_label.toolTip().endswith("capture.png")
+    assert preview is not None and hasattr(preview, "clicked")
+    assert preview.width() == RecentMediaPanel.PREVIEW_WIDTH
+    assert preview.height() == RecentMediaPanel.PREVIEW_HEIGHT
+    assert preview.width() * 9 == preview.height() * 16
+    buttons = card.findChildren(QPushButton)
+    assert len(buttons) == 2
+    assert all(button.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Fixed for button in buttons)
+    preview.clicked.emit()
+    app._view_recent_media.assert_called_once()
+    assert isinstance(card.layout(), QVBoxLayout)
+    assert len(card.findChildren(QPushButton)) == 2
+    assert all(button.text() not in {"Вставить", "Paste"} for button in card.findChildren(QPushButton))
+    card.deleteLater()
+    import cv2
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        video_path = str(Path(tmp_dir) / "preview.mp4")
+        writer = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*"mp4v"), 12, (32, 24))
+        assert writer.isOpened(), "Тестовый MP4 не открылся для проверки превью"
+        writer.write(np.full((24, 32, 3), 180, dtype=np.uint8))
+        writer.release()
+        assert RecentMediaPanel._load_preview({"path": video_path}) is not None
+    FramioApp._copy_recent_media(app, {"path": "O:/captures/example.mp4"})
+    recent_mime = QApplication.clipboard().mimeData()
+    assert recent_mime.urls()[0].toLocalFile().endswith("example.mp4")
+    # Qt закономерно предоставляет text/uri-list и как URL, и как text;
+    # главным контрактом для видео остаётся передача файла, а не картинки.
+    assert not recent_mime.hasImage()
+
+    for index in range(60):
+        FramioApp.add_recent_media(app, label=f"Video {index}", path=f"O:/captures/{index}.mp4")
+    assert len(app.recent_media) == 50
+    assert app.recent_media[0]["label"] == "Video 59"
+
+    panel.close()
+    print("  -> Последние материалы имеют фильтры, действия, превью и прокрутку при большом списке.")
+
+
+def test_mass_recording_closes_selection_overlay():
+    """Массовая запись не должна оставлять интерактивный overlay после остановки."""
+    print("[TEST] Тестирование жизненного цикла массовой записи...")
+    from unittest.mock import MagicMock
+    from ui.overlay import OverlayWindow
+
+    first = object()
+    second = object()
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.recording_windows = [first, second]
+    overlay.recording_region_indices = {0, 1}
+    overlay.is_recording = True
+    overlay._mass_recording = True
+    overlay.update = MagicMock()
+    overlay.setAttribute = MagicMock()
+    overlay._sync_region_header = MagicMock()
+    overlay.close_overlay = MagicMock()
+
+    overlay._on_overlay_recording_closed(first)
+    assert overlay.recording_windows == [second]
+    assert not overlay.close_overlay.called
+
+    overlay._on_overlay_recording_closed(second)
+    assert overlay.recording_windows == []
+    overlay.close_overlay.assert_called_once_with()
+    assert overlay._mass_recording is False
+
+    print("  -> После завершения последнего массового видео/GIF интерактивный overlay закрывается.")
+
+
+def test_single_recording_closes_overlay_when_no_regions_remain():
+    """Остановка последней обычной записи должна убрать затемнение и рамку."""
+    print("[TEST] Проверка очистки overlay после последней обычной записи...")
+    from unittest.mock import MagicMock
+    from ui.overlay import OverlayWindow
+
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.recording_windows = []
+    overlay.recording_region_indices = set()
+    overlay.is_recording = True
+    overlay._mass_recording = False
+    overlay.regions = []
+    overlay.active_region_idx = 0
+    overlay.update = MagicMock()
+    overlay.setAttribute = MagicMock()
+    overlay._show_toolbars = MagicMock()
+    overlay._update_toolbar_positions = MagicMock()
+    overlay._sync_close_button_tooltip = MagicMock()
+    overlay.close_overlay = MagicMock()
+
+    overlay._on_overlay_recording_closed(object())
+    overlay.close_overlay.assert_called_once_with()
+    assert overlay.is_recording is False
+
+    print("  -> Последняя обычная запись больше не оставляет затемнение и рамку.")
+
+
+def test_recording_start_hides_selection_overlay():
+    """После запуска обычной записи overlay не остаётся затемнённым поверх экрана."""
+    print("[TEST] Проверка скрытия overlay сразу после старта записи...")
+    from unittest.mock import MagicMock, patch
+    from types import SimpleNamespace
+    from PyQt6.QtCore import QRectF
+    from ui.overlay import OverlayWindow
+
+    class DummySignal:
+        def connect(self, _callback):
+            return None
+
+    rec_window = MagicMock()
+    rec_window.recording_closed = DummySignal()
+    region = QRectF(20, 30, 320, 200)
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.cfg = SimpleNamespace(
+        record_mic=True,
+        record_system=True,
+        video_codec="libx264",
+        record_countdown_enabled=False,
+        record_countdown_seconds=3,
+    )
+    overlay.config_mgr = MagicMock()
+    overlay.target_hwnd = None
+    overlay.recording_windows = []
+    overlay.recording_region_indices = set()
+    overlay.is_recording = False
+    overlay._mass_recording = False
+    overlay.get_valid_region_items = lambda: [(0, region)]
+    overlay.get_action_region_items = lambda all_regions=False: [(0, region)]
+    overlay._is_fullscreen_region = lambda _region: False
+    overlay._set_add_region_mode = MagicMock()
+    overlay.badge = MagicMock()
+    overlay.text_editor = MagicMock()
+    overlay.setAttribute = MagicMock()
+    overlay.clearMask = MagicMock()
+    overlay.update = MagicMock()
+    overlay.hide = MagicMock()
+    overlay.show = MagicMock()
+    overlay._hide_toolbars = MagicMock()
+    overlay._unclip_timer = MagicMock()
+
+    with patch("ui.overlay.RecordingFrameWindow", return_value=rec_window):
+        OverlayWindow.start_recording(overlay, mode="video", all_regions=False)
+
+    overlay.hide.assert_called_once_with()
+    overlay.show.assert_not_called()
+    overlay._hide_toolbars.assert_called_once_with()
+    assert overlay.recording_windows == [rec_window]
+
+    print("  -> После старта GIF/видео затемнение и интерактивное выделение снимаются сразу.")
+
+
+def test_double_click_selects_window_below_topmost_overlay():
+    """Двойной клик выбирает целое окно под topmost overlay без hover-состояния."""
+    print("[TEST] Проверка выбора окна двойным кликом под верхним overlay...")
+    from unittest.mock import patch
+    from PyQt6.QtCore import QEvent, QPoint, QPointF
+    from PyQt6.QtGui import QMouseEvent
+    from ui.overlay import OverlayWindow, user32
+
+    overlay = OverlayWindow()
+    overlay.setGeometry(0, 0, 800, 600)
+    overlay_hwnd = int(overlay.winId())
+    target_hwnd = 424242
+    get_window_calls = []
+
+    def fake_get_window(hwnd, relation):
+        get_window_calls.append((int(hwnd), int(relation)))
+        if int(hwnd) == overlay_hwnd and int(relation) == 2:  # GW_HWNDNEXT
+            return target_hwnd
+        return 0
+
+    def fake_get_window_rect(_hwnd, rect_ptr):
+        rect = rect_ptr._obj
+        rect.left, rect.top, rect.right, rect.bottom = 80, 60, 480, 360
+        return 1
+
+    def fake_get_window_text(_hwnd, buffer, _length):
+        buffer.value = "Тестовое окно"
+        return 1
+
+    with patch.object(user32, "WindowFromPoint", return_value=overlay_hwnd), \
+            patch.object(user32, "GetAncestor", side_effect=lambda hwnd, _kind: int(hwnd)), \
+            patch.object(user32, "GetWindow", side_effect=fake_get_window), \
+            patch.object(user32, "IsWindowVisible", return_value=True), \
+            patch.object(user32, "GetWindowRect", side_effect=fake_get_window_rect), \
+            patch.object(user32, "GetWindowTextLengthW", return_value=12), \
+            patch.object(user32, "GetWindowTextW", side_effect=fake_get_window_text):
+        match = overlay._window_at_global_point(QPoint(120, 70))
+        assert match is not None
+
+    assert (overlay_hwnd, 2) in get_window_calls
+
+    # Двойной клик в любой части окна должен выбрать всю его рамку.
+    double_click = QMouseEvent(
+        QEvent.Type.MouseButtonDblClick,
+        QPointF(120, 70),
+        QPointF(120, 70),
+        QPointF(120, 70),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    with patch.object(overlay, "isVisible", return_value=True), \
+            patch.object(user32, "WindowFromPoint", return_value=overlay_hwnd), \
+            patch.object(user32, "GetAncestor", side_effect=lambda hwnd, _kind: int(hwnd)), \
+            patch.object(user32, "GetWindow", side_effect=fake_get_window), \
+            patch.object(user32, "IsWindowVisible", return_value=True), \
+            patch.object(user32, "GetWindowRect", side_effect=fake_get_window_rect), \
+            patch.object(user32, "GetWindowTextLengthW", return_value=12), \
+            patch.object(user32, "GetWindowTextW", side_effect=fake_get_window_text):
+        overlay.mouseDoubleClickEvent(double_click)
+
+    assert len(overlay.get_valid_regions()) == 1
+    assert overlay.target_hwnd == target_hwnd
+    assert overlay.regions[0] == QRectF(80, 60, 400, 300)
+
+    overlay.deleteLater()
+    print("  -> Окно под topmost overlay найдено, hover-контур не используется, двойной клик выбирает его целиком.")
 
 
 if __name__ == "__main__":
@@ -1810,6 +2404,9 @@ if __name__ == "__main__":
         test_mosaic_offset_export_interactive_text_and_flyout_positions()
         test_single_instance_text_eyedropper_and_inspector()
         test_models_and_history()
+        test_capture_masks()
+        test_multiple_capture_masks_and_delete()
+        test_constrained_shape_drawing_and_repeated_capture_mask_transform()
         test_rotated_regional_effect_stencil_and_i18n()
         test_regional_effect_dynamic_resampling_and_alt_inspector()
         test_regional_effects_and_whole_screen_filter_reset()
@@ -1818,6 +2415,7 @@ if __name__ == "__main__":
         test_shape_directional_drawing()
         test_hotkey_recorder_button()
         test_settings_dialog_apply_without_close()
+        test_video_options_popup_has_fps()
         test_dynamic_frame_rescaling(tmp_p)
         test_shape_cloning_and_reordering()
         test_style_preview_icons()
@@ -1840,11 +2438,13 @@ if __name__ == "__main__":
         test_hotkey_parsing()
         test_progress_signals()
         test_multi_region_selection_and_export()
+        test_mass_recording_closes_selection_overlay()
+        test_single_recording_closes_overlay_when_no_regions_remain()
+        test_recording_start_hides_selection_overlay()
+        test_double_click_selects_window_below_topmost_overlay()
         import time
         time.sleep(0.5)
         QApplication.processEvents()
     print("\n[OK] ВСЕ ТЕСТЫ УСПЕШНО ПРОЙДЕНЫ!")
     import sys
     sys.exit(0)
-
-

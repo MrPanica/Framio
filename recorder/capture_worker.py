@@ -20,6 +20,7 @@ from .video_recorder import VideoRecorder
 from .audio_recorder import AudioRecorder
 from .gif_recorder import GifRecorder
 from utils.image_filters import apply_filter, FilterType
+from utils.capture_mask import apply_mask_to_bgr
 from utils.screen_lock import (
     safe_grab_screen_bgr, safe_grab_screen_pixmap, qimage_to_cv2_bgr,
     capture_window_or_screen_bgr
@@ -42,7 +43,7 @@ class CaptureWorker(QThread):
                  record_mic: bool = True, record_system: bool = True,
                  compress_gif: bool = True, compress_video: bool = True,
                  gif_colors: int = 64, gif_dither: str = "none",
-                 target_hwnd: int | None = None, parent=None):
+                 target_hwnd: int | None = None, capture_mask=None, mask_getter=None, parent=None):
         super().__init__(parent)
         self.mode = mode  # "video" or "gif"
         self.output_path = output_path
@@ -58,6 +59,8 @@ class CaptureWorker(QThread):
         self.gif_colors = max(16, min(256, gif_colors))
         self.gif_dither = gif_dither
         self.target_hwnd = target_hwnd
+        self.capture_mask = capture_mask
+        self.mask_getter = mask_getter
         self.filter_type = FilterType.NONE
 
         self.running = False
@@ -179,6 +182,16 @@ class CaptureWorker(QThread):
                         if frame_bgr.shape[0] != actual_h or frame_bgr.shape[1] != actual_w:
                             interp = cv2.INTER_AREA if (frame_bgr.shape[1] > actual_w or frame_bgr.shape[0] > actual_h) else cv2.INTER_LINEAR
                             frame_bgr = cv2.resize(frame_bgr, (actual_w, actual_h), interpolation=interp)
+
+                        # Маска живёт в координатах самой зоны, поэтому при
+                        # изменении размеров окна она пересчитывается на каждый кадр.
+                        active_mask = self.mask_getter() if callable(self.mask_getter) else self.capture_mask
+                        if active_mask is not None:
+                            frame_bgr = apply_mask_to_bgr(
+                                frame_bgr,
+                                active_mask,
+                                (0, 0, max(1, rw), max(1, rh)),
+                            )
 
                         # Изолированная отрисовка векторных слоёв и цензуры (мозаика и блюр)
                         try:

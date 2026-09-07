@@ -9,17 +9,20 @@ import sys
 import os
 import ctypes
 import subprocess
+import time
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-from PyQt6.QtCore import Qt, QObject, pyqtSlot, QTimer, QPointF, QRectF
+from PyQt6.QtCore import Qt, QObject, pyqtSignal, pyqtSlot, QTimer, QPointF, QRectF, QMimeData, QUrl
 from PyQt6.QtWidgets import (
-    QApplication, QSystemTrayIcon, QMenu
+    QApplication, QSystemTrayIcon, QMenu, QWidgetAction,
+    QWidget, QFrame, QLabel, QPushButton, QScrollArea,
+    QHBoxLayout, QVBoxLayout, QSizePolicy
 )
 from PyQt6.QtGui import (
-    QIcon, QPixmap, QPainter, QColor, QFont, QAction, QPen, QBrush, QLinearGradient
+    QIcon, QPixmap, QPainter, QColor, QFont, QAction, QPen, QBrush, QLinearGradient, QImage, QDrag
 )
 
 from datetime import datetime
@@ -91,6 +94,246 @@ def make_app_icon(is_recording: bool = False):
     return QIcon(pix)
 
 
+class MediaPreviewLabel(QLabel):
+    clicked = pyqtSignal()
+
+    def __init__(self, item=None, image=None, parent=None):
+        super().__init__(parent)
+        self.item = item or {}
+        self.drag_image = image
+        self._drag_start = None
+        self._drag_started = False
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = event.position().toPoint()
+            self._drag_started = False
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            self._drag_start is not None
+            and event.buttons() & Qt.MouseButton.LeftButton
+            and (event.position().toPoint() - self._drag_start).manhattanLength() >= QApplication.startDragDistance()
+        ):
+            path = str(self.item.get("path", "") or "")
+            if not path and (self.drag_image is None or self.drag_image.isNull()):
+                return
+
+            mime = QMimeData()
+            if path:
+                mime.setUrls([QUrl.fromLocalFile(path)])
+            if self.drag_image is not None and not self.drag_image.isNull():
+                mime.setImageData(self.drag_image)
+
+            drag = QDrag(self)
+            drag.setMimeData(mime)
+            pixmap = self.pixmap()
+            if pixmap is not None and not pixmap.isNull():
+                drag.setPixmap(pixmap)
+            self._drag_started = True
+            self._drag_start = None
+            drag.exec(Qt.DropAction.CopyAction)
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            if not self._drag_started:
+                self.clicked.emit()
+            self._drag_start = None
+            self._drag_started = False
+        super().mouseReleaseEvent(event)
+
+
+class RecentMediaPanel(QWidget):
+    """Панель последних материалов с фильтром, превью и действиями."""
+
+    IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+    GIF_SUFFIXES = {".gif"}
+    VIDEO_SUFFIXES = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+    PREVIEW_WIDTH = 320
+    PREVIEW_HEIGHT = 180
+
+    def __init__(self, owner, parent=None):
+        super().__init__(parent)
+        self.owner = owner
+        self.active_filter = "all"
+        self.filter_buttons = {}
+        self.setFixedWidth(360)
+        self.setStyleSheet("""
+            QWidget#recentMediaPanel { background: #18181b; color: #f4f4f5; }
+            QPushButton {
+                background: #27272a; color: #e4e4e7; border: 1px solid #3f3f46;
+                border-radius: 4px; padding: 1px 3px; min-height: 22px; max-height: 22px;
+            }
+            QPushButton:hover { background: #3f3f46; }
+            QPushButton:checked { background: #2563eb; border-color: #60a5fa; color: #fff; }
+            QLabel#recentMediaTitle { color: #a1a1aa; font-size: 11px; }
+            QFrame#recentMediaCard { background: #202023; border: 1px solid #3f3f46; border-radius: 6px; }
+            QScrollArea { border: 0; background: #18181b; }
+            QScrollBar:vertical { background: #27272a; width: 12px; margin: 2px; }
+            QScrollBar::handle:vertical { background: #52525b; border-radius: 5px; min-height: 28px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        """)
+        self.setObjectName("recentMediaPanel")
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(7)
+
+        title = QLabel(tr("recent_media_title", "Последние материалы"))
+        title.setObjectName("recentMediaTitle")
+        root.addWidget(title)
+
+        filters = QHBoxLayout()
+        filters.setSpacing(5)
+        for key, text_key, fallback in (
+            ("all", "recent_filter_all", "Все"),
+            ("screenshots", "recent_filter_screenshots", "Скриншоты"),
+            ("gifs", "recent_filter_gifs", "GIF"),
+            ("videos", "recent_filter_videos", "Видео"),
+        ):
+            button = QPushButton(tr(text_key, fallback))
+            button.setCheckable(True)
+            button.clicked.connect(lambda checked=False, value=key: self._set_filter(value))
+            filters.addWidget(button)
+            self.filter_buttons[key] = button
+        filters.addStretch()
+        root.addLayout(filters)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFixedHeight(420)
+        self.content = QWidget()
+        self.content_layout = QVBoxLayout(self.content)
+        self.content_layout.setContentsMargins(2, 2, 2, 2)
+        self.content_layout.setSpacing(7)
+        self.content_layout.addStretch()
+        self.scroll.setWidget(self.content)
+        root.addWidget(self.scroll)
+        self._set_filter("all")
+
+    @classmethod
+    def media_kind(cls, item: dict) -> str:
+        suffix = Path(item.get("path", "")).suffix.lower()
+        if suffix in cls.GIF_SUFFIXES:
+            return "gifs"
+        if suffix in cls.VIDEO_SUFFIXES:
+            return "videos"
+        return "screenshots"
+
+    @classmethod
+    def _load_preview(cls, item: dict) -> QImage | None:
+        image = item.get("image")
+        if image is not None and not image.isNull():
+            return image
+        path = item.get("path", "")
+        if not path or not Path(path).exists():
+            return None
+        suffix = Path(path).suffix.lower()
+        if suffix in cls.IMAGE_SUFFIXES or suffix in cls.GIF_SUFFIXES:
+            loaded = QImage(path)
+            return loaded if not loaded.isNull() else None
+        if suffix in cls.VIDEO_SUFFIXES:
+            try:
+                import cv2
+                capture = cv2.VideoCapture(path)
+                ok, frame = capture.read()
+                capture.release()
+                if ok and frame is not None and frame.size:
+                    height, width = frame.shape[:2]
+                    return QImage(
+                        frame.data, width, height, int(frame.strides[0]),
+                        QImage.Format.Format_BGR888,
+                    ).copy()
+            except Exception:
+                pass
+        return None
+
+    def _set_filter(self, value: str):
+        self.active_filter = value
+        for key, button in self.filter_buttons.items():
+            button.setChecked(key == value)
+        self._rebuild()
+
+    def _clear_content(self):
+        while self.content_layout.count():
+            item = self.content_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _rebuild(self):
+        self._clear_content()
+        items = [
+            item for item in self.owner.recent_media
+            if self.active_filter == "all" or self.media_kind(item) == self.active_filter
+        ]
+        if not items:
+            empty = QLabel(tr("recent_filter_empty", "Нет материалов этого типа"))
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty.setStyleSheet("color: #71717a; padding: 24px;")
+            self.content_layout.addWidget(empty)
+        else:
+            for item in items:
+                self.content_layout.addWidget(self._make_card(item))
+        self.content_layout.addStretch()
+
+    def _make_card(self, item: dict) -> QFrame:
+        card = QFrame()
+        card.setObjectName("recentMediaCard")
+        card.setFixedHeight(244)
+        column = QVBoxLayout(card)
+        column.setContentsMargins(6, 6, 6, 6)
+        column.setSpacing(5)
+
+        full_label = str(item.get("label", ""))
+        title = QLabel()
+        title.setObjectName("recentMediaLabel")
+        title.setFixedHeight(19)
+        title.setStyleSheet("color: #f4f4f5; font-weight: 600;")
+        title.setText(title.fontMetrics().elidedText(full_label, Qt.TextElideMode.ElideRight, self.PREVIEW_WIDTH))
+        path = str(item.get("path", "") or "")
+        title.setToolTip(f"{full_label}\n{path}" if path else full_label)
+        column.addWidget(title)
+
+        image = self._load_preview(item)
+        preview = MediaPreviewLabel(item=item, image=image)
+        preview.setObjectName("recentMediaPreview")
+        preview.setFixedSize(self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT)
+        preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview.setStyleSheet("background: #09090b; border-radius: 4px; color: #71717a;")
+        if image is not None and not image.isNull():
+            pixmap = QPixmap.fromImage(image).scaled(
+                preview.size(), Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            preview.setPixmap(pixmap)
+        else:
+            preview.setText(tr("recent_preview_unavailable", "Нет превью"))
+        preview.clicked.connect(lambda entry=item: self.owner._view_recent_media(entry))
+        column.addWidget(preview)
+
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(4)
+        for method, key, fallback in (
+            ("_copy_recent_media", "recent_action_copy", "Копировать"),
+            ("_view_recent_media", "recent_action_view", "Просмотр"),
+        ):
+            button = QPushButton(tr(key, fallback))
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            button.setContentsMargins(0, 0, 0, 0)
+            button.clicked.connect(lambda checked=False, entry=item, name=method: getattr(self.owner, name)(entry))
+            actions.addWidget(button)
+        actions.addStretch(1)
+        column.addLayout(actions)
+        return card
+
+
 class FramioApp(QObject):
     def __init__(self):
         super().__init__()
@@ -102,7 +345,9 @@ class FramioApp(QObject):
         self.overlay = OverlayWindow()
         self.active_recordings: list[RecordingFrameWindow] = []
         self.processing_tasks: dict[str, dict] = {}
+        self.recent_media: list[dict] = []
         self._last_notification_path = ""
+        self._load_recent_media()
 
         # Системный трей
         self.icon = make_app_icon(is_recording=False)
@@ -133,6 +378,118 @@ class FramioApp(QObject):
             rec_window.recording_closed.connect(lambda path, w=rec_window: self._on_recording_saved(w, path))
             rec_window.save_progress.connect(self._on_recording_progress)
             self._update_tray_state()
+
+    def add_recent_media(self, path: str = None, image: QImage = None, label: str = None, refresh: bool = True):
+        """Добавляет материал в историю последних файлов и снимков."""
+        if not path and (image is None or image.isNull()):
+            return
+        path = str(path) if path else ""
+        if not path and image is not None and not image.isNull():
+            cfg = getattr(self, "cfg", None)
+            cache_dir = Path(getattr(cfg, "save_dir_screenshots", "")) / ".recent"
+            if str(cache_dir) != ".recent":
+                try:
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    cache_path = cache_dir / f"Framio_Recent_{time.time_ns()}.png"
+                    if image.save(str(cache_path), "PNG"):
+                        path = str(cache_path)
+                except Exception:
+                    pass
+        if not label:
+            label = Path(path).name if path else tr("tray_menu_recent_copy_image", name="Screenshot")
+        item = {
+            "label": label,
+            "path": path,
+            "image": image.copy() if image is not None and not image.isNull() else None,
+        }
+        item["kind"] = RecentMediaPanel.media_kind(item)
+        if path:
+            self.recent_media = [entry for entry in self.recent_media if entry.get("path") != path]
+        self.recent_media.insert(0, item)
+        self.recent_media = self.recent_media[:50]
+        if refresh:
+            self._setup_tray_menu()
+
+    def _load_recent_media(self):
+        """Восстанавливает последние сохранённые файлы после перезапуска."""
+        folders = (
+            (getattr(self.cfg, "save_dir_screenshots", ""), RecentMediaPanel.IMAGE_SUFFIXES),
+            (getattr(self.cfg, "save_dir_screenshots", ""), {".gif"}),
+            (getattr(self.cfg, "save_dir_videos", ""), RecentMediaPanel.VIDEO_SUFFIXES),
+            (getattr(self.cfg, "save_dir_gifs", ""), RecentMediaPanel.GIF_SUFFIXES),
+        )
+        candidates = []
+        for folder, suffixes in folders:
+            if not folder:
+                continue
+            try:
+                candidates.extend(
+                    path for path in Path(folder).rglob("*")
+                    if path.is_file() and path.suffix.lower() in suffixes
+                )
+            except OSError:
+                continue
+        candidates.sort(key=lambda path: path.stat().st_mtime_ns, reverse=True)
+        seen = set()
+        for path in candidates:
+            resolved = str(path.resolve())
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            self.add_recent_media(path=str(path), label=path.name, refresh=False)
+            if len(self.recent_media) >= 50:
+                break
+
+    def _copy_recent_media(self, item: dict):
+        """Копирует изображение или URL медиафайла в системный буфер обмена."""
+        image = item.get("image")
+        path = item.get("path", "")
+        if image is None and path and Path(path).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+            loaded = QImage(path)
+            image = loaded if not loaded.isNull() else None
+        if image is not None and not image.isNull():
+            QApplication.clipboard().setImage(image)
+            return
+        if path:
+            mime = QMimeData()
+            mime.setUrls([QUrl.fromLocalFile(path)])
+            QApplication.clipboard().setMimeData(mime)
+
+    def _close_tray_menus(self):
+        for widget in QApplication.topLevelWidgets():
+            if isinstance(widget, QMenu):
+                widget.close()
+
+    def _view_recent_media(self, item: dict):
+        """Открывает файл стандартным приложением Windows."""
+        path = Path(item.get("path", "")) if item.get("path") else None
+        if path is None or not path.exists():
+            image = item.get("image")
+            if image is None or image.isNull():
+                return
+            cache_dir = Path(self.cfg.save_dir_screenshots) / ".recent"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            path = cache_dir / f"Framio_Recent_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
+            if not image.save(str(path), "PNG"):
+                return
+        self._close_tray_menus()
+        try:
+            os.startfile(str(path))
+        except AttributeError:
+            subprocess.Popen([str(path)])
+        except Exception as exc:
+            print(f"[Framio] Ошибка открытия материала: {exc}")
+
+    def _recent_media_menu(self, menu: QMenu):
+        recent_menu = menu.addMenu(tr("tray_menu_recent_media", "Последние материалы Framio"))
+        if not self.recent_media:
+            empty = QAction(tr("tray_menu_recent_empty", "Пока нет сохранённых материалов"), recent_menu)
+            empty.setEnabled(False)
+            recent_menu.addAction(empty)
+            return
+        panel_action = QWidgetAction(recent_menu)
+        panel_action.setDefaultWidget(RecentMediaPanel(self, recent_menu))
+        recent_menu.addAction(panel_action)
 
     @pyqtSlot(str, int, str)
     def _on_recording_progress(self, filename: str, percent: int, stage: str):
@@ -170,6 +527,7 @@ class FramioApp(QObject):
 
         if path and Path(path).exists():
             p = Path(path)
+            self.add_recent_media(path=str(p), label=p.name)
             fname = p.name
             folder = str(p.parent)
             is_gif = p.suffix.lower() == ".gif"
@@ -212,6 +570,7 @@ class FramioApp(QObject):
 
         img = pix.toImage()
         img.save(str(out_path))
+        self.add_recent_media(path=str(out_path), image=img, label=out_path.name)
 
         if getattr(self.cfg, "auto_copy_to_clipboard", True):
             QApplication.clipboard().setImage(img)
@@ -322,6 +681,8 @@ class FramioApp(QObject):
         act_gif.triggered.connect(lambda: self.trigger_capture("gif"))
         menu.addAction(act_gif)
 
+        menu.addSeparator()
+        self._recent_media_menu(menu)
         menu.addSeparator()
 
         act_open_screens = QAction(tr("tray_menu_folder_screens"), menu)

@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QImage, QPixmap, QColor, QFont, QPainter, QPen, QBrush, QKeyEvent
 
-from utils.screen_lock import safe_grab_screen_bgr, user32, gdi32
+from utils.screen_lock import safe_grab_screen_bgr, user32, gdi32, POINT
 from utils.i18n import tr
 from ui.icons import create_themed_icon
 
@@ -450,7 +450,7 @@ class ScrollingCaptureEngine(QObject):
 
         # 2. Отправляем WM_MOUSEWHEEL окну под курсором
         try:
-            hwnd_under = user32.WindowFromPoint(int(cx), int(cy))
+            hwnd_under = user32.WindowFromPoint(POINT(int(cx), int(cy)))
             if hwnd_under:
                 wParam = ctypes.c_uint((-140 << 16) & 0xFFFFFFFF).value
                 lParam = (int(cy) << 16) | (int(cx) & 0xFFFF)

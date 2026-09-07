@@ -51,6 +51,11 @@ SVG_ICONS = {
         <circle cx="15.5" cy="15.5" r="5.5"/>
     </svg>""",
 
+    "mask": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 4h5M15 4h5M4 20h5M15 20h5M4 4v5M20 4v5M4 15v5M20 15v5" stroke-dasharray="3 2"/>
+        <path d="M8 15c2-7 6-7 8-3"/>
+    </svg>""",
+
     "bold": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/>
         <path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/>
@@ -644,4 +649,3 @@ def create_tool_cursor(tool_name: str) -> QCursor:
 
     p.end()
     return QCursor(Qt.CursorShape.CrossCursor)
-

@@ -1,0 +1,92 @@
+name: Build Framio
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip; python -m pip install -r requirements.txt
+
+      - name: Compile Python sources
+        shell: pwsh
+        run: |
+          $files = @(
+            'main.py',
+            'config.py',
+            'ui/overlay.py',
+            'ui/settings_dialog.py',
+            'ui/toolbars.py',
+            'ui/recording_window.py',
+            'models/shapes.py',
+            'recorder/capture_worker.py',
+            'utils/capture_mask.py',
+            'utils/i18n.py'
+          )
+          python -m py_compile $files
+
+      - name: Build portable application
+        run: python -m PyInstaller --noconfirm --distpath dist --workpath build-ci Framio.spec
+
+      - name: Verify portable bundle
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath 'dist/Framio/Framio.exe')) { throw 'Framio.exe was not produced' }
+          if (Get-ChildItem -LiteralPath 'dist/Framio/_internal' -Filter 'icu*.dll' -ErrorAction SilentlyContinue) { throw 'Conflicting ICU DLL found in portable bundle' }
+
+      - name: Package portable folder
+        shell: pwsh
+        run: Compress-Archive -Path 'dist/Framio/*' -DestinationPath 'dist/Framio-windows.zip' -CompressionLevel Optimal
+
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Framio-windows
+          path: dist/Framio-windows.zip
+          if-no-files-found: error
+
+      - name: Build single-file application
+        run: python -m PyInstaller --noconfirm --distpath dist-onefile --workpath build-ci-onefile Framio-onefile.spec
+
+      - name: Verify single-file application
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath 'dist-onefile/Framio.exe')) { throw 'Single-file Framio.exe was not produced' }
+
+      - name: Upload single-file artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Framio-windows-single-file
+          path: dist-onefile/Framio.exe
+          if-no-files-found: error
+
+      - name: Build lightweight single-file application
+        run: python -m PyInstaller --noconfirm --distpath dist-lite --workpath build-ci-lite Framio-lite.spec
+
+      - name: Verify lightweight single-file application
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath 'dist-lite/Framio.exe')) { throw 'Lightweight Framio.exe was not produced' }
+
+      - name: Upload lightweight artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Framio-windows-single-file-lite
+          path: dist-lite/Framio.exe
+          if-no-files-found: error

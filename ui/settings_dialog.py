@@ -508,6 +508,14 @@ class SettingsTabStack(QWidget):
     def count(self) -> int:
         return self.stack.count()
 
+    def clear(self):
+        """Удаляет страницы и подписи перед перестроением после смены языка."""
+        self.sidebar.clear()
+        while self.stack.count():
+            widget = self.stack.widget(0)
+            self.stack.removeWidget(widget)
+            widget.deleteLater()
+
     def currentIndex(self) -> int:
         return self.stack.currentIndex()
 
@@ -527,6 +535,8 @@ class SettingsDialog(QDialog):
         self.setMinimumSize(850, 560)
         self.config_mgr = ConfigManager.get_instance()
         self.cfg = self.config_mgr.config
+        self.btn_apply = None
+        self.btn_close = None
 
         self._init_styles()
         self._init_ui()
@@ -615,18 +625,7 @@ class SettingsDialog(QDialog):
 
         # 5 логичных вкладок настроек с левой навигацией
         self.tabs = SettingsTabStack()
-        
-        ico_folder = create_themed_icon("folder", is_dark=True, size=16)
-        ico_video = create_themed_icon("video", is_dark=True, size=16)
-        ico_kbd = create_themed_icon("keyboard", is_dark=True, size=16)
-        ico_settings = create_themed_icon("settings", is_dark=True, size=16)
-        ico_help = create_themed_icon("help", is_dark=True, size=16)
-
-        self.tabs.addTab(self._create_storage_tab(), tr("settings_tab_storage", "Папки сохранения"), ico_folder)
-        self.tabs.addTab(self._create_media_tab(), tr("settings_tab_media", "Запись (Видео, GIF, Звук)"), ico_video)
-        self.tabs.addTab(self._create_hotkeys_tab(), tr("settings_tab_hotkeys", "Горячие клавиши"), ico_kbd)
-        self.tabs.addTab(self._create_general_tab(), tr("settings_tab_general", "Общие, язык и снимки"), ico_settings)
-        self.tabs.addTab(self._create_help_tab(), tr("settings_tab_help", "Справка и инструкция"), ico_help)
+        self._rebuild_tabs()
 
         main_layout.addWidget(self.tabs, 1)
 
@@ -640,8 +639,8 @@ class SettingsDialog(QDialog):
         self.lbl_status.setStyleSheet("color: #8892b0; font-size: 11px;")
         bottom_layout.addWidget(self.lbl_status, 1)
 
-        btn_apply = QPushButton(tr("settings_btn_apply", "Применить"))
-        btn_apply.setStyleSheet("""
+        self.btn_apply = QPushButton(tr("settings_btn_apply", "Применить"))
+        self.btn_apply.setStyleSheet("""
             QPushButton {
                 background-color: #0284c7;
                 color: #ffffff;
@@ -654,14 +653,36 @@ class SettingsDialog(QDialog):
                 background-color: #0369a1;
             }
         """)
-        btn_apply.clicked.connect(self._apply_settings)
-        bottom_layout.addWidget(btn_apply)
+        self.btn_apply.clicked.connect(self._apply_settings)
+        bottom_layout.addWidget(self.btn_apply)
 
-        btn_close = QPushButton(tr("settings_btn_close", "Закрыть"))
-        btn_close.clicked.connect(self._on_close_clicked)
-        bottom_layout.addWidget(btn_close)
+        self.btn_close = QPushButton(tr("settings_btn_close", "Закрыть"))
+        self.btn_close.clicked.connect(self._on_close_clicked)
+        bottom_layout.addWidget(self.btn_close)
 
         main_layout.addLayout(bottom_layout)
+
+    def _rebuild_tabs(self, current_index: int | None = None):
+        """Пересоздаёт страницы, чтобы смена языка применялась сразу ко всему окну."""
+        if current_index is None and hasattr(self, "tabs"):
+            current_index = self.tabs.currentIndex()
+        current_index = max(0, int(current_index or 0))
+
+        if hasattr(self, "tabs") and self.tabs.count():
+            self.tabs.clear()
+
+        ico_folder = create_themed_icon("folder", is_dark=True, size=16)
+        ico_video = create_themed_icon("video", is_dark=True, size=16)
+        ico_kbd = create_themed_icon("keyboard", is_dark=True, size=16)
+        ico_settings = create_themed_icon("settings", is_dark=True, size=16)
+        ico_help = create_themed_icon("help", is_dark=True, size=16)
+
+        self.tabs.addTab(self._create_storage_tab(), tr("settings_tab_storage", "Папки сохранения"), ico_folder)
+        self.tabs.addTab(self._create_media_tab(), tr("settings_tab_media", "Запись (Видео, GIF, Звук)"), ico_video)
+        self.tabs.addTab(self._create_hotkeys_tab(), tr("settings_tab_hotkeys", "Горячие клавиши"), ico_kbd)
+        self.tabs.addTab(self._create_general_tab(), tr("settings_tab_general", "Общие, язык и снимки"), ico_settings)
+        self.tabs.addTab(self._create_help_tab(), tr("settings_tab_help", "Справка и инструкция"), ico_help)
+        self.tabs.setCurrentIndex(min(current_index, self.tabs.count() - 1))
 
     # -------------------------------------------------------------
     # 1. ВКЛАДКА: ПАПКИ СОХРАНЕНИЯ
@@ -1004,10 +1025,11 @@ class SettingsDialog(QDialog):
                 idx = i
                 break
         self.combo_lang.setCurrentIndex(idx)
+        self.combo_lang.currentIndexChanged.connect(self._on_language_changed)
         self.combo_lang.setFixedWidth(260)
         card_lang.add_row(
             tr("settings_lang_label", "Язык программы:"),
-            tr("settings_lang_desc", "Смена языка вступает в силу сразу после нажатия «Применить»"),
+            tr("settings_lang_desc", "Язык меняется сразу после выбора"),
             self.combo_lang
         )
         layout.addWidget(card_lang)
@@ -1108,6 +1130,34 @@ class SettingsDialog(QDialog):
 
         layout.addStretch()
         return create_scroll_page(container)
+
+    def _on_language_changed(self, _index: int):
+        """Применяет язык сразу, не требуя Apply или перезапуска окна."""
+        language = self.combo_lang.currentData() or "auto"
+        if language == getattr(self.cfg, "language", "auto"):
+            return
+
+        current_tab = self.tabs.currentIndex()
+        self.cfg.language = language
+        set_language(language)
+        self.config_mgr.save()
+        self.settings_applied.emit()
+
+        # Нельзя удалять текущий QComboBox прямо из его собственного signal:
+        # Qt может завершить приложение внутри native event dispatch. Отложенная
+        # перестройка выполняется в ближайшем цикле событий и визуально остаётся
+        # мгновенной для пользователя.
+        if not getattr(self, "_language_rebuild_pending", False):
+            self._language_rebuild_pending = True
+            QTimer.singleShot(0, lambda: self._finish_language_change(current_tab))
+
+    def _finish_language_change(self, current_tab: int):
+        self._language_rebuild_pending = False
+        self._rebuild_tabs(current_tab)
+        self.setWindowTitle(tr("settings_title", "Настройки Framio"))
+        self.btn_apply.setText(tr("settings_btn_apply", "Применить"))
+        self.btn_close.setText(tr("settings_btn_close", "Закрыть"))
+        self._restore_status_text()
 
     def _update_color_button(self):
         c = self._current_default_color
@@ -1225,6 +1275,7 @@ class SettingsDialog(QDialog):
         self.cfg.save_dir_screenshots = self.edit_screenshots_dir.text().strip()
         self.cfg.save_dir_videos = self.edit_videos_dir.text().strip()
         self.cfg.save_dir_gifs = self.edit_gifs_dir.text().strip()
+        old_language = getattr(self.cfg, "language", "auto")
         self.cfg.hotkey_capture = self.edit_hotkey_capture.text().strip()
         self.cfg.hotkey_quick_fullscreen = self.edit_hotkey_quick_screen.text().strip()
         self.cfg.hotkey_record_fullscreen = self.edit_hotkey_record_fs.text().strip()
@@ -1269,6 +1320,13 @@ class SettingsDialog(QDialog):
 
         self.config_mgr.save()
         self.settings_applied.emit()
+
+        if old_language != self.cfg.language:
+            current_tab = self.tabs.currentIndex()
+            self._rebuild_tabs(current_tab)
+            self.setWindowTitle(tr("settings_title", "Настройки Framio"))
+            self.btn_apply.setText(tr("settings_btn_apply", "Применить"))
+            self.btn_close.setText(tr("settings_btn_close", "Закрыть"))
 
         # Обновляем отображение статуса автозапуска
         reg_status = tr("settings_reg_enabled", "Включен в реестре") if is_windows_autostart_enabled() else tr("settings_reg_disabled", "Отключен в реестре")

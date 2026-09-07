@@ -6,8 +6,17 @@ __pycache__/
 .Python
 env/
 build/
+build-ci*/
+build-onefile/
 develop-eggs/
 dist/
+dist-onefile/
+dist-lite/
+dist-optimized/
+dist-optimized-folder/
+build-lite/
+build-optimized/
+build-optimized-folder/
 downloads/
 eggs/
 .eggs/
@@ -44,3 +53,6 @@ Captures/
 .idea/
 *.swp
 *.swo
+
+# CodeGraph local index
+.codegraph/

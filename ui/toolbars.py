@@ -37,6 +37,7 @@ class ToolType:
     TEXT = "text"
     HIGHLIGHTER = "highlighter"
     MOSAIC = "mosaic"
+    CAPTURE_MASK = "capture_mask"
 
 
 def get_theme_styles():
@@ -457,6 +458,15 @@ class VideoOptionsPopup(QFrame):
         row_w.addWidget(self.combo_window)
         layout.addLayout(row_w)
 
+        row_fps = QHBoxLayout()
+        row_fps.addWidget(QLabel(tr("popup_video_fps", "Кадры в секунду (FPS):")))
+        self.combo_fps = QComboBox()
+        self.combo_fps.addItems(["15", "24", "30", "60"])
+        self.combo_fps.setCurrentText(str(getattr(self.cfg, "video_fps", 30)))
+        self.combo_fps.setToolTip(tr("popup_video_fps_tip", "Частота кадров будущей записи видео"))
+        row_fps.addWidget(self.combo_fps)
+        layout.addLayout(row_fps)
+
         self.chk_mic = QCheckBox(tr("popup_video_mic", "Запись звука с микрофона"))
         self.chk_mic.setChecked(getattr(self.cfg, "record_mic", True))
         self.chk_mic.toggled.connect(self._on_audio_setting_changed)
@@ -503,6 +513,7 @@ class VideoOptionsPopup(QFrame):
         self.chk_mic.setChecked(getattr(self.cfg, "record_mic", True))
         self.chk_system.setChecked(getattr(self.cfg, "record_system", True))
         self.chk_countdown.setChecked(False)
+        self.combo_fps.setCurrentText(str(getattr(self.cfg, "video_fps", 30)))
         cur_cd = getattr(self.cfg, "record_countdown_seconds", 3)
         self.spin_countdown.setValue(cur_cd)
         self.spin_countdown.setEnabled(False)
@@ -554,6 +565,8 @@ class VideoOptionsPopup(QFrame):
 
         self.cfg.record_mic = mic_val
         self.cfg.record_system = sys_val
+        fps = int(self.combo_fps.currentText())
+        self.cfg.video_fps = fps
         self.cfg.video_codec = codec_raw
         self.cfg.target_window_title = target_title
         self.cfg.record_countdown_enabled = cd_enabled
@@ -563,6 +576,7 @@ class VideoOptionsPopup(QFrame):
         params = {
             "mic": mic_val,
             "system": sys_val,
+            "fps": fps,
             "codec": codec_raw,
             "target_hwnd": target_hwnd,
             "countdown": cd_enabled,
@@ -1748,6 +1762,39 @@ class ShapesFlyoutWidget(QFrame):
         self.shape_chosen.emit(sid, opts)
 
 
+class CaptureMaskFlyoutWidget(QFrame):
+    """Выбор формы маски записи: произвольный контур, прямоугольник или овал."""
+    mask_chosen = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        theme = get_theme_styles()
+        self.is_dark = theme["is_dark"]
+        self.setStyleSheet(theme["popup_frame"] + """
+            QPushButton { border-radius: 4px; border: 1px solid transparent; background: transparent; padding: 4px; }
+            QPushButton:hover { background: #27272a; border-color: #3b82f6; }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(3)
+        for kind, icon, title in (
+            ("freeform", "pen", tr("capture_mask_freeform", "Произвольный контур")),
+            ("rect", "rect", tr("capture_mask_rect", "Прямоугольная маска")),
+            ("circle", "circle", tr("capture_mask_circle", "Овальная маска")),
+        ):
+            button = QPushButton()
+            button.setFixedSize(28, 28)
+            button.setIcon(create_themed_icon(icon, self.is_dark, size=16))
+            button.setIconSize(QSize(16, 16))
+            button.setToolTip(title)
+            button.clicked.connect(lambda checked, value=kind: self._choose(value))
+            layout.addWidget(button)
+
+    def _choose(self, kind: str):
+        self.hide()
+        self.mask_chosen.emit(kind)
+
+
 class CensorEffectsFlyoutWidget(QFrame):
     """
     Боковое выпадающее меню региональных эффектов и цензуры в стиле Adobe Photoshop / Figma.
@@ -1813,6 +1860,7 @@ class RightDrawingToolbar(QFrame):
     tool_settings_updated = pyqtSignal()
     layers_clicked = pyqtSignal()
     history_clicked = pyqtSignal()
+    capture_mask_chosen = pyqtSignal(str)
     undo_clicked = pyqtSignal()
     redo_clicked = pyqtSignal()
     filter_selected = pyqtSignal(str)
@@ -1848,7 +1896,8 @@ class RightDrawingToolbar(QFrame):
                 "bg_color": "#000000",
                 "bg_alpha": 180
             },
-            ToolType.MOSAIC: {"size": 8, "censor_mode": "mosaic", "blur_radius": 15}
+            ToolType.MOSAIC: {"size": 8, "censor_mode": "mosaic", "blur_radius": 15},
+            ToolType.CAPTURE_MASK: {"mask_kind": "freeform"},
         }
 
         theme = get_theme_styles()
@@ -1870,6 +1919,7 @@ class RightDrawingToolbar(QFrame):
             (ToolType.MOVE, "move", tr("tool_move", "Перемещение / изменение рамки")),
             (ToolType.PEN, "pen", tr("tool_pen", "Карандаш")),
             (ToolType.SHAPES, "shapes", tr("tool_shapes", "Фигуры (Линия, Стрелка, Прямоугольник, Круг)")),
+            (ToolType.CAPTURE_MASK, "mask", tr("tool_capture_mask", "Маска области записи")),
             (ToolType.HIGHLIGHTER, "highlighter", tr("tool_highlighter", "Маркер-хайлайтер")),
             (ToolType.TEXT, "text", tr("tool_text", "Текст"))
         ]
@@ -1886,6 +1936,8 @@ class RightDrawingToolbar(QFrame):
             self.tool_buttons[t_type] = btn
             if t_type == ToolType.SHAPES:
                 btn.clicked.connect(lambda checked: self._toggle_shapes_flyout())
+            elif t_type == ToolType.CAPTURE_MASK:
+                btn.clicked.connect(lambda checked: self._toggle_capture_mask_flyout())
             else:
                 btn.clicked.connect(lambda checked, t=t_type: self.select_tool(t, show_options=False))
             layout.addWidget(btn)
@@ -1967,6 +2019,9 @@ class RightDrawingToolbar(QFrame):
 
         self.shapes_flyout = ShapesFlyoutWidget(self)
         self.shapes_flyout.shape_chosen.connect(self._on_shapes_flyout_chosen)
+
+        self.capture_mask_flyout = CaptureMaskFlyoutWidget(self)
+        self.capture_mask_flyout.mask_chosen.connect(self._on_capture_mask_chosen)
 
         self.censor_flyout = CensorEffectsFlyoutWidget(self)
         self.censor_flyout.censor_chosen.connect(self._on_censor_chosen)
@@ -2088,6 +2143,22 @@ class RightDrawingToolbar(QFrame):
                 self.properties_flyout.hide()
             show_side_smart_popup(self.tool_buttons[ToolType.SHAPES], self.shapes_flyout)
 
+    def _toggle_capture_mask_flyout(self):
+        if self.capture_mask_flyout.isVisible():
+            self.capture_mask_flyout.hide()
+        else:
+            if self.shapes_flyout.isVisible():
+                self.shapes_flyout.hide()
+            if self.properties_flyout.isVisible():
+                self.properties_flyout.hide()
+            show_side_smart_popup(self.tool_buttons[ToolType.CAPTURE_MASK], self.capture_mask_flyout)
+
+    def _on_capture_mask_chosen(self, kind: str):
+        cfg = self.tools_config.setdefault(ToolType.CAPTURE_MASK, {})
+        cfg["mask_kind"] = kind
+        self.select_tool(ToolType.CAPTURE_MASK, show_options=False)
+        self.capture_mask_chosen.emit(kind)
+
     def _toggle_censor_flyout(self):
         if self.censor_flyout.isVisible():
             self.censor_flyout.hide()
@@ -2130,6 +2201,120 @@ class RightDrawingToolbar(QFrame):
         show_side_smart_popup(anchor, self.properties_flyout)
 
 
+class RegionActionHeader(QFrame):
+    """Компактная верхняя панель добавления зон и массовых действий."""
+
+    add_mode_toggled = pyqtSignal(bool)
+    save_clicked = pyqtSignal(str)
+    copy_clicked = pyqtSignal(str)
+    record_video_started = pyqtSignal(dict)
+    record_gif_started = pyqtSignal(dict)
+    close_clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        theme = get_theme_styles()
+        self.is_dark = theme["is_dark"]
+        self.setStyleSheet(theme["panel_frame"] + theme["button_base"] + """
+            QLabel {
+                color: #e4e4e7;
+                font-size: 11px;
+                font-weight: 600;
+                background: transparent;
+                border: none;
+            }
+        """)
+        self.setFixedHeight(38)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 3, 6, 3)
+        layout.setSpacing(3)
+
+        self.lbl_title = QLabel(tr("region_header_title", "Зоны · массовые действия"))
+        layout.addWidget(self.lbl_title)
+
+        self.btn_add = ModernButton("", tr("action_add_region", "Добавить зону выделения (+ / Ctrl)"))
+        self.btn_add.setCheckable(True)
+        self.btn_add.setFixedSize(28, 28)
+        self.btn_add.setIcon(create_themed_icon("add_region", self.is_dark, size=16, custom_color="#93c5fd"))
+        self.btn_add.setIconSize(QSize(16, 16))
+        self.btn_add.clicked.connect(self.add_mode_toggled.emit)
+        layout.addWidget(self.btn_add)
+
+        self.btn_close = ModernButton("", tr("action_region_header_close", "Отменить добавление / закрыть выделения"))
+        self.btn_close.setFixedSize(28, 28)
+        self.btn_close.setIcon(create_themed_icon("close", self.is_dark, size=16, custom_color="#fca5a5"))
+        self.btn_close.setIconSize(QSize(16, 16))
+        self.btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: #3f1d1d;
+                border: 1px solid #7f1d1d;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #ef4444;
+            }
+        """)
+        self.btn_close.clicked.connect(self.close_clicked.emit)
+        layout.addWidget(self.btn_close)
+
+        self.btn_mass_save = ModernButton(tr("region_mass_save_short", "Сохранить"), tr("action_all_save", "Сохранить скриншоты всех зон"))
+        self.btn_mass_save.setIcon(create_themed_icon("save", self.is_dark, size=14))
+        self.btn_mass_save.clicked.connect(self._show_save_formats)
+        layout.addWidget(self.btn_mass_save)
+
+        self.btn_mass_copy = ModernButton(tr("region_mass_copy_short", "Копировать"), tr("action_all_copy", "Скопировать все зоны"))
+        self.btn_mass_copy.setIcon(create_themed_icon("copy", self.is_dark, size=14))
+        self.btn_mass_copy.clicked.connect(self._show_copy_formats)
+        layout.addWidget(self.btn_mass_copy)
+
+        self.btn_mass_video = ModernButton(tr("region_mass_video_short", "Видео"), tr("action_all_video", "Записывать видео всех зон"))
+        self.btn_mass_video.setIcon(create_themed_icon("video", self.is_dark, size=14))
+        self.btn_mass_video.clicked.connect(self._show_video_popup)
+        layout.addWidget(self.btn_mass_video)
+
+        self.btn_mass_gif = ModernButton("GIF", tr("action_all_gif", "Записывать GIF всех зон"))
+        self.btn_mass_gif.setIcon(create_themed_icon("gif", self.is_dark, size=14))
+        self.btn_mass_gif.clicked.connect(self._show_gif_popup)
+        layout.addWidget(self.btn_mass_gif)
+
+        self.popup_formats = ScreenshotFormatPopup(self)
+        self.popup_formats.format_selected.connect(self.save_clicked.emit)
+        self.popup_copy = CopyFormatPopup(self)
+        self.popup_copy.format_selected.connect(self.copy_clicked.emit)
+        self.popup_video = VideoOptionsPopup(self)
+        self.popup_video.start_video.connect(self.record_video_started.emit)
+        self.popup_gif = GifOptionsPopup(self)
+        self.popup_gif.start_gif.connect(self.record_gif_started.emit)
+
+    def set_region_state(self, add_mode: bool, total_count: int, available_count: int):
+        self.btn_add.setChecked(bool(add_mode))
+        if add_mode:
+            self.lbl_title.setText(
+                tr("action_add_region_active", "Режим добавления зон включён — выделите следующую область")
+            )
+        else:
+            self.lbl_title.setText(
+                tr("region_header_title_count", "Зоны · массовые действия ({available}/{total})", available=available_count, total=total_count)
+            )
+        enabled = available_count > 0
+        for button in (self.btn_mass_save, self.btn_mass_copy, self.btn_mass_video, self.btn_mass_gif):
+            button.setEnabled(enabled)
+        self.setVisible(bool(add_mode or total_count > 1))
+
+    def _show_save_formats(self):
+        show_smart_popup(self.btn_mass_save, self.popup_formats)
+
+    def _show_copy_formats(self):
+        show_smart_popup(self.btn_mass_copy, self.popup_copy)
+
+    def _show_video_popup(self):
+        show_smart_popup(self.btn_mass_video, self.popup_video)
+
+    def _show_gif_popup(self):
+        show_smart_popup(self.btn_mass_gif, self.popup_gif)
+
+
 class BottomActionToolbar(QFrame):
     save_clicked = pyqtSignal(str)
     copy_clicked = pyqtSignal(str)
@@ -2143,6 +2328,7 @@ class BottomActionToolbar(QFrame):
     passthrough_toggled = pyqtSignal(bool)
     settings_clicked = pyqtSignal()
     add_region_clicked = pyqtSignal()
+    all_regions_action = pyqtSignal(str)
     close_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -2291,6 +2477,25 @@ class BottomActionToolbar(QFrame):
         self.btn_add_region.clicked.connect(self.add_region_clicked.emit)
         layout.addWidget(self.btn_add_region)
 
+        # 9.2 Общие действия для всех зон (показываются только при multi-selection)
+        self.btn_all_regions = ModernButton("", tr("action_all_regions", "Действия для всех зон"))
+        self.btn_all_regions.setFixedSize(28, 28)
+        self.btn_all_regions.setIcon(create_themed_icon("layers", self.is_dark, size=16, custom_color="#c4b5fd"))
+        self.btn_all_regions.setIconSize(QSize(16, 16))
+        self.btn_all_regions.setStyleSheet("""
+            QPushButton {
+                background-color: #3b1f68;
+                border: 1px solid #7c3aed;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #6d28d9;
+            }
+        """)
+        self.btn_all_regions.clicked.connect(self._show_all_regions_menu)
+        self.btn_all_regions.hide()
+        layout.addWidget(self.btn_all_regions)
+
         # 10. Закрыть (SVG иконка крестика)
         self.btn_close = ModernButton("", tr("action_close", "Закрыть выделение (Esc)"))
         self.btn_close.setFixedSize(28, 28)
@@ -2311,11 +2516,39 @@ class BottomActionToolbar(QFrame):
 
     def update_multi_region_state(self, has_multiple: bool):
         """Обновляет подсказку кнопки закрытия в зависимости от наличия нескольких зон."""
+        if hasattr(self, "btn_all_regions"):
+            self.btn_all_regions.setVisible(has_multiple)
         if hasattr(self, "btn_close"):
             if has_multiple:
                 self.btn_close.setToolTip(tr("action_close_region", "Удалить активную зону (Esc / Ctrl+W)"))
             else:
                 self.btn_close.setToolTip(tr("action_close", "Закрыть выделение (Esc)"))
+
+    def update_add_region_state(self, is_active: bool):
+        """Показывает, что следующий drag добавит новую зону и не заменит старые."""
+        if not hasattr(self, "btn_add_region"):
+            return
+        self.btn_add_region.setChecked(is_active)
+        if is_active:
+            self.btn_add_region.setToolTip(tr("action_add_region_active", "Режим добавления зон включён — выделите следующую область"))
+            self.btn_add_region.setStyleSheet("""
+                QPushButton {
+                    background-color: #2563eb;
+                    border: 1px solid #60a5fa;
+                    border-radius: 4px;
+                }
+                QPushButton:hover { background-color: #3b82f6; }
+            """)
+        else:
+            self.btn_add_region.setToolTip(tr("action_add_region", "Добавить зону выделения (+ / Ctrl)"))
+            self.btn_add_region.setStyleSheet("""
+                QPushButton {
+                    background-color: #1e3a8a;
+                    border: 1px solid #2563eb;
+                    border-radius: 4px;
+                }
+                QPushButton:hover { background-color: #3b82f6; }
+            """)
 
     def _show_save_formats(self):
         show_smart_popup(self.btn_save, self.popup_formats)
@@ -2331,6 +2564,23 @@ class BottomActionToolbar(QFrame):
 
     def _show_gif_popup(self):
         show_smart_popup(self.btn_gif, self.popup_gif)
+
+    def _show_all_regions_menu(self):
+        menu = QMenu(self)
+        menu.addAction(tr("action_all_save", "Сохранить скриншоты всех зон")).triggered.connect(
+            lambda: self.all_regions_action.emit("save")
+        )
+        menu.addAction(tr("action_all_copy", "Скопировать все зоны")).triggered.connect(
+            lambda: self.all_regions_action.emit("copy")
+        )
+        menu.addSeparator()
+        menu.addAction(tr("action_all_video", "Записывать видео всех зон")).triggered.connect(
+            lambda: self.all_regions_action.emit("video")
+        )
+        menu.addAction(tr("action_all_gif", "Записывать GIF всех зон")).triggered.connect(
+            lambda: self.all_regions_action.emit("gif")
+        )
+        show_smart_popup(self.btn_all_regions, menu)
 
     def _toggle_lock(self):
         self.is_locked = not self.is_locked

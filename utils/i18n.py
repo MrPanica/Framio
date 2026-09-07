@@ -32,6 +32,22 @@ TRANSLATIONS = {
         "tray_menu_folder_screens": "Папка со скриншотами",
         "tray_menu_folder_videos": "Папка с видео",
         "tray_menu_folder_gifs": "Папка с GIF",
+        "tray_menu_recent_media": "Последние материалы Framio",
+        "tray_menu_recent_empty": "Пока нет сохранённых материалов",
+        "tray_menu_recent_copy_image": "Скопировать изображение: {name}",
+        "tray_menu_recent_copy_file": "Скопировать файл: {name}",
+        "recent_media_title": "Последние материалы",
+        "recent_filter_all": "Все",
+        "recent_filter_screenshots": "Скриншоты",
+        "recent_filter_gifs": "GIF",
+        "recent_filter_videos": "Видео",
+        "recent_filter_empty": "Нет материалов этого типа",
+        "recent_preview_unavailable": "Нет превью",
+        "recent_kind_screenshot": "Скриншот",
+        "recent_kind_gif": "GIF",
+        "recent_kind_video": "Видео",
+        "recent_action_copy": "Копировать",
+        "recent_action_view": "Просмотр",
         "tray_menu_settings": "Настройки",
         "tray_menu_help": "Справка и инструкция",
         "tray_menu_exit": "Выход",
@@ -39,6 +55,10 @@ TRANSLATIONS = {
         # --- Уведомления ---
         "notif_screen_saved_title": "Скриншот сохранен",
         "notif_screen_saved_body": "Файл: {filename}\nПапка: {folder}\nНажмите сюда, чтобы открыть файл в проводнике",
+        "notif_screen_saved_count": "\nСохранено зон: {count}",
+        "notif_screen_save_failed_title": "Не удалось сохранить скриншот",
+        "notif_screen_save_failed_body": "Не удалось записать выбранные изображения на диск.",
+        "dialog_save_screenshot": "Сохранить скриншоты выбранных зон",
         "notif_quick_screen_saved_title": "Быстрый скриншот экрана",
         "notif_quick_screen_saved_body": "Весь экран сохранен в {filename}\nНажмите сюда, чтобы открыть файл",
         "notif_video_saved_title": "Видео успешно сохранено",
@@ -53,6 +73,12 @@ TRANSLATIONS = {
         "notif_rec_started_title": "Запись всего экрана запущена",
         "notif_rec_started_body": "Запись экрана началась!\nДля остановки нажмите: {key}",
         "notif_clipboard_copied": "Скопировано в буфер обмена",
+        "notif_clipboard_multi_images": "{count} зон скопированы: первая — как изображение, все — как отдельные файлы.",
+        "notif_clipboard_png": "Изображение (PNG) скопировано в буфер обмена.",
+        "notif_clipboard_jpeg": "Изображение (JPEG) скопировано в буфер обмена.",
+        "notif_clipboard_standard": "Изображение скопировано в буфер обмена (готово для вставки Ctrl+V).",
+        "notif_clipboard_data_uri_many": "{count} Data URI скопировано в буфер в виде текста.",
+        "notif_clipboard_data_uri_one": "Data URI (Base64) скопирован в буфер в виде текста.",
 
         # --- Окно записи (RecordingFrameWindow) ---
         "rec_mode_video": "REC MP4",
@@ -127,6 +153,11 @@ TRANSLATIONS = {
         "tool_text": "Текст (T)",
         "tool_step": "Нумератор шагов (1, 2, 3...) (S)",
         "tool_mosaic": "Цензура / Размытие (M)",
+        "tool_capture_mask": "Маска области записи",
+        "capture_mask_name": "Маска области записи",
+        "capture_mask_freeform": "Произвольный контур",
+        "capture_mask_rect": "Прямоугольная маска",
+        "capture_mask_circle": "Овальная маска",
         "tool_undo": "Отменить последнее действие (Ctrl+Z)",
         "tool_redo": "Повторить отменённое действие (Ctrl+Y)",
         "tool_clear": "Очистить все фигуры",
@@ -134,6 +165,20 @@ TRANSLATIONS = {
         "action_copy": "Копировать в буфер обмена (Ctrl+C)",
         "action_search": "Поиск картинки в Google",
         "action_add_region": "Добавить зону выделения (+ / Ctrl)",
+        "action_add_region_active": "Режим добавления зон включён — выделите следующую область",
+        "action_all_regions": "Действия для всех зон",
+        "action_all_save": "Сохранить скриншоты всех зон",
+        "action_all_copy": "Скопировать все зоны",
+        "action_all_video": "Записывать видео всех зон",
+        "action_all_gif": "Записывать GIF всех зон",
+        "region_header_title": "Зоны · массовые действия",
+        "region_header_title_count": "Зоны · массовые действия ({available}/{total})",
+        "action_region_header_close": "Отменить добавление / закрыть выделения",
+        "region_mass_save_short": "Сохранить",
+        "region_mass_copy_short": "Копировать",
+        "region_mass_video_short": "Видео",
+        "region_recent_image": "Скриншот зоны {index}",
+        "region_add_mode": "Режим добавления зон: выделите следующую область",
         "action_close": "Закрыть выделение (Esc)",
         "action_close_region": "Удалить активную зону (Esc / Ctrl+W)",
         "action_dynamic_bg": "Динамический фон (живое видео под рамкой)",
@@ -253,7 +298,7 @@ TRANSLATIONS = {
         "help_title": "Руководство пользователя Framio",
         "help_content": """
 <h2>Framio — Руководство пользователя</h2>
-<p>Framio — это сверхбыстрый, легковесный и функциональный инструмент для создания скриншотов, аннотирования и плавной записи видео и GIF со звуком для Windows (60+ FPS).</p>
+<p>Framio — приложение для скриншотов, аннотаций и записи видео или GIF со звуком в Windows.</p>
 
 <hr/>
 
@@ -264,6 +309,10 @@ TRANSLATIONS = {
   <li><b>Точная подгонка:</b> Потяните за маркеры по краям рамки для изменения размера или зажмите центр (при активном инструменте «Перемещение») для сдвига выделения.</li>
   <li><b>Быстрые действия:</b> <code>Ctrl+C</code> — копировать в буфер обмена, <code>Ctrl+S</code> — сохранить в файл, <code>Esc</code> — закрыть.</li>
 </ul>
+<p><b>Несколько зон:</b> после первого выделения нажмите <b>+</b> в нижней или верхней панели. Верхний переключатель показывает состояние режима добавления и позволяет его выключить. Новая зона создаётся через <b>+</b>; для быстрого добавления можно удерживать <code>Ctrl</code>. Если зона одна, внешний drag заменяет её новым выделением, а одиночный внешний клик безопасен. Если зон несколько, внешний drag без <b>+</b> и <code>Ctrl</code> их не изменяет. Уже созданные зоны можно выбирать и перемещать даже в режиме добавления.</p>
+<p><b>Массовые действия:</b> верхняя панель предлагает сохранить, скопировать, записать видео или GIF для всех зон, которые не записываются в данный момент. Настройки совпадают с нижней панелью. Запись каждой зоны независима, а после запуска массового видео/GIF overlay выделения скрывается — остаются только рамки записи.</p>
+<p><b>Буфер Framio:</b> в контекстном меню значка Framio в трее доступен список последних скриншотов, видео и GIF с увеличенными миниатюрами. <code>Ctrl+C</code> при нескольких зонах копирует отдельные изображения всех зон через multi-image payload и file-drop URLs, а не общий прямоугольник.</p>
+<p><b>Выбор окна:</b> после запуска захвата наведите курсор на окно. Когда появится синяя рамка с названием, кликните по окну — его границы будут выбраны целиком. В окне записи тот же выбор доступен через шестерёнку и кнопку «Выбрать окно кликом мыши».</p>
 
 <hr/>
 
@@ -273,7 +322,7 @@ TRANSLATIONS = {
   <li><b>Стрелка с зазубринами (A)</b> — аккуратные направляющие стрелки с заострёнными усиками.</li>
   <li><b>Прямоугольник (R) и Эллипс (C)</b> — геометрические фигуры для выделения областей.</li>
   <li><b>Маркер-хайлайтер (H)</b> — полупрозрачное выделение текста и ключевых участков.</li>
-  <li><b>Текст (T)</b> — надписи с контрастным тёмным фоном для идеальной читаемости на любом фоне.</li>
+  <li><b>Текст (T)</b> — надписи с контрастным тёмным фоном.</li>
   <li><b>Нумератор шагов (S)</b> — цветные кружки с цифрами (1, 2, 3...) для пошаговых инструкций.</li>
   <li><b>Мозаика / Размытие (M)</b> — сокрытие паролей, лиц и конфиденциальных данных.</li>
 </ul>
@@ -302,7 +351,7 @@ TRANSLATIONS = {
 
 <hr/>
 
-<h3>5. Уникальные режимы</h3>
+<h3>5. Дополнительные режимы</h3>
 <ul>
   <li><b>Неосязаемая рамка:</b> Кнопка в панели скриншота позволяет кликать мышью сквозь выделение в фоновые окна рабочего стола, сохраняя контур рамки.</li>
   <li><b>Динамический фон:</b> Позволяет сделать скриншот живого видеопотока без замирания рабочего стола.</li>
@@ -455,6 +504,8 @@ TRANSLATIONS = {
 
         # --- Новые ключи интерфейса (v2.0) ---
         "popup_video_title": 'Параметры видеозаписи',
+        "popup_video_fps": 'Кадры в секунду (FPS):',
+        "popup_video_fps_tip": 'Частота кадров будущей записи видео',
         "popup_video_source": 'Источник захвата:',
         "popup_video_mic": 'Запись звука с микрофона',
         "popup_video_system": 'Запись звука из игр / системы (динамики)',
@@ -626,7 +677,7 @@ TRANSLATIONS = {
         "settings_btn_reset_std": "Сбросить на стандартную папку",
         "settings_hk_tooltip": "Нажмите для записи комбинации клавиш (Ctrl, Shift, Alt, F1-F12, буквы, Print Screen)",
         "settings_lang_auto": "Автоматически (системный) / Auto (System)",
-        "settings_lang_desc": "Смена языка вступает в силу сразу после нажатия «Применить»",
+        "settings_lang_desc": "Язык меняется сразу после выбора",
         "settings_lang_en": "English (Английский)",
         "settings_lang_group": "Язык интерфейса / Interface Language",
         "settings_lang_ru": "Русский (Russian)",
@@ -663,6 +714,22 @@ TRANSLATIONS = {
         "tray_menu_folder_screens": "Screenshots Folder",
         "tray_menu_folder_videos": "Videos Folder",
         "tray_menu_folder_gifs": "GIFs Folder",
+        "tray_menu_recent_media": "Framio — Recent Media",
+        "tray_menu_recent_empty": "No saved media yet",
+        "tray_menu_recent_copy_image": "Copy image: {name}",
+        "tray_menu_recent_copy_file": "Copy file: {name}",
+        "recent_media_title": "Recent Media",
+        "recent_filter_all": "All",
+        "recent_filter_screenshots": "Screenshots",
+        "recent_filter_gifs": "GIFs",
+        "recent_filter_videos": "Videos",
+        "recent_filter_empty": "No media of this type",
+        "recent_preview_unavailable": "No preview",
+        "recent_kind_screenshot": "Screenshot",
+        "recent_kind_gif": "GIF",
+        "recent_kind_video": "Video",
+        "recent_action_copy": "Copy",
+        "recent_action_view": "View",
         "tray_menu_settings": "Settings",
         "tray_menu_help": "Help & Guide",
         "tray_menu_exit": "Exit",
@@ -670,6 +737,10 @@ TRANSLATIONS = {
         # --- Notifications ---
         "notif_screen_saved_title": "Screenshot Saved",
         "notif_screen_saved_body": "File: {filename}\nFolder: {folder}\nClick here to show in File Explorer",
+        "notif_screen_saved_count": "\nZones saved: {count}",
+        "notif_screen_save_failed_title": "Could Not Save Screenshot",
+        "notif_screen_save_failed_body": "The selected images could not be written to disk.",
+        "dialog_save_screenshot": "Save screenshots of selected zones",
         "notif_quick_screen_saved_title": "Quick Fullscreen Screenshot",
         "notif_quick_screen_saved_body": "Entire screen saved to {filename}\nClick here to open file",
         "notif_video_saved_title": "Video Saved Successfully",
@@ -684,6 +755,12 @@ TRANSLATIONS = {
         "notif_rec_started_title": "Fullscreen Recording Started",
         "notif_rec_started_body": "Screen recording started!\nTo stop, press: {key}",
         "notif_clipboard_copied": "Copied to clipboard",
+        "notif_clipboard_multi_images": "{count} separate images were placed in the clipboard as a file list.",
+        "notif_clipboard_png": "PNG image copied to the clipboard.",
+        "notif_clipboard_jpeg": "JPEG image copied to the clipboard.",
+        "notif_clipboard_standard": "Image copied to the clipboard (ready to paste with Ctrl+V).",
+        "notif_clipboard_data_uri_many": "{count} Data URIs copied to the clipboard as text.",
+        "notif_clipboard_data_uri_one": "Data URI (Base64) copied to the clipboard as text.",
 
         # --- Recording Window (RecordingFrameWindow) ---
         "rec_mode_video": "REC MP4",
@@ -759,6 +836,11 @@ TRANSLATIONS = {
         "tool_text": "Text (T)",
         "tool_step": "Step counter (1, 2, 3...) (S)",
         "tool_mosaic": "Censorship / Mosaic blur (M)",
+        "tool_capture_mask": "Capture area mask",
+        "capture_mask_name": "Capture area mask",
+        "capture_mask_freeform": "Freeform contour",
+        "capture_mask_rect": "Rectangular mask",
+        "capture_mask_circle": "Oval mask",
         "tool_undo": "Undo last action (Ctrl+Z)",
         "tool_redo": "Redo action (Ctrl+Y)",
         "tool_clear": "Clear all shapes",
@@ -766,6 +848,20 @@ TRANSLATIONS = {
         "action_copy": "Copy to clipboard (Ctrl+C)",
         "action_search": "Search image on Google",
         "action_add_region": "Add selection zone (+ / Ctrl)",
+        "action_add_region_active": "Add-zone mode is on — select the next area",
+        "action_all_regions": "Actions for all zones",
+        "action_all_save": "Save screenshots for all zones",
+        "action_all_copy": "Copy all zones",
+        "action_all_video": "Record video for all zones",
+        "action_all_gif": "Record GIFs for all zones",
+        "region_header_title": "Zones · mass actions",
+        "region_header_title_count": "Zones · mass actions ({available}/{total})",
+        "action_region_header_close": "Cancel adding / close selections",
+        "region_mass_save_short": "Save",
+        "region_mass_copy_short": "Copy",
+        "region_mass_video_short": "Video",
+        "region_recent_image": "Zone screenshot {index}",
+        "region_add_mode": "Add-zone mode: select the next area",
         "action_close": "Close selection (Esc)",
         "action_close_region": "Remove active zone (Esc / Ctrl+W)",
         "action_dynamic_bg": "Dynamic background (live video behind frame)",
@@ -885,7 +981,7 @@ TRANSLATIONS = {
         "help_title": "Framio User Guide",
         "help_content": """
 <h2>Framio — User Guide</h2>
-<p>Framio is a lightweight, blazing-fast screenshot, annotation, and 60+ FPS video & GIF screen recorder for Windows.</p>
+<p>Framio is a Windows app for screenshots, annotations, and video or GIF recording with audio.</p>
 
 <hr/>
 
@@ -896,6 +992,10 @@ TRANSLATIONS = {
   <li><b>Fine Tuning:</b> Drag handles on the borders to resize, or drag from the center (with the Move tool selected) to reposition.</li>
   <li><b>Quick Shortcuts:</b> <code>Ctrl+C</code> to copy, <code>Ctrl+S</code> to save to disk, <code>Esc</code> to cancel.</li>
 </ul>
+<p><b>Multiple zones:</b> after the first selection, click <b>+</b> in the bottom or top panel. The top toggle shows whether add-zone mode is active and can turn it off. Create a new zone with <b>+</b>, or hold <code>Ctrl</code> for fast repeated additions. With one zone, an outside drag replaces it and a plain outside click is safe. With multiple zones, an outside drag without <b>+</b> or <code>Ctrl</code> leaves them unchanged. Existing zones can still be selected and moved while add mode is on.</p>
+<p><b>Mass actions:</b> the top panel can save, copy, record video, or record GIF for every zone that is not currently recording. It uses the same format and recording settings as the bottom toolbar. Each recording is independent; once mass video/GIF starts, the selection overlay is hidden and only recording frames remain.</p>
+<p><b>Framio clipboard:</b> the Framio tray context menu includes recent screenshots, videos, and GIFs with larger thumbnails. <code>Ctrl+C</code> with multiple zones copies separate images for every zone through a multi-image payload and file-drop URLs instead of one combined rectangle.</p>
+<p><b>Window selection:</b> after starting capture, move the cursor over a window. When the blue border and title appear, click it to select the complete window. The recording window also has the same option under the gear button: “Select window by clicking”.</p>
 
 <hr/>
 
@@ -903,9 +1003,9 @@ TRANSLATIONS = {
 <ul>
   <li><b>Pen (P)</b> — smooth freehand vector drawing.</li>
   <li><b>Barbed Arrow (A)</b> — precise directional arrows with sharp barbed arrowheads.</li>
-  <li><b>Rectangle (R) & Ellipse (C)</b> — clean geometric bounding shapes.</li>
+  <li><b>Rectangle (R) & Ellipse (C)</b> — geometric annotation shapes.</li>
   <li><b>Highlighter (H)</b> — translucent marker to emphasize text and key areas.</li>
-  <li><b>Text (T)</b> — crisp typography with dark contrasting background for readability on any screen.</li>
+  <li><b>Text (T)</b> — text with a dark contrasting background.</li>
   <li><b>Step Counter (S)</b> — numbered circular badges (1, 2, 3...) for tutorial walkthroughs.</li>
   <li><b>Mosaic Blur (M)</b> — censor passwords, emails, and sensitive personal information.</li>
 </ul>
@@ -928,7 +1028,7 @@ TRANSLATIONS = {
   <li><b>Isolated Window Capture:</b> Click the gear icon in the recording header and pick a specific application window. Framio records only that window even if other windows overlap it!</li>
   <li><b>Audio (WASAPI Loopback + Mic):</b> Capture game/system audio and microphone voice. Toggle audio on/off during live recording by clicking the header icons.</li>
   <li><b>Live Drawing:</b> Click the pen icon in the header. Draw arrows, write notes, and highlight key moments live during video recording.</li>
-  <li><b>Pinning (Pin):</b> Pinned drawings stay fixed on the screen, while unpinned drawings move seamlessly with the recording frame.</li>
+  <li><b>Pinning (Pin):</b> Pinned drawings stay fixed on the screen, while unpinned drawings move with the recording frame.</li>
   <li><b>Stop & Save:</b> Click the red Stop button or press <code>{hk_stop}</code>. Files are optimized and saved automatically in background.</li>
 </ul>
 
@@ -1083,6 +1183,8 @@ TRANSLATIONS = {
     
         # --- New UI keys (v2.0) ---
         "popup_video_title": 'Video Recording Settings',
+        "popup_video_fps": 'Frames per second (FPS):',
+        "popup_video_fps_tip": 'Frame rate for the next video recording',
         "popup_video_source": 'Capture source:',
         "popup_video_mic": 'Record microphone audio',
         "popup_video_system": 'Record system audio (speakers)',
@@ -1254,7 +1356,7 @@ TRANSLATIONS = {
         "settings_btn_reset_std": "Reset to Standard Folder",
         "settings_hk_tooltip": "Click to record shortcut key combination (Ctrl, Shift, Alt, F1-F12, letters, Print Screen)",
         "settings_lang_auto": "Auto (System) / Автоматически (системный)",
-        "settings_lang_desc": "Language change takes effect immediately after clicking 'Apply'",
+        "settings_lang_desc": "The language changes immediately after selection",
         "settings_lang_en": "English (Английский)",
         "settings_lang_group": "Interface Language / Язык интерфейса",
         "settings_lang_ru": "Russian (Русский)",

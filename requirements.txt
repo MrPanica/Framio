@@ -1,7 +1,10 @@
 PyQt6>=6.6.0
+PyInstaller>=6.0.0
 mss>=9.0.0
 opencv-python>=4.8.0
 keyboard>=0.13.5
-imageio>=2.30.0
+imageio-ffmpeg>=0.4.9
+requests>=2.31.0
 numpy>=1.26.0
 Pillow>=10.0.0
+PyAudioWPatch>=0.2.12

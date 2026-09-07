@@ -22,6 +22,7 @@ from PyQt6.QtGui import (
 from recorder.capture_worker import CaptureWorker
 from utils.sound import play_capture_sound
 from utils.screen_lock import enumerate_recordable_windows, user32
+from utils.capture_mask import mask_path_for_frame
 from utils.window_icon import get_window_qicon
 from config import ConfigManager
 from ui.icons import create_themed_icon
@@ -230,9 +231,11 @@ class RecordingFrameWindow(QWidget):
     recording_closed = pyqtSignal(str)
     save_progress = pyqtSignal(str, int, str)  # (filename, percent_0_to_100, stage_desc)
 
-    def __init__(self, mode="video", rect=None, regions=None, record_mic=None, record_system=None, codec=None, target_hwnd=None, is_fullscreen=False, countdown=None, countdown_seconds=None, parent=None):
+    def __init__(self, mode="video", rect=None, regions=None, region_index=None, region_count=1, record_mic=None, record_system=None, codec=None, target_hwnd=None, capture_mask=None, mask_getter=None, is_fullscreen=False, countdown=None, countdown_seconds=None, parent=None):
         super().__init__(parent)
         self.regions = [QRect(int(r.x()), int(r.y()), int(r.width()), int(r.height())) for r in regions] if regions else []
+        self.region_index = region_index
+        self.region_count = max(1, int(region_count or 1))
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
@@ -250,6 +253,8 @@ class RecordingFrameWindow(QWidget):
         self.record_system = record_system if record_system is not None else getattr(self.cfg, "record_system", True)
         self.codec = codec if codec is not None else self.cfg.video_codec
         self.target_hwnd = target_hwnd
+        self.capture_mask = capture_mask
+        self.mask_getter = mask_getter
         self.accent_color = QColor("#ef4444") if mode == "video" else QColor("#a855f7")
 
         self.countdown_enabled = countdown if countdown is not None else getattr(self.cfg, "record_countdown_enabled", False)
@@ -286,6 +291,11 @@ class RecordingFrameWindow(QWidget):
             self.inner_y = max(min_top, min(init_y, screen_geo.bottom() - init_h - BORDER_THICKNESS))
             self.inner_w = max(160, min(init_w, screen_geo.width() - 2 * BORDER_THICKNESS))
             self.inner_h = max(100, min(init_h, screen_geo.height() - 2 * BORDER_THICKNESS - HEADER_HEIGHT))
+
+        # Маска хранится в локальных координатах исходной зоны. Это нужно
+        # для того, чтобы при изменении размера окна рамка и кадр использовали
+        # одну и ту же систему координат.
+        self.capture_mask_region = (self.inner_w, self.inner_h) if self.capture_mask else None
 
         self.is_locked = False
         self.is_paused = False
@@ -397,6 +407,8 @@ class RecordingFrameWindow(QWidget):
         layout.addWidget(self.lbl_mode_icon)
 
         mode_text = "REC MP4" if self.mode == "video" else "REC GIF"
+        if self.region_index is not None and self.region_count > 1:
+            mode_text += f" · ЗОНА {self.region_index}/{self.region_count}"
         self.lbl_mode = QLabel(f"⋮⋮ {mode_text}")
         self.lbl_mode.setStyleSheet(f"color: {self.accent_color.name()}; font-weight: bold;")
         self.lbl_mode.setCursor(Qt.CursorShape.SizeAllCursor)
@@ -718,7 +730,8 @@ class RecordingFrameWindow(QWidget):
             target_dir = self.cfg.save_dir_gifs
 
         Path(target_dir).mkdir(parents=True, exist_ok=True)
-        self.output_path = str(Path(target_dir) / f"Recording_{timestamp}.{ext}")
+        zone_suffix = f"_Zone-{self.region_index}" if self.region_index is not None and self.region_count > 1 else ""
+        self.output_path = str(Path(target_dir) / f"Recording_{timestamp}{zone_suffix}.{ext}")
         fps = self.cfg.video_fps if self.mode == "video" else self.cfg.gif_fps
 
         # Если выбрано конкретное окно и оно сейчас свёрнуто, автоматически разворачиваем его
@@ -744,6 +757,8 @@ class RecordingFrameWindow(QWidget):
             gif_colors=getattr(self.cfg, "gif_colors", 64),
             gif_dither=getattr(self.cfg, "gif_dither", "none"),
             target_hwnd=self.target_hwnd,
+            capture_mask=self.capture_mask,
+            mask_getter=self.mask_getter,
             parent=self
         )
         self.capture_worker.tick.connect(self._on_tick)
@@ -815,6 +830,10 @@ class RecordingFrameWindow(QWidget):
     def snap_to_window(self, hwnd: int):
         if not hwnd or not user32.IsWindow(int(hwnd)):
             return
+        # Свёрнутые окна из списка имеют служебный rect около 160x28. Их всё
+        # равно нужно принять как цель записи; реальный rect будет получен
+        # после восстановления окна в _start_capture().
+        self.target_hwnd = hwnd
         rect = wintypes.RECT()
         if user32.GetWindowRect(int(hwnd), ctypes.byref(rect)):
             wx = rect.left
@@ -826,11 +845,13 @@ class RecordingFrameWindow(QWidget):
                 self.inner_y = max(self._get_min_top(), wy)
                 self.inner_w = ww
                 self.inner_h = wh
-                self.target_hwnd = hwnd
                 if self.capture_worker:
                     self.capture_worker.set_target_hwnd(hwnd)
                 self._update_target_icon_display()
                 self._sync_geometry()
+        self._update_target_icon_display()
+        if self.capture_worker:
+            self.capture_worker.set_target_hwnd(hwnd)
 
     def _start_window_pick_mode(self):
         from PyQt6.QtWidgets import QMenu
@@ -983,11 +1004,34 @@ class RecordingFrameWindow(QWidget):
         bw = self.inner_w
         bh = self.inner_h
 
-        # Рамка
         pen = QPen(self.accent_color, BORDER_THICKNESS)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(bx - BORDER_THICKNESS // 2, by - BORDER_THICKNESS // 2, bw + BORDER_THICKNESS, bh + BORDER_THICKNESS)
+
+        # При записи по маске показываем тот же контур, который реально
+        # попадёт в кадр. Раньше здесь всегда рисовался внешний прямоугольник
+        # исходной зоны, из-за чего круг/произвольная фигура выглядели как
+        # смещённая или вообще не связанная с записью область.
+        mask_bounds = None
+        if self.capture_mask is not None:
+            base_w, base_h = self.capture_mask_region or (bw, bh)
+            mask_path = mask_path_for_frame(
+                self.capture_mask,
+                bw,
+                bh,
+                (0, 0, base_w, base_h),
+            )
+            if not mask_path.isEmpty():
+                painter.drawPath(mask_path.translated(float(bx), float(by)))
+                mask_bounds = mask_path.boundingRect().translated(float(bx), float(by))
+
+        if mask_bounds is None:
+            painter.drawRect(
+                bx - BORDER_THICKNESS // 2,
+                by - BORDER_THICKNESS // 2,
+                bw + BORDER_THICKNESS,
+                bh + BORDER_THICKNESS,
+            )
 
         if getattr(self, "regions", None) and len(self.regions) > 1:
             pen_sub = QPen(QColor(self.accent_color.red(), self.accent_color.green(), self.accent_color.blue(), 180), 1.5, Qt.PenStyle.DashLine)
@@ -1005,15 +1049,17 @@ class RecordingFrameWindow(QWidget):
             painter.setBrush(QBrush(self.accent_color))
             hs = HANDLE_SIZE
 
+            handle_rect = mask_bounds or QRectF(float(bx), float(by), float(bw), float(bh))
+
             points = [
-                QPoint(bx, by),
-                QPoint(bx + bw // 2, by),
-                QPoint(bx + bw, by),
-                QPoint(bx + bw, by + bh // 2),
-                QPoint(bx + bw, by + bh),
-                QPoint(bx + bw // 2, by + bh),
-                QPoint(bx, by + bh),
-                QPoint(bx, by + bh // 2)
+                QPoint(int(handle_rect.left()), int(handle_rect.top())),
+                QPoint(int(handle_rect.center().x()), int(handle_rect.top())),
+                QPoint(int(handle_rect.right()), int(handle_rect.top())),
+                QPoint(int(handle_rect.right()), int(handle_rect.center().y())),
+                QPoint(int(handle_rect.right()), int(handle_rect.bottom())),
+                QPoint(int(handle_rect.center().x()), int(handle_rect.bottom())),
+                QPoint(int(handle_rect.left()), int(handle_rect.bottom())),
+                QPoint(int(handle_rect.left()), int(handle_rect.center().y()))
             ]
             for p in points:
                 painter.drawRect(p.x() - hs//2, p.y() - hs//2, hs, hs)
