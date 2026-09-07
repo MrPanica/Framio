@@ -2,6 +2,8 @@
 
 Framio — portable Windows application for screenshots, screen recording and animated GIFs. It can capture one area, several independent areas, a full screen, or a selected application window. The interface is available in Russian and English.
 
+Current release: `1.0.0` (`v1.0.0`). The version is stored in `VERSION`; releases are created automatically when the matching tag is pushed.
+
 ## Русский
 
 ### Что умеет Framio
@@ -69,7 +71,7 @@ Framio — portable Windows application for screenshots, screen recording and an
 
 В обоих вариантах `settings.json` и папки `Captures/Screenshots`, `Captures/Videos`, `Captures/GIFs` создаются рядом с exe. Пути автоматически перепривязываются при переносе каталога.
 
-Workflow `.github/workflows/build.yml` собирает три варианта на Windows и публикует артефакты `Framio-windows`, `Framio-windows-single-file` и `Framio-windows-single-file-lite`.
+Workflow `.github/workflows/build.yml` собирает три варианта на Windows и публикует артефакты `Framio-windows`, `Framio-windows-single-file` и `Framio-windows-single-file-lite`. При push тега `v1.0.0`, совпадающего с `VERSION`, он также создаёт GitHub Release с portable ZIP и двумя `.exe`.
 
 Для запуска из исходников:
 
@@ -154,7 +156,7 @@ There are two portable formats:
 
 Both formats create `settings.json` and `Captures/Screenshots`, `Captures/Videos`, `Captures/GIFs` next to the executable. Portable paths are rewritten when the directory is moved.
 
-The `.github/workflows/build.yml` workflow builds all three formats on Windows and publishes `Framio-windows`, `Framio-windows-single-file`, and `Framio-windows-single-file-lite` artifacts.
+The `.github/workflows/build.yml` workflow builds all three formats on Windows and publishes `Framio-windows`, `Framio-windows-single-file`, and `Framio-windows-single-file-lite` artifacts. When the matching `v1.0.0` tag is pushed, it also creates a GitHub Release with the portable ZIP and both `.exe` files.
 
 Run from source:
 

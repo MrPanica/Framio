@@ -2,11 +2,15 @@ name: Build Framio
 
 on:
   push:
+    branches:
+      - main
+    tags:
+      - 'v*'
   pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows:
@@ -24,6 +28,16 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip; python -m pip install -r requirements.txt
 
+      - name: Validate release version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath 'VERSION' -Raw).Trim()
+          $expectedTag = "v$version"
+          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
+            throw "Release tag '$env:GITHUB_REF_NAME' does not match VERSION '$version'. Expected '$expectedTag'."
+          }
+
       - name: Compile Python sources
         shell: pwsh
         run: |
@@ -40,6 +54,12 @@ jobs:
             'utils/i18n.py'
           )
           python -m py_compile $files
+
+      - name: Run component tests
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -u tests/test_components.py
 
       - name: Build portable application
         run: python -m PyInstaller --noconfirm --distpath dist --workpath build-ci Framio.spec
@@ -90,3 +110,22 @@ jobs:
           name: Framio-windows-single-file-lite
           path: dist-lite/Framio.exe
           if-no-files-found: error
+
+      - name: Prepare release files
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath 'VERSION' -Raw).Trim()
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item -LiteralPath 'dist/Framio-windows.zip' -Destination "release/Framio-$version-windows-portable.zip"
+          Copy-Item -LiteralPath 'dist-onefile/Framio.exe' -Destination "release/Framio-$version-windows-single-file.exe"
+          Copy-Item -LiteralPath 'dist-lite/Framio.exe' -Destination "release/Framio-$version-windows-lite.exe"
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = @(Get-ChildItem -LiteralPath 'release' -File | ForEach-Object { $_.FullName })
+          gh release create $env:GITHUB_REF_NAME @files --title "Framio $env:GITHUB_REF_NAME" --generate-notes --latest
