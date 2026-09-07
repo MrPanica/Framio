@@ -97,8 +97,9 @@ class DimensionBadge(QFrame):
 
         self.hide()
 
-    def update_dimension(self, w: int, h: int):
-        self.lbl_text.setText(f"{int(w)} × {int(h)} px")
+    def update_dimension(self, w: int, h: int, info: str = ""):
+        suffix = f"  {info}" if info else ""
+        self.lbl_text.setText(f"{int(w)} × {int(h)} px{suffix}")
         self.adjustSize()
 
 

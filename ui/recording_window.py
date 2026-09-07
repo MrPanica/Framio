@@ -230,8 +230,9 @@ class RecordingFrameWindow(QWidget):
     recording_closed = pyqtSignal(str)
     save_progress = pyqtSignal(str, int, str)  # (filename, percent_0_to_100, stage_desc)
 
-    def __init__(self, mode="video", rect=None, record_mic=None, record_system=None, codec=None, target_hwnd=None, is_fullscreen=False, countdown=None, countdown_seconds=None, parent=None):
+    def __init__(self, mode="video", rect=None, regions=None, record_mic=None, record_system=None, codec=None, target_hwnd=None, is_fullscreen=False, countdown=None, countdown_seconds=None, parent=None):
         super().__init__(parent)
+        self.regions = [QRect(int(r.x()), int(r.y()), int(r.width()), int(r.height())) for r in regions] if regions else []
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
@@ -683,9 +684,19 @@ class RecordingFrameWindow(QWidget):
 
             # Вырезаем внутреннюю область, оставляя только шапку и рамку
             outer_region = QRegion(0, 0, win_w, win_h)
-            inner_region = QRegion(BORDER_THICKNESS, head_h + BORDER_THICKNESS, self.inner_w, self.inner_h)
-            mask_region = outer_region.subtracted(inner_region)
-            self.setMask(mask_region)
+            if getattr(self, "regions", None) and len(self.regions) > 1:
+                mask_region = outer_region
+                for reg in self.regions:
+                    rx = int(reg.x() - self.inner_x + BORDER_THICKNESS)
+                    ry = int(reg.y() - self.inner_y + head_h + BORDER_THICKNESS)
+                    rw = int(reg.width())
+                    rh = int(reg.height())
+                    mask_region = mask_region.subtracted(QRegion(rx, ry, rw, rh))
+                self.setMask(mask_region)
+            else:
+                inner_region = QRegion(BORDER_THICKNESS, head_h + BORDER_THICKNESS, self.inner_w, self.inner_h)
+                mask_region = outer_region.subtracted(inner_region)
+                self.setMask(mask_region)
 
         if self.canvas:
             self.canvas.sync_to_rec_geometry(self.inner_x, self.inner_y, self.inner_w, self.inner_h)
@@ -977,6 +988,16 @@ class RecordingFrameWindow(QWidget):
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(bx - BORDER_THICKNESS // 2, by - BORDER_THICKNESS // 2, bw + BORDER_THICKNESS, bh + BORDER_THICKNESS)
+
+        if getattr(self, "regions", None) and len(self.regions) > 1:
+            pen_sub = QPen(QColor(self.accent_color.red(), self.accent_color.green(), self.accent_color.blue(), 180), 1.5, Qt.PenStyle.DashLine)
+            painter.setPen(pen_sub)
+            for reg in self.regions:
+                rx = int(reg.x() - self.inner_x + BORDER_THICKNESS)
+                ry = int(reg.y() - self.inner_y + head_h + BORDER_THICKNESS)
+                rw = int(reg.width())
+                rh = int(reg.height())
+                painter.drawRect(rx, ry, rw, rh)
 
         # Маркеры изменения размера
         if not self.is_locked:

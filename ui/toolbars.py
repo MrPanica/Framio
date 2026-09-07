@@ -2142,6 +2142,7 @@ class BottomActionToolbar(QFrame):
     dynamic_bg_toggled = pyqtSignal(bool)
     passthrough_toggled = pyqtSignal(bool)
     settings_clicked = pyqtSignal()
+    add_region_clicked = pyqtSignal()
     close_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -2272,12 +2273,30 @@ class BottomActionToolbar(QFrame):
         btn_settings.clicked.connect(self.settings_clicked.emit)
         layout.addWidget(btn_settings)
 
+        # 9.1 Добавить зону выделения (SVG иконка плюсика)
+        self.btn_add_region = ModernButton("", tr("action_add_region", "Добавить зону выделения (+ / Ctrl)"))
+        self.btn_add_region.setFixedSize(28, 28)
+        self.btn_add_region.setIcon(create_themed_icon("add_region", self.is_dark, size=16, custom_color="#93c5fd"))
+        self.btn_add_region.setIconSize(QSize(16, 16))
+        self.btn_add_region.setStyleSheet("""
+            QPushButton {
+                background-color: #1e3a8a;
+                border: 1px solid #2563eb;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #3b82f6;
+            }
+        """)
+        self.btn_add_region.clicked.connect(self.add_region_clicked.emit)
+        layout.addWidget(self.btn_add_region)
+
         # 10. Закрыть (SVG иконка крестика)
-        btn_close = ModernButton("", tr("action_close", "Закрыть выделение (Esc)"))
-        btn_close.setFixedSize(28, 28)
-        btn_close.setIcon(create_themed_icon("close", self.is_dark, size=16, custom_color="#fca5a5"))
-        btn_close.setIconSize(QSize(16, 16))
-        btn_close.setStyleSheet("""
+        self.btn_close = ModernButton("", tr("action_close", "Закрыть выделение (Esc)"))
+        self.btn_close.setFixedSize(28, 28)
+        self.btn_close.setIcon(create_themed_icon("close", self.is_dark, size=16, custom_color="#fca5a5"))
+        self.btn_close.setIconSize(QSize(16, 16))
+        self.btn_close.setStyleSheet("""
             QPushButton {
                 background-color: #3f1d1d;
                 border: 1px solid #7f1d1d;
@@ -2287,8 +2306,16 @@ class BottomActionToolbar(QFrame):
                 background-color: #ef4444;
             }
         """)
-        btn_close.clicked.connect(self.close_clicked.emit)
-        layout.addWidget(btn_close)
+        self.btn_close.clicked.connect(self.close_clicked.emit)
+        layout.addWidget(self.btn_close)
+
+    def update_multi_region_state(self, has_multiple: bool):
+        """Обновляет подсказку кнопки закрытия в зависимости от наличия нескольких зон."""
+        if hasattr(self, "btn_close"):
+            if has_multiple:
+                self.btn_close.setToolTip(tr("action_close_region", "Удалить активную зону (Esc / Ctrl+W)"))
+            else:
+                self.btn_close.setToolTip(tr("action_close", "Закрыть выделение (Esc)"))
 
     def _show_save_formats(self):
         show_smart_popup(self.btn_save, self.popup_formats)

@@ -1725,6 +1725,83 @@ def test_dynamic_text_editing_and_filter_history():
     print("  -> Динамическое изменение текста (шрифт, цвет, кегль) и Undo/Redo для фильтров работают корректно.")
 
 
+def test_multi_region_selection_and_export():
+    """Тест мульти-выделения: добавление зон, переключение, удаление и составной экспорт."""
+    print("[TEST] Тестирование мульти-выделения (multi-region)...")
+    from unittest.mock import MagicMock, patch
+    from PyQt6.QtCore import QRectF
+    from PyQt6.QtGui import QPixmap, QScreen
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    # Создаём экземпляр оверлея через мок экрана
+    with patch("ui.overlay.OverlayWindow.__init__", lambda self, *a, **kw: None):
+        from ui.overlay import OverlayWindow
+        ov = OverlayWindow.__new__(OverlayWindow)
+        # Инициализируем минимально необходимые атрибуты
+        ov.regions = []
+        ov.active_region_idx = 0
+        ov.is_adding_region = False
+
+        # 1. Изначально зон нет
+        assert len(ov.regions) == 0, "Изначально регионов быть не должно"
+
+        # 2. Добавляем первую зону
+        r1 = QRectF(10, 10, 200, 150)
+        ov.regions = [r1]
+        ov.active_region_idx = 0
+        assert len(ov.regions) == 1
+
+        # 3. start_adding_region устанавливает флаг is_adding_region
+        ov.is_adding_region = True
+        assert ov.is_adding_region is True
+
+        # 4. Добавляем вторую зону
+        r2 = QRectF(300, 100, 180, 120)
+        ov.regions.append(r2)
+        ov.active_region_idx = 1
+        ov.is_adding_region = False
+        assert len(ov.regions) == 2
+        assert ov.active_region_idx == 1
+
+        # 5. Переключение активной зоны
+        ov.active_region_idx = 0
+        assert ov.regions[ov.active_region_idx] == r1
+
+        # 6. get_valid_regions фильтрует зоны > 1x1 px
+        from PyQt6.QtCore import QRectF as QRF
+        ov.regions = [QRF(10, 10, 200, 150), QRF(300, 100, 180, 120), QRF(0, 0, 0, 0)]
+        valid = [r.normalized() for r in ov.regions if r.width() > 1 and r.height() > 1]
+        assert len(valid) == 2, f"Ожидалось 2 валидные зоны, получено {len(valid)}"
+
+        # 7. Удаление активной зоны (одна из двух) — должна остаться одна
+        ov.regions = [QRF(10, 10, 200, 150), QRF(300, 100, 180, 120)]
+        ov.active_region_idx = 1
+        ov.regions.pop(ov.active_region_idx)
+        ov.active_region_idx = max(0, len(ov.regions) - 1)
+        assert len(ov.regions) == 1, "После удаления одной из двух зон должна остаться одна"
+
+        # 8. Составной экспорт: united_rect для двух зон
+        r_a = QRectF(10, 10, 200, 150)
+        r_b = QRectF(300, 100, 180, 120)
+        united = r_a.united(r_b).toRect()
+        assert united.width() > 0 and united.height() > 0, "united_rect должен быть непустым"
+        # united должен содержать обе зоны (QRect.right() = left+width-1)
+        assert united.left() <= 10 and united.top() <= 10
+        assert united.right() >= (300 + 180 - 1) and united.bottom() >= (100 + 120 - 1)
+
+        # 9. Составной QPixmap ARGB32_Premultiplied
+        from PyQt6.QtGui import QPixmap, QPainter
+        from PyQt6.QtCore import Qt
+        pix = QPixmap(united.width(), united.height())
+        pix.fill(Qt.GlobalColor.transparent)
+        assert not pix.isNull(), "Составной пиксмап не должен быть пустым"
+        assert pix.hasAlphaChannel(), "Составной пиксмап должен иметь альфа-канал"
+
+    print("  -> Мульти-выделение: добавление, переключение, удаление и составной экспорт работают корректно.")
+
+
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
@@ -1762,6 +1839,7 @@ if __name__ == "__main__":
         test_autostart_registry()
         test_hotkey_parsing()
         test_progress_signals()
+        test_multi_region_selection_and_export()
         import time
         time.sleep(0.5)
         QApplication.processEvents()

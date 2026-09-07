@@ -133,7 +133,9 @@ TRANSLATIONS = {
         "action_save": "Сохранить скриншот на диск (Ctrl+S)",
         "action_copy": "Копировать в буфер обмена (Ctrl+C)",
         "action_search": "Поиск картинки в Google",
+        "action_add_region": "Добавить зону выделения (+ / Ctrl)",
         "action_close": "Закрыть выделение (Esc)",
+        "action_close_region": "Удалить активную зону (Esc / Ctrl+W)",
         "action_dynamic_bg": "Динамический фон (живое видео под рамкой)",
         "action_passthrough": "Неосязаемая рамка: клики сквозь выделение в фоновые окна",
 
@@ -763,7 +765,9 @@ TRANSLATIONS = {
         "action_save": "Save screenshot to disk (Ctrl+S)",
         "action_copy": "Copy to clipboard (Ctrl+C)",
         "action_search": "Search image on Google",
+        "action_add_region": "Add selection zone (+ / Ctrl)",
         "action_close": "Close selection (Esc)",
+        "action_close_region": "Remove active zone (Esc / Ctrl+W)",
         "action_dynamic_bg": "Dynamic background (live video behind frame)",
         "action_passthrough": "Pass-through frame: clicks pass through selection into desktop",
 
