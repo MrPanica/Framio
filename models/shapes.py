@@ -14,6 +14,7 @@ from PyQt6.QtGui import (
     QPainter, QPen, QColor, QBrush, QFont, QFontMetrics, QPolygonF,
     QPainterPath, QPixmap, QImage, QPainterPathStroker, QLinearGradient
 )
+from utils.i18n import tr
 
 
 def point_to_segment_distance(p: QPointF, a: QPointF, b: QPointF) -> float:
@@ -818,20 +819,21 @@ class RegionalEffectShape(BaseShape):
         self.effect_type = effect_type
         self.intensity = intensity
         self.cached_pixmap = cached_pixmap
+        self._cached_rect = None
         self.name = self._format_name(effect_type)
 
     @staticmethod
     def _format_name(etype: str) -> str:
         names = {
-            "mosaic": "Мозаика (Цензура)",
-            "pixelate": "Мозаика (Цензура)",
-            "blur": "Размытие (Блюр)",
-            "grayscale": "Чёрно-белый (Область)",
-            "invert": "Инверсия (Область)",
-            "vibrant": "Насыщенность (Область)",
-            "sepia": "Сепия (Область)"
+            "mosaic": tr("obj_mosaic", "Мозаика (Цензура)"),
+            "pixelate": tr("obj_mosaic", "Мозаика (Цензура)"),
+            "blur": tr("obj_blur", "Размытие (Блюр)"),
+            "grayscale": tr("obj_grayscale", "Чёрно-белый (Область)"),
+            "invert": tr("obj_invert", "Инверсия (Область)"),
+            "vibrant": tr("obj_vibrant", "Насыщенность (Область)"),
+            "sepia": tr("obj_sepia", "Сепия (Область)")
         }
-        return names.get(etype, f"Эффект: {etype}")
+        return names.get(etype, f"Effect: {etype}")
 
     def hit_test(self, pt: QPointF, tolerance: float = 6.0) -> bool:
         if not self.visible:
@@ -841,6 +843,7 @@ class RegionalEffectShape(BaseShape):
     def translate(self, dx: float, dy: float):
         self.rect.translate(dx, dy)
         self.cached_pixmap = None
+        self._cached_rect = None
 
     def scale_from_origin(self, sx: float, sy: float, origin: QPointF):
         r = self.rect.normalized()
@@ -850,6 +853,7 @@ class RegionalEffectShape(BaseShape):
         nb = origin.y() + (r.bottom() - origin.y()) * sy
         self.rect = QRectF(min(nl, nr), min(nt, nb), abs(nr - nl), abs(nb - nt))
         self.cached_pixmap = None
+        self._cached_rect = None
 
     def get_bounding_rect(self) -> QRectF:
         return self.rect.normalized()
@@ -861,11 +865,13 @@ class RegionalEffectShape(BaseShape):
         new_shape.intensity = self.intensity
         new_shape.rotation = getattr(self, "rotation", 0.0)
         new_shape.cached_pixmap = None
+        new_shape._cached_rect = None
         return new_shape
 
     def set_intensity(self, intensity: int, background_pixmap: QPixmap = None):
         self.intensity = max(2, min(50, intensity))
         self.cached_pixmap = None
+        self._cached_rect = None
         if background_pixmap is not None:
             self.update_effect(background_pixmap)
 
@@ -876,8 +882,13 @@ class RegionalEffectShape(BaseShape):
         rx, ry, rw, rh = int(r.x()), int(r.y()), int(r.width()), int(r.height())
         if rw < 2 or rh < 2:
             return
-        cropped = background_pixmap.copy(rx, ry, rw, rh)
+        bg_rect = background_pixmap.rect()
+        target_rect = r.toRect().intersected(bg_rect)
+        if target_rect.width() < 2 or target_rect.height() < 2:
+            return
+        cropped = background_pixmap.copy(target_rect)
         self.cached_pixmap = get_filtered_pixmap(cropped, self.effect_type, self.intensity)
+        self._cached_rect = QRectF(r)
 
     def draw(self, painter: QPainter, offset: QPointF = QPointF(0, 0), source_pixmap: QPixmap = None):
         if not self.visible:
@@ -892,7 +903,8 @@ class RegionalEffectShape(BaseShape):
             painter.translate(-c)
 
         r = self.rect.translated(-offset.x(), -offset.y()).normalized()
-        if self.cached_pixmap is None and source_pixmap is not None:
+        r_norm = self.rect.normalized()
+        if (self.cached_pixmap is None or getattr(self, "_cached_rect", None) != r_norm) and source_pixmap is not None:
             self.update_effect(source_pixmap)
 
         if self.cached_pixmap is not None:
@@ -1004,7 +1016,8 @@ class BlurShape(RegionalEffectShape):
             painter.translate(-c)
 
         r = self.rect.translated(-offset.x(), -offset.y()).normalized()
-        if self.cached_pixmap is None and source_pixmap is not None:
+        r_norm = self.rect.normalized()
+        if (self.cached_pixmap is None or getattr(self, "_cached_rect", None) != r_norm) and source_pixmap is not None:
             self.update_effect(source_pixmap)
 
         if self.cached_pixmap is not None:

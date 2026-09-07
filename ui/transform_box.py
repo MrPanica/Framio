@@ -269,6 +269,14 @@ class ShapeTransformBox:
         for attr in ("rect", "p1", "p2", "points", "path", "pos", "font_size", "rotation"):
             if hasattr(src, attr):
                 setattr(self.shape, attr, getattr(src, attr))
+        if hasattr(self.shape, "cached_pixmap"):
+            self.shape.cached_pixmap = None
+        if hasattr(self.shape, "cached_mosaic"):
+            self.shape.cached_mosaic = None
+        if hasattr(self.shape, "cached_blur"):
+            self.shape.cached_blur = None
+        if hasattr(self.shape, "_cached_rect"):
+            self.shape._cached_rect = None
 
     def finish_drag(self) -> tuple[BaseShape | None, BaseShape | None]:
         """Завершает перетаскивание и возвращает кортеж (исходное состояние, итоговое состояние) для Undo/Redo."""

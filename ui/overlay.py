@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget, QApplication, QLineEdit, QFileDialog, QSystemTrayIcon, QMenu
 )
 from PyQt6.QtGui import (
-    QPainter, QPen, QColor, QBrush, QPixmap, QImage, QCursor, QFont, QRegion
+    QPainter, QPen, QColor, QBrush, QPixmap, QImage, QCursor, QFont, QRegion, QFontMetrics
 )
 
 from config import ConfigManager
@@ -113,6 +113,7 @@ class OverlayWindow(QWidget):
         self.history_manager = HistoryManager(self)
         self.current_tool = ToolType.MOVE
         self.current_filter = FilterType.NONE
+        self.is_highlighting_objects = False
 
         # Кэш отрисовки слоев для мгновенного отклика (60+ FPS)
         self.layers_cache_pixmap = None
@@ -288,6 +289,8 @@ class OverlayWindow(QWidget):
             target.cached_blur = None
         if hasattr(target, "cached_pixmap"):
             target.cached_pixmap = None
+        if hasattr(target, "_cached_rect"):
+            target._cached_rect = None
 
     def _invalidate_layers_cache(self):
         self.layers_cache_pixmap = None
@@ -299,6 +302,7 @@ class OverlayWindow(QWidget):
         self.clearMask()
         self.is_passthrough = False
         self.current_filter = FilterType.NONE
+        self.is_highlighting_objects = False
         if hasattr(self, "bottom_toolbar") and hasattr(self.bottom_toolbar, "reset_filter"):
             self.bottom_toolbar.reset_filter()
         self.selection_rect = QRectF()
@@ -1323,6 +1327,10 @@ class OverlayWindow(QWidget):
 
             # Рамка и плашка с номером фигуры при перемещении ПКМ
             self._draw_dragged_shape_indicator(painter)
+
+            # Подсветка всех интерактивных объектов при удержании клавиши Alt
+            if getattr(self, "is_highlighting_objects", False):
+                self._draw_interactive_objects_highlight(painter)
         elif getattr(self, "hovered_window_rect", None) and self.hovered_window_rect.isValid() and not self.hovered_window_rect.isEmpty():
             self._draw_hovered_window_indicator(painter)
 
@@ -1475,10 +1483,105 @@ class OverlayWindow(QWidget):
 
         painter.restore()
 
+    def _is_highlight_key(self, event, is_release: bool = False) -> bool:
+        hl_cfg = getattr(self.cfg, "hotkey_highlight_objects", "Alt").strip()
+        hl_lower = hl_cfg.lower()
+        key = event.key()
+        if "alt" in hl_lower:
+            if is_release:
+                return key in (Qt.Key.Key_Alt, Qt.Key.Key_AltGr)
+            return key in (Qt.Key.Key_Alt, Qt.Key.Key_AltGr) or bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
+        elif "ctrl" in hl_lower:
+            if is_release:
+                return key == Qt.Key.Key_Control
+            return key == Qt.Key.Key_Control or bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        elif "shift" in hl_lower:
+            if is_release:
+                return key == Qt.Key.Key_Shift
+            return key == Qt.Key.Key_Shift or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        else:
+            txt = event.text().strip().lower()
+            return txt == hl_lower or (hasattr(Qt.Key, f"Key_{hl_cfg}") and key == getattr(Qt.Key, f"Key_{hl_cfg}"))
+
+    def _draw_interactive_objects_highlight(self, painter: QPainter):
+        """Подсвечивает все интерактивные/перемещаемые объекты рамками и бейджами с названиями при удержании Alt."""
+        if not hasattr(self, "layer_manager") or not self.layer_manager.shapes:
+            return
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        font = QFont("Segoe UI", 9, QFont.Weight.Bold)
+        fm = QFontMetrics(font)
+
+        for s in self.layer_manager.shapes:
+            if not getattr(s, "visible", True):
+                continue
+            br = s.get_bounding_rect()
+            if not br.isValid() or br.isEmpty():
+                continue
+
+            # 1. Контурная рамка вокруг объекта
+            pen_box = QPen(QColor(56, 189, 248, 220), 1.5, Qt.PenStyle.DashLine)
+            painter.setPen(pen_box)
+            painter.setBrush(QBrush(QColor(56, 189, 248, 30)))
+            adj_rect = br.adjusted(-4, -4, 4, 4)
+            painter.drawRoundedRect(adj_rect, 4, 4)
+
+            # 2. Локализованное название фигуры
+            tag_text = self._get_shape_display_name(s)
+            text_w = fm.horizontalAdvance(tag_text)
+            badge_w = text_w + 14
+            badge_h = 20
+            badge_x = adj_rect.left()
+            badge_y = max(4.0, adj_rect.top() - 24.0)
+            badge_rect = QRectF(badge_x, badge_y, badge_w, badge_h)
+
+            # Отрисовка плашки бейджа
+            painter.setPen(QPen(QColor(56, 189, 248), 1))
+            painter.setBrush(QBrush(QColor(15, 23, 42, 230)))
+            painter.drawRoundedRect(badge_rect, 4, 4)
+
+            # Текст бейджа
+            painter.setPen(QColor(241, 245, 249))
+            painter.setFont(font)
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, tag_text)
+
+        painter.restore()
+
+    def _get_shape_display_name(self, shape) -> str:
+        if isinstance(shape, ArrowShape):
+            return tr("obj_arrow", "Стрелка")
+        elif isinstance(shape, LineShape):
+            return tr("obj_line", "Линия")
+        elif isinstance(shape, RectangleShape):
+            return tr("obj_rect", "Прямоугольник")
+        elif isinstance(shape, CircleShape):
+            return tr("obj_circle", "Круг / Овал")
+        elif isinstance(shape, TextShape):
+            txt = getattr(shape, "text", "").strip()
+            return f'{tr("obj_text", "Текст")}: "{txt[:10]}"' if txt else tr("obj_text", "Текст")
+        elif isinstance(shape, MosaicShape):
+            return tr("obj_mosaic", "Мозаика (Цензура)")
+        elif isinstance(shape, BlurShape):
+            return tr("obj_blur", "Размытие (Блюр)")
+        elif isinstance(shape, RegionalEffectShape):
+            etype = getattr(shape, "effect_type", "mosaic")
+            key = f"censor_{etype}"
+            return tr(key, getattr(shape, "name", tr("obj_interactive", "Объект")))
+        elif isinstance(shape, PenShape):
+            return tr("obj_highlighter", "Маркер") if getattr(shape, "is_highlighter", False) else tr("obj_pen", "Карандаш")
+        return getattr(shape, "name", tr("obj_interactive", "Объект"))
+
     # --- Клавиатура ---
     def keyPressEvent(self, event):
         key = event.key()
         modifiers = event.modifiers()
+
+        if self._is_highlight_key(event, is_release=False):
+            if not getattr(self, "is_highlighting_objects", False):
+                self.is_highlighting_objects = True
+                self.update()
 
         if key == Qt.Key.Key_Escape:
             if self.is_recording:
@@ -1503,6 +1606,19 @@ class OverlayWindow(QWidget):
             elif key == Qt.Key.Key_C:
                 self.copy_screenshot("standard")
         super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if self._is_highlight_key(event, is_release=True):
+            if getattr(self, "is_highlighting_objects", False):
+                self.is_highlighting_objects = False
+                self.update()
+        super().keyReleaseEvent(event)
+
+    def focusOutEvent(self, event):
+        if getattr(self, "is_highlighting_objects", False):
+            self.is_highlighting_objects = False
+            self.update()
+        super().focusOutEvent(event)
 
     def select_entire_screen(self):
         """Выбирает всю доступную область экрана (эквивалент Ctrl+A или клика по иконке разворота на бейдже)."""

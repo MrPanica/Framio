@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 from config import (
     ConfigManager, AppConfig, get_base_dir, DEFAULT_HOTKEY,
     DEFAULT_HOTKEY_RECORD_FULLSCREEN, DEFAULT_HOTKEY_STOP_RECORDING,
-    DEFAULT_HOTKEY_QUICK_FULLSCREEN, normalize_portable_path
+    DEFAULT_HOTKEY_QUICK_FULLSCREEN, DEFAULT_HOTKEY_HIGHLIGHT_OBJECTS, normalize_portable_path
 )
 from utils.autostart import set_windows_autostart, is_windows_autostart_enabled
 from utils.i18n import tr, set_language, get_current_language
@@ -635,7 +635,7 @@ class SettingsDialog(QDialog):
         bottom_layout.setContentsMargins(4, 0, 4, 0)
         
         base_dir = get_base_dir()
-        cfg_mode = "Портативный" if self.cfg.is_portable else "Системный"
+        cfg_mode = tr("settings_mode_portable", "Портативный") if self.cfg.is_portable else tr("settings_mode_system", "Системный")
         self.lbl_status = QLabel(tr("settings_portable_badge", "Режим: {mode} • {path}", mode=cfg_mode, path=str(base_dir)))
         self.lbl_status.setStyleSheet("color: #8892b0; font-size: 11px;")
         bottom_layout.addWidget(self.lbl_status, 1)
@@ -771,23 +771,23 @@ class SettingsDialog(QDialog):
         self.combo_fps.addItems(["15", "24", "30", "60"])
         self.combo_fps.setCurrentText(str(self.cfg.video_fps))
         self.combo_fps.setFixedWidth(120)
-        card_video.add_row(tr("settings_video_fps", "Частота кадров (FPS):"), "Плавность записи видеопотока (рекомендуется 30 или 60 FPS)", self.combo_fps)
+        card_video.add_row(tr("settings_video_fps", "Частота кадров (FPS):"), tr("settings_video_fps_desc", "Плавность записи видеопотока (рекомендуется 30 или 60 FPS)"), self.combo_fps)
 
         self.combo_codec = QComboBox()
         self.combo_codec.addItems(["mp4v", "avc1", "XVID"])
         self.combo_codec.setCurrentText(self.cfg.video_codec)
         self.combo_codec.setFixedWidth(120)
-        card_video.add_row(tr("settings_video_codec", "Видеокодек:"), "Аппаратный или программный кодек упаковки кадров в MP4", self.combo_codec)
+        card_video.add_row(tr("settings_video_codec", "Видеокодек:"), tr("settings_video_codec_desc", "Аппаратный или программный кодек упаковки кадров в MP4"), self.combo_codec)
 
         self.combo_quality = QComboBox()
-        self.combo_quality.addItems(["Высокое", "Среднее", "Максимальное"])
+        self.combo_quality.addItems([tr("settings_quality_high", "Высокое"), tr("settings_quality_medium", "Среднее"), tr("settings_quality_ultra", "Максимальное")])
         self.combo_quality.setCurrentText(getattr(self.cfg, "video_quality", "Высокое"))
         self.combo_quality.setFixedWidth(120)
-        card_video.add_row(tr("settings_video_quality", "Качество записи:"), "Битрейт и четкость сжатия видео", self.combo_quality)
+        card_video.add_row(tr("settings_video_quality", "Качество записи:"), tr("settings_video_quality_desc", "Битрейт и четкость сжатия видео"), self.combo_quality)
 
         self.chk_compress_video = QCheckBox(tr("settings_compress_video", "Сжимать видео после записи (H.264 CRF)"))
         self.chk_compress_video.setChecked(getattr(self.cfg, "compress_video", True))
-        card_video.add_row("Фоновая оптимизация MP4", "Автоматическое сжатие FFmpeg без потери визуального качества", self.chk_compress_video)
+        card_video.add_row(tr("settings_compress_mp4_row", "Фоновая оптимизация MP4"), tr("settings_compress_video_desc", "Автоматическое сжатие FFmpeg без потери визуального качества"), self.chk_compress_video)
 
         layout.addWidget(card_video)
 
@@ -798,16 +798,16 @@ class SettingsDialog(QDialog):
         self.combo_gif_fps.addItems(["10", "12", "15", "20", "24", "30"])
         self.combo_gif_fps.setCurrentText(str(self.cfg.gif_fps))
         self.combo_gif_fps.setFixedWidth(120)
-        card_gif.add_row(tr("settings_gif_fps", "Частота кадров GIF (FPS):"), "Меньше FPS значительно сокращает размер файла GIF", self.combo_gif_fps)
+        card_gif.add_row(tr("settings_gif_fps", "Частота кадров GIF (FPS):"), tr("settings_gif_fps_desc", "Меньше FPS значительно сокращает размер файла GIF"), self.combo_gif_fps)
 
         self.combo_gif_colors = QComboBox()
         self.combo_gif_colors.setFixedWidth(300)
         self.gif_options = [
-            ("Максимальное сжатие (64 цвета)", 64, "none"),
-            ("Высокое сжатие (64 цвета, bayer)", 64, "bayer"),
-            ("Баланс (128 цветов, сжатый)", 128, "bayer"),
-            ("Высокое качество (256 цветов)", 256, "bayer"),
-            ("Экстремальное сжатие (32 цвета)", 32, "none"),
+            (tr("popup_gif_opt_max", "Максимальное сжатие (64 цвета)"), 64, "none"),
+            (tr("popup_gif_opt_high", "Высокое сжатие (64 цвета, bayer)"), 64, "bayer"),
+            (tr("popup_gif_opt_balance", "Баланс (128 цветов, сжатый)"), 128, "bayer"),
+            (tr("popup_gif_opt_quality", "Высокое качество (256 цветов)"), 256, "bayer"),
+            (tr("popup_gif_opt_extreme", "Экстремальное сжатие (32 цвета)"), 32, "none"),
         ]
         cur_colors = getattr(self.cfg, "gif_colors", 64)
         cur_dither = getattr(self.cfg, "gif_dither", "none")
@@ -817,15 +817,15 @@ class SettingsDialog(QDialog):
             if c == cur_colors and d == cur_dither:
                 cur_idx = i
         self.combo_gif_colors.setCurrentIndex(cur_idx)
-        card_gif.add_row(tr("settings_gif_colors", "Палитра и сжатие:"), "Количество цветов и алгоритм сглаживания градиентов", self.combo_gif_colors)
+        card_gif.add_row(tr("settings_gif_colors", "Палитра и сжатие:"), tr("settings_gif_colors_desc", "Количество цветов и алгоритм сглаживания градиентов"), self.combo_gif_colors)
 
-        self.chk_gif_opt = QCheckBox("Оптимизировать размер GIF (LZW)")
+        self.chk_gif_opt = QCheckBox(tr("popup_gif_opt", "Оптимизировать размер GIF (LZW)"))
         self.chk_gif_opt.setChecked(self.cfg.gif_optimize)
-        card_gif.add_row("LZW сжатие", "Устранение повторяющихся цветовых блоков", self.chk_gif_opt)
+        card_gif.add_row(tr("settings_lzw_row", "LZW сжатие"), tr("settings_gif_opt_desc", "Устранение повторяющихся цветовых блоков"), self.chk_gif_opt)
 
         self.chk_compress_gif = QCheckBox(tr("settings_compress_gif", "Сжимать GIF палитрой (PaletteGen)"))
         self.chk_compress_gif.setChecked(getattr(self.cfg, "compress_gif", True))
-        card_gif.add_row("Двухпроходный PaletteGen", "Генерация адаптивной 256-цветной палитры под контент", self.chk_compress_gif)
+        card_gif.add_row(tr("settings_palettegen_row", "Двухпроходный PaletteGen"), tr("settings_compress_gif_desc", "Генерация адаптивной 256-цветной палитры под контент"), self.chk_compress_gif)
 
         layout.addWidget(card_gif)
 
@@ -834,11 +834,11 @@ class SettingsDialog(QDialog):
 
         self.chk_record_mic = QCheckBox(tr("settings_record_mic", "Записывать звук с микрофона (по умолчанию)"))
         self.chk_record_mic.setChecked(getattr(self.cfg, "record_mic", True))
-        card_audio.add_row("Микрофон", "Захват голоса пользователя через системный вход по умолчанию", self.chk_record_mic)
+        card_audio.add_row(tr("settings_record_mic_row", "Микрофон"), tr("settings_record_mic_desc", "Захват голоса пользователя через системный вход по умолчанию"), self.chk_record_mic)
 
         self.chk_record_system = QCheckBox(tr("settings_record_system", "Записывать звук из игр и системы (WASAPI loopback)"))
         self.chk_record_system.setChecked(getattr(self.cfg, "record_system", True))
-        card_audio.add_row("Системный звук", "Захват музыки, видео и звуков приложений без сторонних драйверов", self.chk_record_system)
+        card_audio.add_row(tr("settings_record_system_row", "Системный звук"), tr("settings_record_system_desc", "Захват музыки, видео и звуков приложений без сторонних драйверов"), self.chk_record_system)
 
         layout.addWidget(card_audio)
 
@@ -847,17 +847,17 @@ class SettingsDialog(QDialog):
 
         self.chk_countdown = QCheckBox(tr("settings_countdown_enable", "Включить обратный отсчёт перед началом записи"))
         self.chk_countdown.setChecked(getattr(self.cfg, "record_countdown_enabled", False))
-        card_countdown.add_row("Обратный отсчет", "Показывает таймер в шапке рамки, давая время приготовиться", self.chk_countdown)
+        card_countdown.add_row(tr("settings_countdown_title", "Обратный отсчет"), tr("settings_countdown_desc", "Показывает таймер в шапке рамки, давая время приготовиться"), self.chk_countdown)
 
         self.spin_countdown_sec = QSpinBox()
         self.spin_countdown_sec.setRange(1, 60)
-        self.spin_countdown_sec.setSuffix(" сек")
+        self.spin_countdown_sec.setSuffix(tr("popup_video_timer_sec", " сек"))
         cur_sec = getattr(self.cfg, "record_countdown_seconds", 3)
         self.spin_countdown_sec.setValue(cur_sec)
         self.spin_countdown_sec.setEnabled(self.chk_countdown.isChecked())
         self.chk_countdown.toggled.connect(self.spin_countdown_sec.setEnabled)
         self.spin_countdown_sec.setFixedWidth(120)
-        card_countdown.add_row(tr("settings_countdown_delay", "Задержка таймера:"), "Длительность ожидания перед стартом захвата кадров (1–60 сек)", self.spin_countdown_sec)
+        card_countdown.add_row(tr("settings_countdown_delay", "Задержка таймера:"), tr("settings_countdown_delay_desc", "Длительность ожидания перед стартом захвата кадров (1–60 сек)"), self.spin_countdown_sec)
 
         layout.addWidget(card_countdown)
 
@@ -895,7 +895,7 @@ class SettingsDialog(QDialog):
         l_cap.addWidget(self.edit_hotkey_capture)
         l_cap.addWidget(btn_rec_cap)
         l_cap.addWidget(btn_reset_cap)
-        card_hotkey.add_row(tr("settings_hk_capture", "Захват области (скриншот):"), "Выделение области мышью для аннотаций и сохранения", w_cap)
+        card_hotkey.add_row(tr("settings_hk_capture", "Захват области (скриншот):"), tr("settings_hk_capture_desc", "Выделение области мышью для аннотаций и сохранения"), w_cap)
 
         # 2. Быстрый снимок всего экрана
         w_quick = QWidget()
@@ -912,7 +912,7 @@ class SettingsDialog(QDialog):
         l_quick.addWidget(self.edit_hotkey_quick_screen)
         l_quick.addWidget(btn_rec_quick)
         l_quick.addWidget(btn_reset_quick)
-        card_hotkey.add_row(tr("settings_hk_quick_screen", "Быстрый скриншот экрана:"), "Мгновенно сохраняет изображение всех экранов без рамок", w_quick)
+        card_hotkey.add_row(tr("settings_hk_quick_screen", "Быстрый скриншот экрана:"), tr("settings_hk_quick_desc", "Мгновенно сохраняет изображение всех экранов без рамок"), w_quick)
 
         # 3. Запись всего экрана
         w_rec = QWidget()
@@ -929,7 +929,7 @@ class SettingsDialog(QDialog):
         l_rec.addWidget(self.edit_hotkey_record_fs)
         l_rec.addWidget(btn_rec_fs)
         l_rec.addWidget(btn_reset_fs)
-        card_hotkey.add_row(tr("settings_hk_rec_fs", "Запись всего экрана (видео):"), "Старт видеозаписи рабочего стола на полный экран", w_rec)
+        card_hotkey.add_row(tr("settings_hk_rec_fs", "Запись всего экрана (видео):"), tr("settings_hk_rec_desc", "Старт видеозаписи рабочего стола на полный экран"), w_rec)
 
         # 4. Остановка записи
         w_stop = QWidget()
@@ -946,16 +946,33 @@ class SettingsDialog(QDialog):
         l_stop.addWidget(self.edit_hotkey_stop)
         l_stop.addWidget(btn_rec_stop)
         l_stop.addWidget(btn_reset_stop)
-        card_hotkey.add_row(tr("settings_hk_stop_rec", "Остановка записи:"), "Завершает любую активную запись экрана или рамки", w_stop)
+        card_hotkey.add_row(tr("settings_hk_stop_rec", "Остановка записи:"), tr("settings_hk_stop_desc", "Завершает любую активную запись экрана или рамки"), w_stop)
+
+        # 5. Подсветка интерактивных объектов
+        w_hl = QWidget()
+        l_hl = QHBoxLayout(w_hl)
+        l_hl.setContentsMargins(0, 0, 0, 0)
+        l_hl.setSpacing(6)
+        self.edit_hotkey_highlight = QLineEdit(getattr(self.cfg, "hotkey_highlight_objects", DEFAULT_HOTKEY_HIGHLIGHT_OBJECTS))
+        self.edit_hotkey_highlight.setFixedWidth(170)
+        btn_rec_hl = HotkeyRecorderButton(self.edit_hotkey_highlight)
+        btn_rec_hl.setFixedWidth(82)
+        btn_reset_hl = QPushButton(tr("settings_btn_reset", "Сбросить"))
+        btn_reset_hl.setFixedWidth(72)
+        btn_reset_hl.clicked.connect(lambda: self.edit_hotkey_highlight.setText(DEFAULT_HOTKEY_HIGHLIGHT_OBJECTS))
+        l_hl.addWidget(self.edit_hotkey_highlight)
+        l_hl.addWidget(btn_rec_hl)
+        l_hl.addWidget(btn_reset_hl)
+        card_hotkey.add_row(tr("settings_hk_highlight", "Подсветка объектов (Alt):"), tr("settings_hk_highlight_desc", "Зажмите горячую клавишу для подсветки всех интерактивных фигур на экране"), w_hl)
 
         layout.addWidget(card_hotkey)
 
-        card_info = SettingCard("Справка по горячим клавишам")
-        lbl_info = QLabel(
+        card_info = SettingCard(tr("settings_hk_info_title", "Справка по горячим клавишам"))
+        lbl_info = QLabel(tr("settings_hk_info_text", 
             "• Поддерживаются сочетания с <b>Ctrl</b>, <b>Shift</b>, <b>Alt</b>, <b>Win</b> и клавишами <b>Print Screen</b>, <b>F1–F12</b>, буквами и цифрами.<br>"
             "• Чтобы назначить новую клавишу, нажмите кнопку <b>«Назначить»</b> и зажмите желаемую комбинацию на клавиатуре.<br>"
             "• Для возврата к стандартным значениям используйте кнопку <b>«Сбросить»</b>."
-        )
+        ))
         lbl_info.setTextFormat(Qt.TextFormat.RichText)
         lbl_info.setStyleSheet("color: #94a3b8; font-size: 11px; line-height: 1.5;")
         card_info.add_widget(lbl_info)
@@ -999,35 +1016,35 @@ class SettingsDialog(QDialog):
         card_screen = SettingCard(tr("settings_screenshots_group", "Скриншоты и буфер обмена"))
 
         self.combo_save_format = QComboBox()
-        self.combo_save_format.addItem("PNG (Высокое качество без потерь)", "png")
-        self.combo_save_format.addItem("JPEG / JPG (Сжатый компактный)", "jpg")
-        self.combo_save_format.addItem("WebP (Современный формат)", "webp")
+        self.combo_save_format.addItem(tr("popup_fmt_png", "PNG (Высокое качество без потерь)"), "png")
+        self.combo_save_format.addItem(tr("popup_fmt_jpg", "JPEG / JPG (Сжатый компактный)"), "jpg")
+        self.combo_save_format.addItem(tr("popup_fmt_webp", "WebP (Современный формат)"), "webp")
         cur_fmt = getattr(self.cfg, "last_save_format", "png").lower()
         idx_fmt = self.combo_save_format.findData(cur_fmt)
         if idx_fmt >= 0:
             self.combo_save_format.setCurrentIndex(idx_fmt)
         self.combo_save_format.setFixedWidth(270)
-        card_screen.add_row(tr("settings_save_format", "Формат скриншотов:"), "Формат сохранения файлов на диск по умолчанию", self.combo_save_format)
+        card_screen.add_row(tr("settings_save_format", "Формат скриншотов:"), tr("settings_save_format_desc", "Формат сохранения файлов на диск по умолчанию"), self.combo_save_format)
 
         self.combo_copy_format = QComboBox()
-        self.combo_copy_format.addItem("DIB / Растровый (Мессенджеры)", "standard")
-        self.combo_copy_format.addItem("PNG (С сохранением прозрачности)", "png")
-        self.combo_copy_format.addItem("JPEG (Компактный размер)", "jpg")
-        self.combo_copy_format.addItem("Data URI (Base64 текст)", "data_uri")
+        self.combo_copy_format.addItem(tr("popup_copy_dib", "DIB / Растровый (Мессенджеры)"), "standard")
+        self.combo_copy_format.addItem(tr("popup_copy_png", "PNG (С сохранением прозрачности)"), "png")
+        self.combo_copy_format.addItem(tr("popup_copy_jpg", "JPEG (Компактный размер)"), "jpg")
+        self.combo_copy_format.addItem(tr("popup_copy_data_uri", "Data URI (Base64 текст)"), "data_uri")
         cur_cp = getattr(self.cfg, "default_copy_format", "standard")
         idx_cp = self.combo_copy_format.findData(cur_cp)
         if idx_cp >= 0:
             self.combo_copy_format.setCurrentIndex(idx_cp)
         self.combo_copy_format.setFixedWidth(270)
-        card_screen.add_row(tr("settings_copy_format", "Формат копирования:"), "Тип данных изображения, помещаемых в буфер обмена Windows", self.combo_copy_format)
+        card_screen.add_row(tr("settings_copy_format", "Формат копирования:"), tr("settings_copy_format_desc", "Тип данных изображения, помещаемых в буфер обмена Windows"), self.combo_copy_format)
 
         self.chk_auto_copy = QCheckBox(tr("settings_auto_copy", "Автоматически копировать скриншот в буфер обмена"))
         self.chk_auto_copy.setChecked(self.cfg.auto_copy_to_clipboard)
-        card_screen.add_row("Копирование в буфер", tr("settings_auto_copy_desc", "Сразу помещать изображение в буфер обмена после выделения"), self.chk_auto_copy)
+        card_screen.add_row(tr("settings_auto_copy_row", "Копирование в буфер"), tr("settings_auto_copy_desc", "Сразу помещать изображение в буфер обмена после выделения"), self.chk_auto_copy)
 
         self.chk_save_on_search = QCheckBox(tr("settings_save_on_search", "Сохранять скриншот при поиске по картинке"))
         self.chk_save_on_search.setChecked(getattr(self.cfg, "save_screenshot_on_search", True))
-        card_screen.add_row("Поиск по картинке", tr("settings_save_on_search_desc", "Автоматически сохранять файл на диск при отправке в Яндекс / Google"), self.chk_save_on_search)
+        card_screen.add_row(tr("settings_save_search_row", "Поиск по картинке"), tr("settings_save_on_search_desc", "Автоматически сохранять файл на диск при отправке в Яндекс / Google"), self.chk_save_on_search)
 
         layout.addWidget(card_screen)
 
@@ -1039,14 +1056,14 @@ class SettingsDialog(QDialog):
         self.btn_default_color.setFixedWidth(120)
         self._update_color_button()
         self.btn_default_color.clicked.connect(self._pick_default_color)
-        card_annot.add_row(tr("settings_default_color", "Основной цвет инструментов:"), "Цвет карандаша, стрелок, рамок и текста при запуске", self.btn_default_color)
+        card_annot.add_row(tr("settings_default_color", "Основной цвет инструментов:"), tr("settings_default_color_desc", "Цвет карандаша, стрелок, рамок и текста при запуске"), self.btn_default_color)
 
         self.spin_stroke_width = QSpinBox()
         self.spin_stroke_width.setRange(1, 24)
         self.spin_stroke_width.setValue(getattr(self.cfg, "default_stroke_width", 4))
         self.spin_stroke_width.setSuffix(" px")
         self.spin_stroke_width.setFixedWidth(120)
-        card_annot.add_row(tr("settings_default_stroke", "Толщина линий:"), "Базовая толщина обводки для векторных фигур", self.spin_stroke_width)
+        card_annot.add_row(tr("settings_default_stroke", "Толщина линий:"), tr("settings_default_stroke_desc", "Базовая толщина обводки для векторных фигур"), self.spin_stroke_width)
 
         self.spin_highlighter_alpha = QSpinBox()
         self.spin_highlighter_alpha.setRange(10, 100)
@@ -1054,38 +1071,38 @@ class SettingsDialog(QDialog):
         self.spin_highlighter_alpha.setValue(getattr(self.cfg, "highlighter_alpha", 90))
         self.spin_highlighter_alpha.setSuffix(" %")
         self.spin_highlighter_alpha.setFixedWidth(120)
-        card_annot.add_row(tr("settings_highlighter_alpha", "Прозрачность маркера:"), "Уровень прозрачности для инструмента маркер-хайлайтер", self.spin_highlighter_alpha)
+        card_annot.add_row(tr("settings_highlighter_alpha", "Прозрачность маркера:"), tr("settings_highlighter_alpha_desc", "Уровень прозрачности для инструмента маркер-хайлайтер"), self.spin_highlighter_alpha)
 
         self.spin_font_size = QSpinBox()
         self.spin_font_size.setRange(10, 72)
         self.spin_font_size.setValue(getattr(self.cfg, "default_font_size", 18))
         self.spin_font_size.setSuffix(" pt")
         self.spin_font_size.setFixedWidth(120)
-        card_annot.add_row("Размер шрифта текста:", "Базовый размер надписей для текстовых заметок", self.spin_font_size)
+        card_annot.add_row(tr("settings_font_size_label", "Размер шрифта:"), tr("settings_font_size_desc", "Базовый размер надписей для текстовых заметок"), self.spin_font_size)
 
         layout.addWidget(card_annot)
 
         # Карточка 4: Поведение и автозапуск Windows
-        card_auto = SettingCard("Автозапуск и поведение системы")
+        card_auto = SettingCard(tr("settings_system_group", "Автозапуск и поведение системы"))
 
         self.chk_autostart = QCheckBox(tr("settings_autostart", "Запускать Framio вместе с Windows (в трей)"))
         self.chk_autostart.setStyleSheet("font-weight: 600; color: #38bdf8;")
         self.chk_autostart.setChecked(getattr(self.cfg, "autostart", False) or is_windows_autostart_enabled())
-        card_auto.add_row("Автозапуск Windows", tr("settings_autostart_desc", "Автоматически запускать свернутым в трей при входе в систему"), self.chk_autostart)
+        card_auto.add_row(tr("settings_autostart_row", "Автозапуск Windows"), tr("settings_autostart_desc", "Автоматически запускать свернутым в трей при входе в систему"), self.chk_autostart)
 
-        reg_status = "Включен в реестре" if is_windows_autostart_enabled() else "Отключен в реестре"
-        self.lbl_reg_status = QLabel(f"Текущий статус в реестре Windows: <span style='color: #38bdf8; font-weight: 500;'>{reg_status}</span>")
+        reg_status = tr("settings_reg_enabled", "Включен в реестре") if is_windows_autostart_enabled() else tr("settings_reg_disabled", "Отключен в реестре")
+        self.lbl_reg_status = QLabel(tr("settings_reg_status", "Текущий статус в реестре Windows: {status}", status=f"<span style='color: #38bdf8; font-weight: 500;'>{reg_status}</span>"))
         self.lbl_reg_status.setTextFormat(Qt.TextFormat.RichText)
         self.lbl_reg_status.setStyleSheet("color: #94a3b8; font-size: 11px;")
         card_auto.add_widget(self.lbl_reg_status)
 
         self.chk_sound = QCheckBox(tr("settings_play_sound", "Воспроизводить звуки затвора и уведомлений"))
         self.chk_sound.setChecked(self.cfg.play_sound)
-        card_auto.add_row("Звуковые эффекты", tr("settings_play_sound_desc", "Звуковой щелчок затвора при снимке экрана"), self.chk_sound)
+        card_auto.add_row(tr("settings_sound_row", "Звуковые эффекты"), tr("settings_play_sound_desc", "Звуковой щелчок затвора при снимке экрана"), self.chk_sound)
 
         self.chk_open_folder = QCheckBox(tr("settings_open_folder", "Открывать папку с файлом после сохранения"))
         self.chk_open_folder.setChecked(getattr(self.cfg, "open_folder_after_save", False))
-        card_auto.add_row("Проводник", tr("settings_open_folder_desc", "Показывать созданный файл в проводнике Windows"), self.chk_open_folder)
+        card_auto.add_row(tr("settings_folder_row", "Проводник"), tr("settings_open_folder_desc", "Показывать созданный файл в проводнике Windows"), self.chk_open_folder)
 
         layout.addWidget(card_auto)
 
@@ -1157,8 +1174,8 @@ class SettingsDialog(QDialog):
         if checked:
             res = QMessageBox.question(
                 self,
-                "Портативный режим",
-                "Переключить пути сохранения в папку программы (Captures)?",
+                tr("settings_mode_portable", "Портативный режим"),
+                tr("settings_reset_confirm_msg", "Переключить пути сохранения в папку программы (Captures)?"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes
             )
@@ -1186,20 +1203,20 @@ class SettingsDialog(QDialog):
             if sys.platform == "win32":
                 os.startfile(str(p))
         except Exception as e:
-            QMessageBox.warning(self, "Ошибка открытия папки", f"Не удалось открыть папку:\n{path_str}\n\nОшибка: {e}")
+            QMessageBox.warning(self, tr("settings_folder_error_title", "Ошибка открытия папки"), tr("settings_folder_error_msg", "Не удалось открыть папку:\n{path}\n\nОшибка: {err}", path=path_str, err=e))
 
     def _browse_screenshots(self):
-        d = QFileDialog.getExistingDirectory(self, "Выберите папку для скриншотов", self.edit_screenshots_dir.text())
+        d = QFileDialog.getExistingDirectory(self, tr("settings_choose_folder_screens", "Выберите папку для скриншотов"), self.edit_screenshots_dir.text())
         if d:
             self.edit_screenshots_dir.setText(d)
 
     def _browse_videos(self):
-        d = QFileDialog.getExistingDirectory(self, "Выберите папку для видео", self.edit_videos_dir.text())
+        d = QFileDialog.getExistingDirectory(self, tr("settings_choose_folder_videos", "Выберите папку для видео"), self.edit_videos_dir.text())
         if d:
             self.edit_videos_dir.setText(d)
 
     def _browse_gifs(self):
-        d = QFileDialog.getExistingDirectory(self, "Выберите папку для GIF", self.edit_gifs_dir.text())
+        d = QFileDialog.getExistingDirectory(self, tr("settings_choose_folder_gifs", "Выберите папку для GIF"), self.edit_gifs_dir.text())
         if d:
             self.edit_gifs_dir.setText(d)
 
@@ -1212,6 +1229,8 @@ class SettingsDialog(QDialog):
         self.cfg.hotkey_quick_fullscreen = self.edit_hotkey_quick_screen.text().strip()
         self.cfg.hotkey_record_fullscreen = self.edit_hotkey_record_fs.text().strip()
         self.cfg.hotkey_stop_recording = self.edit_hotkey_stop.text().strip()
+        if hasattr(self, "edit_hotkey_highlight"):
+            self.cfg.hotkey_highlight_objects = self.edit_hotkey_highlight.text().strip() or DEFAULT_HOTKEY_HIGHLIGHT_OBJECTS
 
         self.cfg.language = self.combo_lang.currentData() or "auto"
         set_language(self.cfg.language)
@@ -1252,8 +1271,8 @@ class SettingsDialog(QDialog):
         self.settings_applied.emit()
 
         # Обновляем отображение статуса автозапуска
-        reg_status = "Включен в реестре" if is_windows_autostart_enabled() else "Отключен в реестре"
-        self.lbl_reg_status.setText(f"Текущий статус в реестре Windows: <span style='color: #38bdf8; font-weight: 500;'>{reg_status}</span>")
+        reg_status = tr("settings_reg_enabled", "Включен в реестре") if is_windows_autostart_enabled() else tr("settings_reg_disabled", "Отключен в реестре")
+        self.lbl_reg_status.setText(tr("settings_reg_status", "Текущий статус в реестре Windows: {status}", status=f"<span style='color: #38bdf8; font-weight: 500;'>{reg_status}</span>"))
 
         self.lbl_status.setText("✓ " + tr("settings_btn_apply", "Настройки успешно применены!"))
         self.lbl_status.setStyleSheet("color: #4ade80; font-size: 11px; font-weight: 600;")
@@ -1261,7 +1280,7 @@ class SettingsDialog(QDialog):
 
     def _restore_status_text(self):
         base_dir = get_base_dir()
-        cfg_mode = "Портативный" if self.cfg.is_portable else "Системный"
+        cfg_mode = tr("settings_mode_portable", "Портативный") if self.cfg.is_portable else tr("settings_mode_system", "Системный")
         self.lbl_status.setText(tr("settings_portable_badge", "Режим: {mode} • {path}", mode=cfg_mode, path=str(base_dir)))
         self.lbl_status.setStyleSheet("color: #8892b0; font-size: 11px;")
 

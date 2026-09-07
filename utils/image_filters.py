@@ -15,11 +15,22 @@ class FilterType:
     VIBRANT = "vibrant"
     SEPIA = "sepia"
 
+def get_localized_filter_names() -> dict:
+    from utils.i18n import tr
+    return {
+        FilterType.NONE: tr("filter_none", "Без фильтра"),
+        FilterType.GRAYSCALE: tr("filter_grayscale", "Оттенки серого (Чёрно-белый)"),
+        FilterType.BLUR: tr("filter_blur", "Мягкое размытие (Блюр)"),
+        FilterType.INVERT: tr("filter_invert", "Инверсия цветов (Негатив)"),
+        FilterType.VIBRANT: tr("filter_vibrant", "Повышенная контрастность"),
+        FilterType.SEPIA: tr("filter_sepia", "Тёплая сепия (Винтаж)")
+    }
+
 FILTER_NAMES = {
-    FilterType.NONE: "Обычный (без фильтра)",
-    FilterType.GRAYSCALE: "Чёрно-белый (Grayscale)",
-    FilterType.INVERT: "Инверсия цветов",
-    FilterType.BLUR: "Размытие (Blur)",
+    FilterType.NONE: "Без фильтра",
+    FilterType.GRAYSCALE: "Оттенки серого (Чёрно-белый)",
+    FilterType.INVERT: "Инверсия цветов (Негатив)",
+    FilterType.BLUR: "Мягкое размытие (Блюр)",
     FilterType.PIXELATE: "Пикселизация (Цензура)",
     FilterType.VIBRANT: "Повышенная контрастность",
     FilterType.SEPIA: "Тёплая сепия (Винтаж)"

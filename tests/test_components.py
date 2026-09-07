@@ -1325,11 +1325,82 @@ def test_regional_effects_and_whole_screen_filter_reset():
     print("  -> Региональные эффекты, сброс фильтров и живая индикация хоткеев проверены успешно.")
 
 
+def test_regional_effect_dynamic_resampling_and_alt_inspector():
+    print("[TEST] Тестирование динамического ресэмплинга эффектов цензуры и инспектора объектов на Alt...")
+    from PyQt6.QtGui import QPixmap, QColor, QKeyEvent
+    from PyQt6.QtCore import QEvent, Qt, QRectF
+    from models.shapes import RegionalEffectShape, BlurShape
+    from utils.image_filters import FilterType
+    from utils.i18n import TRANSLATIONS
+    from config import AppConfig
+
+    # 1. Проверка симметрии i18n
+    assert len(TRANSLATIONS['ru']) == len(TRANSLATIONS['en']), f"Mismatch: {len(TRANSLATIONS['ru'])} != {len(TRANSLATIONS['en'])}"
+    assert set(TRANSLATIONS['ru'].keys()) == set(TRANSLATIONS['en'].keys())
+
+    # 2. Проверка дефолтной настройки хоткея подсветки
+    cfg = AppConfig()
+    assert getattr(cfg, "hotkey_highlight_objects", None) == "Alt"
+
+    # 3. Тест динамического ресэмплинга регионального эффекта при перемещении
+    bg_img = QImage(200, 100, QImage.Format.Format_RGB32)
+    bg_img.fill(QColor(255, 0, 0))
+    for x in range(100, 200):
+        for y in range(100):
+            bg_img.setPixelColor(x, y, QColor(0, 0, 255))
+    bg_pix = QPixmap.fromImage(bg_img)
+
+    effect_shape = RegionalEffectShape(QRectF(10, 10, 40, 40), effect_type="grayscale")
+    
+    canvas_img = QImage(200, 100, QImage.Format.Format_ARGB32_Premultiplied)
+    canvas_img.fill(0)
+    p = QPainter(canvas_img)
+    effect_shape.draw(p, source_pixmap=bg_pix)
+    p.end()
+
+    col1 = canvas_img.pixelColor(20, 20)
+    assert col1.red() == col1.green() == col1.blue()
+    assert col1.red() > 50
+
+    # Перемещаем фигуру на синюю половину
+    effect_shape.translate(120, 0)
+    assert effect_shape.rect.x() == 130
+
+    canvas_img.fill(0)
+    p = QPainter(canvas_img)
+    effect_shape.draw(p, source_pixmap=bg_pix)
+    p.end()
+
+    col2 = canvas_img.pixelColor(140, 20)
+    assert col2.red() == col2.green() == col2.blue()
+    assert col2.red() < 40
+    assert col1.red() != col2.red(), "Эффект не обновил фоновые пиксели при перемещении!"
+
+    # 4. Тестирование инспектора объектов на Alt в OverlayWindow
+    from ui.overlay import OverlayWindow
+    overlay = OverlayWindow()
+    overlay.background_pixmap = bg_pix
+    overlay.layer_manager.add_shape(effect_shape)
+    assert not overlay.is_highlighting_objects
+
+    ev_alt_down = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Alt, Qt.KeyboardModifier.AltModifier)
+    overlay.keyPressEvent(ev_alt_down)
+    assert overlay.is_highlighting_objects, "Инспектор объектов не включился по клавише Alt!"
+
+    ev_alt_up = QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_Alt, Qt.KeyboardModifier.NoModifier)
+    overlay.keyReleaseEvent(ev_alt_up)
+    assert not overlay.is_highlighting_objects, "Инспектор объектов не выключился при отпускании Alt!"
+
+    overlay.close()
+    print("  -> Динамический ресэмплинг эффектов, симметрия i18n и инспектор объектов Alt проверены успешно.")
+
+
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
         tmp_p = Path(tmp_dir)
         test_models_and_history()
+        test_regional_effect_dynamic_resampling_and_alt_inspector()
         test_regional_effects_and_whole_screen_filter_reset()
         test_shape_transform_box_and_flyouts()
         test_bounding_rects_and_toolbar_layout()

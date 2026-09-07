@@ -17,6 +17,7 @@ from models.shapes import (
 )
 from .toolbars import get_theme_styles, style_toggle_btn, show_smart_popup
 from .icons import create_themed_icon, create_style_preview_icon
+from utils.i18n import tr
 
 
 class ShapeEditPopup(QFrame):
@@ -52,7 +53,7 @@ class ShapeEditPopup(QFrame):
 
         # Заголовок
         header = QHBoxLayout()
-        lbl_title = QLabel(f"Свойства: {shape.name}")
+        lbl_title = QLabel(tr("shape_edit_title", "Свойства: {name}", name=shape.name))
         lbl_title.setStyleSheet("color: #0078d4; font-weight: bold; font-size: 12px;")
         header.addWidget(lbl_title, 1)
 
@@ -139,7 +140,7 @@ class ShapeEditPopup(QFrame):
     def _init_color_controls(self):
         row_c = QHBoxLayout()
         row_c.setSpacing(5)
-        row_c.addWidget(QLabel("Цвет:"))
+        row_c.addWidget(QLabel(tr("shape_edit_color_label", "Цвет:"))) 
 
         self.color_buttons = {}
         for col in self.PRESET_COLORS:
@@ -154,7 +155,7 @@ class ShapeEditPopup(QFrame):
         # Кнопка режима мозаики
         self.btn_col_mosaic = QPushButton()
         self.btn_col_mosaic.setFixedSize(20, 20)
-        self.btn_col_mosaic.setToolTip("Режим мозаики (Цензура)")
+        self.btn_col_mosaic.setToolTip(tr("prop_mosaic_tip", "Режим мозаики (Цензура)"))
         self.btn_col_mosaic.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_col_mosaic.setIcon(create_themed_icon("mosaic", self.is_dark, size=12))
         self.btn_col_mosaic.setStyleSheet(f"background-color: {'#3b82f6' if self.shape.color == 'mosaic' else '#27272a'}; border-radius: 10px; border: 1px solid #555;")
@@ -165,7 +166,7 @@ class ShapeEditPopup(QFrame):
         # Кнопка режима блюра
         self.btn_col_blur = QPushButton()
         self.btn_col_blur.setFixedSize(20, 20)
-        self.btn_col_blur.setToolTip("Режим размытия (Блюр)")
+        self.btn_col_blur.setToolTip(tr("prop_blur_tip", "Режим размытия (Блюр)"))
         self.btn_col_blur.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_col_blur.setIcon(create_themed_icon("blur", self.is_dark, size=12))
         self.btn_col_blur.setStyleSheet(f"background-color: {'#3b82f6' if self.shape.color == 'blur' else '#27272a'}; border-radius: 10px; border: 1px solid #555;")
@@ -175,7 +176,7 @@ class ShapeEditPopup(QFrame):
 
         btn_more = QPushButton()
         btn_more.setFixedSize(22, 20)
-        btn_more.setToolTip("Выбрать произвольный цвет")
+        btn_more.setToolTip(tr("prop_color_custom", "Выбрать произвольный цвет"))
         btn_more.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_more.setIcon(create_themed_icon("palette", self.is_dark, size=14))
         btn_more.setIconSize(QSize(14, 14))
@@ -202,7 +203,7 @@ class ShapeEditPopup(QFrame):
         sliders_layout.setSpacing(6)
 
         # 1. Толщина линии (скрываем для чисто прямоугольных блоков цензуры)
-        self.lbl_size = QLabel(f"Толщина: {self.shape.stroke_width} px")
+        self.lbl_size = QLabel(tr("prop_stroke_width", "Толщина: {val} px", val=self.shape.stroke_width))
         self.slider_size = QSlider(Qt.Orientation.Horizontal)
         self.slider_size.setRange(1, 32)
         self.slider_size.setValue(int(self.shape.stroke_width))
@@ -216,7 +217,7 @@ class ShapeEditPopup(QFrame):
 
         # 2. Зернистость (для MosaicShape или фигур с цветом mosaic)
         cur_grain = getattr(self.shape, "pixel_size", 8)
-        self.lbl_grain = QLabel(f"Зернистость: {cur_grain} px")
+        self.lbl_grain = QLabel(tr("prop_mosaic_size", "Зернистость: {val} px", val=cur_grain))
         self.slider_grain = QSlider(Qt.Orientation.Horizontal)
         self.slider_grain.setRange(3, 30)
         self.slider_grain.setValue(int(cur_grain))
@@ -230,7 +231,7 @@ class ShapeEditPopup(QFrame):
 
         # 3. Степень размытия (для BlurShape или фигур с цветом blur)
         cur_blur = getattr(self.shape, "blur_radius", 15)
-        self.lbl_blur = QLabel(f"Степень размытия: {cur_blur} px")
+        self.lbl_blur = QLabel(tr("prop_blur_radius", "Степень размытия: {val} px", val=cur_blur))
         self.slider_blur = QSlider(Qt.Orientation.Horizontal)
         self.slider_blur.setRange(3, 45)
         self.slider_blur.setValue(int(cur_blur))
@@ -246,7 +247,7 @@ class ShapeEditPopup(QFrame):
 
     def _on_grain_changed(self, val: int):
         self.shape.pixel_size = val
-        self.lbl_grain.setText(f"Зернистость: {val} px")
+        self.lbl_grain.setText(tr("prop_mosaic_size", "Зернистость: {val} px", val=val))
         bg_pix = getattr(self.parent(), "background_pixmap", None)
         if hasattr(self.shape, "set_pixel_size"):
             self.shape.set_pixel_size(val, bg_pix)
@@ -256,7 +257,7 @@ class ShapeEditPopup(QFrame):
 
     def _on_blur_changed(self, val: int):
         self.shape.blur_radius = val
-        self.lbl_blur.setText(f"Степень размытия: {val} px")
+        self.lbl_blur.setText(tr("prop_blur_radius", "Степень размытия: {val} px", val=val))
         bg_pix = getattr(self.parent(), "background_pixmap", None)
         if hasattr(self.shape, "set_blur_radius"):
             self.shape.set_blur_radius(val, bg_pix)
@@ -266,15 +267,15 @@ class ShapeEditPopup(QFrame):
 
     def _init_arrow_controls(self):
         row = QHBoxLayout()
-        row.addWidget(QLabel("Стиль:"))
+        row.addWidget(QLabel(tr("prop_style", "Стиль:"))) 
         self.combo_arrow = QComboBox()
         self.combo_arrow.setIconSize(QSize(26, 18))
         arrow_styles = [
-            ("classic", "arrow_classic", "Классическая стрелка"),
-            ("barbed", "arrow_barbed", "С вырезом (усиками)"),
-            ("double", "arrow_double", "Двусторонняя стрелка"),
-            ("stealth", "arrow_stealth", "Стелс-стрелка"),
-            ("dashed", "arrow_dashed", "Пунктирная стрелка")
+            ("classic", "arrow_classic", tr("prop_arrow_classic", "Классическая стрелка")),
+            ("barbed", "arrow_barbed", tr("prop_arrow_barbed", "С вырезом (усиками)")),
+            ("double", "arrow_double", tr("prop_arrow_double", "Двусторонняя стрелка")),
+            ("stealth", "arrow_stealth", tr("prop_arrow_stealth", "Стелс-стрелка")),
+            ("dashed", "arrow_dashed", tr("prop_arrow_dashed", "Пунктирная стрелка"))
         ]
         for s_key, ico_key, s_name in arrow_styles:
             ico = create_style_preview_icon(ico_key, self.is_dark)
@@ -288,11 +289,11 @@ class ShapeEditPopup(QFrame):
         self.layout.addLayout(row)
 
         row_f = QHBoxLayout()
-        row_f.addWidget(QLabel("Наконечник:"))
-        self.btn_arrow_out = QPushButton("Контур")
+        row_f.addWidget(QLabel(tr("shape_edit_tip_label", "Наконечник:")))
+        self.btn_arrow_out = QPushButton(tr("prop_outline", "Контур"))
         self.btn_arrow_out.setFixedSize(68, 24)
         self.btn_arrow_out.clicked.connect(lambda: self._set_arrow_filled(False))
-        self.btn_arrow_fill = QPushButton("Заливка")
+        self.btn_arrow_fill = QPushButton(tr("prop_filled", "Заливка"))
         self.btn_arrow_fill.setFixedSize(68, 24)
         self.btn_arrow_fill.clicked.connect(lambda: self._set_arrow_filled(True))
         style_toggle_btn(self.btn_arrow_out, not self.shape.filled, self.is_dark)
@@ -304,13 +305,13 @@ class ShapeEditPopup(QFrame):
 
     def _init_line_controls(self):
         row = QHBoxLayout()
-        row.addWidget(QLabel("Стиль:"))
+        row.addWidget(QLabel(tr("prop_style", "Стиль:"))) 
         self.combo_line = QComboBox()
         self.combo_line.setIconSize(QSize(26, 18))
         line_styles = [
-            ("solid", "line_solid", "Сплошная линия"),
-            ("dashed", "line_dashed", "Пунктирная линия"),
-            ("dotted", "line_dotted", "Точечная линия")
+            ("solid", "line_solid", tr("prop_line_solid", "Сплошная линия")),
+            ("dashed", "line_dashed", tr("prop_line_dash", "Пунктирная линия")),
+            ("dotted", "line_dotted", tr("prop_line_dot", "Точечная линия"))
         ]
         for l_key, ico_key, l_name in line_styles:
             ico = create_style_preview_icon(ico_key, self.is_dark)
@@ -325,12 +326,12 @@ class ShapeEditPopup(QFrame):
 
     def _init_rect_controls(self):
         row = QHBoxLayout()
-        row.addWidget(QLabel("Углы:"))
+        row.addWidget(QLabel(tr("prop_corners", "Углы:")))
         self.combo_rect = QComboBox()
         self.combo_rect.setIconSize(QSize(26, 18))
         rect_styles = [
-            ("sharp", "rect_sharp", "Прямые углы"),
-            ("rounded", "rect_rounded", "Скруглённые углы")
+            ("sharp", "rect_sharp", tr("prop_corners_sharp", "Прямые углы")),
+            ("rounded", "rect_rounded", tr("prop_corners_rounded", "Скруглённые углы"))
         ]
         for r_key, ico_key, r_name in rect_styles:
             ico = create_style_preview_icon(ico_key, self.is_dark)
@@ -350,10 +351,10 @@ class ShapeEditPopup(QFrame):
 
     def _init_fill_controls(self):
         row_f = QHBoxLayout()
-        self.btn_out = QPushButton("Контур")
+        self.btn_out = QPushButton(tr("prop_outline", "Контур"))
         self.btn_out.setFixedSize(68, 24)
         self.btn_out.clicked.connect(lambda: self._set_filled(False))
-        self.btn_fill = QPushButton("Заливка")
+        self.btn_fill = QPushButton(tr("prop_filled", "Заливка"))
         self.btn_fill.setFixedSize(68, 24)
         self.btn_fill.clicked.connect(lambda: self._set_filled(True))
         style_toggle_btn(self.btn_out, not self.shape.filled, self.is_dark)
@@ -370,10 +371,10 @@ class ShapeEditPopup(QFrame):
         f_layout.setSpacing(6)
 
         row_gt = QHBoxLayout()
-        self.btn_solid = QPushButton("Сплошной")
+        self.btn_solid = QPushButton(tr("prop_fill_solid", "Сплошной"))
         self.btn_solid.setFixedSize(74, 22)
         self.btn_solid.clicked.connect(lambda: self._set_gradient(False))
-        self.btn_grad = QPushButton("Градиент")
+        self.btn_grad = QPushButton(tr("prop_fill_gradient", "Градиент"))
         self.btn_grad.setFixedSize(74, 22)
         self.btn_grad.clicked.connect(lambda: self._set_gradient(True))
         style_toggle_btn(self.btn_solid, not self.shape.is_gradient, self.is_dark)
@@ -388,7 +389,7 @@ class ShapeEditPopup(QFrame):
         g_col = QHBoxLayout(self.grad_colors_widget)
         g_col.setContentsMargins(0, 0, 0, 0)
         g_col.setSpacing(6)
-        g_col.addWidget(QLabel("Цвета:"))
+        g_col.addWidget(QLabel(tr("prop_colors", "Цвета:")))
         self.btn_g1 = QPushButton("1")
         self.btn_g1.setFixedSize(26, 22)
         self.btn_g1.setStyleSheet(f"background-color: {self.shape.gradient_color1}; color: #fff; font-weight: bold; border-radius: 4px;")
@@ -406,7 +407,7 @@ class ShapeEditPopup(QFrame):
 
         # Прозрачность заливки
         pct = int(self.shape.fill_alpha * 100 / 255)
-        self.lbl_opacity = QLabel(f"Прозрачность заливки: {pct}%")
+        self.lbl_opacity = QLabel(tr("prop_fill_opacity", "Прозрачность заливки: {pct}%", pct=pct))
         f_layout.addWidget(self.lbl_opacity)
         self.slider_opacity = QSlider(Qt.Orientation.Horizontal)
         self.slider_opacity.setRange(0, 100)
@@ -419,7 +420,7 @@ class ShapeEditPopup(QFrame):
 
     def _init_highlighter_controls(self):
         pct = int(self.shape.alpha * 100 / 255)
-        self.lbl_hl = QLabel(f"Непрозрачность маркера: {pct}%")
+        self.lbl_hl = QLabel(tr("prop_hl_opacity", "Непрозрачность маркера: {pct}%", pct=pct))
         self.layout.addWidget(self.lbl_hl)
         self.slider_hl = QSlider(Qt.Orientation.Horizontal)
         self.slider_hl.setRange(10, 100)
@@ -429,7 +430,7 @@ class ShapeEditPopup(QFrame):
 
     def _init_text_controls(self):
         self.edit_text = QLineEdit(self.shape.text)
-        self.edit_text.setPlaceholderText("Текст надписи...")
+        self.edit_text.setPlaceholderText(tr("prop_placeholder_text", "Текст надписи..."))
         self.edit_text.textChanged.connect(self._on_text_changed)
         self.layout.addWidget(self.edit_text)
 
@@ -460,7 +461,7 @@ class ShapeEditPopup(QFrame):
         row_f.addWidget(self.btn_underline)
         self.layout.addLayout(row_f)
 
-        self.lbl_font_size = QLabel(f"Размер шрифта: {self.shape.font_size} pt")
+        self.lbl_font_size = QLabel(tr("prop_font_size", "Размер шрифта: {val} pt", val=self.shape.font_size))
         self.layout.addWidget(self.lbl_font_size)
         self.slider_font_size = QSlider(Qt.Orientation.Horizontal)
         self.slider_font_size.setRange(10, 64)
@@ -469,7 +470,7 @@ class ShapeEditPopup(QFrame):
         self.layout.addWidget(self.slider_font_size)
 
         # Настройка фона текста
-        self.chk_text_bg = QCheckBox("Фон под текстом")
+        self.chk_text_bg = QCheckBox(tr("prop_text_bg", "Фон под текстом"))
         self.chk_text_bg.setChecked(getattr(self.shape, "has_bg", False))
         self.chk_text_bg.toggled.connect(self._on_text_bg_toggled)
         self.layout.addWidget(self.chk_text_bg)
@@ -480,7 +481,7 @@ class ShapeEditPopup(QFrame):
         bg_lay.setSpacing(4)
 
         row_bg_col = QHBoxLayout()
-        row_bg_col.addWidget(QLabel("Цвет фона:"))
+        row_bg_col.addWidget(QLabel(tr("prop_text_bg_col", "Цвет фона:")))
         self.btn_text_bg_col = QPushButton()
         self.btn_text_bg_col.setFixedSize(28, 22)
         cur_bg_col = getattr(self.shape, "bg_color", "#000000")
@@ -491,7 +492,7 @@ class ShapeEditPopup(QFrame):
         bg_lay.addLayout(row_bg_col)
 
         bg_pct = int(getattr(self.shape, "bg_alpha", 180) * 100 / 255)
-        self.lbl_text_bg_alpha = QLabel(f"Прозрачность фона: {bg_pct}%")
+        self.lbl_text_bg_alpha = QLabel(tr("prop_text_bg_alpha", "Непрозрачность фона: {pct}%", pct=bg_pct))
         bg_lay.addWidget(self.lbl_text_bg_alpha)
         self.slider_text_bg_alpha = QSlider(Qt.Orientation.Horizontal)
         self.slider_text_bg_alpha.setRange(10, 100)
@@ -509,14 +510,14 @@ class ShapeEditPopup(QFrame):
         self.shape_modified.emit()
 
     def _pick_text_bg_color(self):
-        c = QColorDialog.getColor(QColor(getattr(self.shape, "bg_color", "#000000")), self, "Выбор цвета фона текста")
+        c = QColorDialog.getColor(QColor(getattr(self.shape, "bg_color", "#000000")), self, tr("shape_edit_bg_picker_title", "Выбор цвета фона текста"))
         if c.isValid():
             self.shape.bg_color = c.name()
             self.btn_text_bg_col.setStyleSheet(f"background-color: {c.name()}; border: 1px solid #666; border-radius: 4px;")
             self.shape_modified.emit()
 
     def _on_text_bg_alpha_changed(self, val: int):
-        self.lbl_text_bg_alpha.setText(f"Прозрачность фона: {val}%")
+        self.lbl_text_bg_alpha.setText(tr("prop_text_bg_alpha", "Непрозрачность фона: {pct}%", pct=val))
         self.shape.bg_alpha = int(val * 255 / 100)
         self.shape_modified.emit()
 
@@ -534,13 +535,13 @@ class ShapeEditPopup(QFrame):
         self.shape_modified.emit()
 
     def _pick_custom_color(self):
-        c = QColorDialog.getColor(QColor(self.shape.color), self, "Выбор цвета фигуры")
+        c = QColorDialog.getColor(QColor(self.shape.color), self, tr("shape_edit_stroke_picker_title", "Выбор цвета фигуры"))
         if c.isValid():
             self._set_color(c.name())
 
     def _on_size_changed(self, val: int):
         self.shape.stroke_width = val
-        self.lbl_size.setText(f"Толщина: {val} px")
+        self.lbl_size.setText(tr("prop_stroke_width", "Толщина: {val} px", val=val))
         self.shape_modified.emit()
 
     def _on_arrow_style_changed(self, idx: int):
@@ -585,7 +586,7 @@ class ShapeEditPopup(QFrame):
 
     def _pick_grad_col(self, idx: int):
         cur = self.shape.gradient_color1 if idx == 1 else self.shape.gradient_color2
-        c = QColorDialog.getColor(QColor(cur), self, f"Выбор цвета градиента {idx}")
+        c = QColorDialog.getColor(QColor(cur), self, tr("shape_edit_grad_picker_title", "Выбор цвета градиента {idx}", idx=idx))
         if c.isValid():
             if idx == 1:
                 self.shape.gradient_color1 = c.name()
@@ -596,18 +597,18 @@ class ShapeEditPopup(QFrame):
             self.shape_modified.emit()
 
     def _on_opacity_changed(self, val: int):
-        self.lbl_opacity.setText(f"Прозрачность заливки: {val}%")
+        self.lbl_opacity.setText(tr("prop_fill_opacity", "Прозрачность заливки: {pct}%", pct=val))
         self.shape.fill_alpha = int(val * 255 / 100)
         self.shape_modified.emit()
 
     def _on_hl_opacity_changed(self, val: int):
-        self.lbl_hl.setText(f"Непрозрачность маркера: {val}%")
+        self.lbl_hl.setText(tr("prop_hl_opacity", "Непрозрачность маркера: {pct}%", pct=val))
         self.shape.alpha = int(val * 255 / 100)
         self.shape_modified.emit()
 
     def _on_text_changed(self, txt: str):
         self.shape.text = txt
-        self.shape.name = f"Текст: '{txt[:10]}'" if txt else "Текст"
+        self.shape.name = tr("shape_edit_text_prefix", "Текст: '{txt}'", txt=txt[:10]) if txt else tr("shape_edit_text_default", "Текст")
         self.shape_modified.emit()
 
     def _on_text_font_changed(self, fam: str):
@@ -616,7 +617,7 @@ class ShapeEditPopup(QFrame):
 
     def _on_text_size_changed(self, val: int):
         self.shape.font_size = val
-        self.lbl_font_size.setText(f"Размер шрифта: {val} pt")
+        self.lbl_font_size.setText(tr("prop_font_size", "Размер шрифта: {val} pt", val=val))
         self.shape_modified.emit()
 
     def _on_text_bold_toggled(self, checked: bool):
