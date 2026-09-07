@@ -1247,11 +1247,90 @@ def test_shape_transform_box_and_flyouts():
     print("  -> Интерактивная рамка трансформации (8 маркеров + вращение) и боковые меню проверены успешно.")
 
 
+def test_regional_effects_and_whole_screen_filter_reset():
+    print("[TEST] Тестирование региональных эффектов цензуры и сброса фильтра экрана...")
+    from models.shapes import RegionalEffectShape, MosaicShape, BlurShape, get_filtered_pixmap
+    from utils.image_filters import FilterType
+    from ui.toolbars import BottomActionToolbar
+    from PyQt6.QtGui import QPixmap, QColor, QPainter
+
+    # 1. Тестовое изображение
+    pix = QPixmap(100, 100)
+    pix.fill(QColor(100, 150, 200))
+    painter = QPainter(pix)
+    painter.fillRect(20, 20, 40, 40, QColor(255, 0, 0))
+    painter.end()
+
+    # 2. Тестирование RegionalEffectShape со всеми типами эффектов
+    for eff in ("mosaic", "blur", "grayscale", "invert", "vibrant", "sepia"):
+        shape = RegionalEffectShape(QRectF(10, 10, 50, 50), effect_type=eff, intensity=10)
+        shape.update_effect(pix)
+        assert shape.cached_pixmap is not None
+        assert not shape.cached_pixmap.isNull()
+        assert shape.cached_pixmap.width() == 50
+        assert shape.cached_pixmap.height() == 50
+
+    # 3. Тестирование BottomActionToolbar фильтра и сброса
+    bar = BottomActionToolbar()
+    assert hasattr(bar, "btn_filter")
+    assert bar.current_filter == FilterType.NONE
+
+    # Выбираем фильтр
+    bar._select_filter(FilterType.GRAYSCALE)
+    assert bar.current_filter == FilterType.GRAYSCALE
+
+    # Сбрасываем фильтр
+    bar.reset_filter()
+    assert bar.current_filter == FilterType.NONE
+
+    # 4. Тестирование HotkeyRecorderButton live modifier display
+    from ui.settings_dialog import HotkeyRecorderButton
+    from PyQt6.QtWidgets import QLineEdit
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QKeyEvent
+
+    edit = QLineEdit("Ctrl+Shift+S")
+    btn = HotkeyRecorderButton(edit)
+    btn._start_recording()
+    assert btn.is_recording
+
+    # Нажатие только модификатора Ctrl -> отображается "Ctrl+"
+    ev_ctrl = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Control, Qt.KeyboardModifier.ControlModifier)
+    btn.keyPressEvent(ev_ctrl)
+    assert edit.text() == "Ctrl+"
+
+    # Нажатие Shift при удержании Ctrl -> отображается "Ctrl+Shift+"
+    ev_shift = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Shift, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+    btn.keyPressEvent(ev_shift)
+    assert edit.text() == "Ctrl+Shift+"
+
+    # Нажатие S -> "Ctrl+Shift+S"
+    ev_s = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+    btn.keyPressEvent(ev_s)
+    assert edit.text() == "Ctrl+Shift+S"
+
+    # Отпускание -> сохраняется комбинация
+    ev_rel = QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_S, Qt.KeyboardModifier.NoModifier)
+    btn.keyReleaseEvent(ev_rel)
+    assert not btn.is_recording
+    assert edit.text() == "Ctrl+Shift+S"
+
+    # Одиночное нажатие Print Screen
+    btn._start_recording()
+    ev_prt = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Print, Qt.KeyboardModifier.NoModifier)
+    btn.keyPressEvent(ev_prt)
+    assert not btn.is_recording
+    assert edit.text() == "Print Screen"
+
+    print("  -> Региональные эффекты, сброс фильтров и живая индикация хоткеев проверены успешно.")
+
+
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
         tmp_p = Path(tmp_dir)
         test_models_and_history()
+        test_regional_effects_and_whole_screen_filter_reset()
         test_shape_transform_box_and_flyouts()
         test_bounding_rects_and_toolbar_layout()
         test_shape_directional_drawing()

@@ -1660,10 +1660,8 @@ class ToolPropertiesFlyout(QFrame):
 
 class ShapesFlyoutWidget(QFrame):
     """
-    Боковое выпадающее меню выбора фигур в стиле Adobe Photoshop / Figma.
-    Открывается вбок от панели инструментов и позволяет мгновенно активировать фигуру
-    (стрелка, линия, прямоугольник скругленный/обычный/залитый, круг обычный/залитый)
-    с автоматическим переходом к ее свойствам.
+    Боковая выпадающая палитра фигур в стиле Adobe Photoshop / Figma.
+    Компактная колонка иконок без текста. Подсказка инструмента отображается при наведении.
     """
     shape_chosen = pyqtSignal(str, dict)
 
@@ -1673,20 +1671,14 @@ class ShapesFlyoutWidget(QFrame):
         self.is_dark = theme["is_dark"]
         self.setStyleSheet(theme["popup_frame"] + f"""
             QPushButton {{
-                text-align: left;
-                padding: 6px 12px;
-                border-radius: 5px;
+                border-radius: 4px;
                 border: 1px solid transparent;
                 background-color: transparent;
-                color: {theme['text_color']};
-                font-family: 'Segoe UI', sans-serif;
-                font-size: 12px;
-                font-weight: 500;
+                padding: 4px;
             }}
             QPushButton:hover {{
                 background-color: {theme['popup_item_hover']};
                 border-color: #3b82f6;
-                color: #ffffff;
             }}
             QPushButton:pressed {{
                 background-color: #1d4ed8;
@@ -1694,12 +1686,8 @@ class ShapesFlyoutWidget(QFrame):
         """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(3)
-
-        lbl = QLabel("Фигуры")
-        lbl.setStyleSheet("color: #3b82f6; font-weight: bold; font-size: 12px; padding-left: 4px; padding-bottom: 2px;")
-        layout.addWidget(lbl)
 
         shapes_list = [
             ("arrow", "arrow", "Стрелка", {"subshape": "arrow"}),
@@ -1712,9 +1700,11 @@ class ShapesFlyoutWidget(QFrame):
         ]
 
         for s_id, ico_name, title, opts in shapes_list:
-            btn = QPushButton(f"  {title}")
+            btn = QPushButton()
+            btn.setFixedSize(28, 28)
             btn.setIcon(create_themed_icon(ico_name, self.is_dark, size=16))
             btn.setIconSize(QSize(16, 16))
+            btn.setToolTip(title)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda checked, sid=s_id, o=opts: self._on_select(sid, o))
             layout.addWidget(btn)
@@ -1726,9 +1716,8 @@ class ShapesFlyoutWidget(QFrame):
 
 class CensorEffectsFlyoutWidget(QFrame):
     """
-    Боковое выпадающее меню цензуры и эффектов в стиле Adobe Photoshop / Figma.
-    Объединяет инструменты цензуры области (мозаика, блюр) и глобальные фильтры реального времени
-    в одном удобном боковом меню.
+    Боковое выпадающее меню региональных эффектов и цензуры в стиле Adobe Photoshop / Figma.
+    Компактная колонка иконок без текста. Инструмент применяется к выделяемой прямоугольной области.
     """
     censor_chosen = pyqtSignal(str)
     filter_chosen = pyqtSignal(str)
@@ -1739,20 +1728,14 @@ class CensorEffectsFlyoutWidget(QFrame):
         self.is_dark = theme["is_dark"]
         self.setStyleSheet(theme["popup_frame"] + f"""
             QPushButton {{
-                text-align: left;
-                padding: 6px 12px;
-                border-radius: 5px;
+                border-radius: 4px;
                 border: 1px solid transparent;
                 background-color: transparent;
-                color: {theme['text_color']};
-                font-family: 'Segoe UI', sans-serif;
-                font-size: 12px;
-                font-weight: 500;
+                padding: 4px;
             }}
             QPushButton:hover {{
                 background-color: {theme['popup_item_hover']};
                 border-color: #3b82f6;
-                color: #ffffff;
             }}
             QPushButton:pressed {{
                 background-color: #1d4ed8;
@@ -1760,49 +1743,35 @@ class CensorEffectsFlyoutWidget(QFrame):
         """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(3)
 
-        lbl1 = QLabel("Инструменты цензуры (область)")
-        lbl1.setStyleSheet("color: #3b82f6; font-weight: bold; font-size: 12px; padding-left: 4px;")
-        layout.addWidget(lbl1)
-
         censor_items = [
-            ("mosaic", "mosaic", "Мозаика (Пиксели)"),
-            ("blur", "blur", "Размытие (Блюр)"),
+            ("mosaic", "mosaic", "Мозаика (Пикселизация области)"),
+            ("blur", "blur", "Размытие (Блюр области)"),
+            ("grayscale", "grayscale", "Чёрно-белый (Grayscale области)"),
+            ("invert", "invert", "Инверсия цветов (Область)"),
+            ("vibrant", "vibrant", "Повышенная контрастность / Насыщенность (Область)"),
+            ("sepia", "sepia", "Тёплая сепия (Винтаж области)"),
         ]
+
         for c_id, ico_name, title in censor_items:
-            btn = QPushButton(f"  {title}")
+            btn = QPushButton()
+            btn.setFixedSize(28, 28)
             btn.setIcon(create_themed_icon(ico_name, self.is_dark, size=16))
             btn.setIconSize(QSize(16, 16))
+            btn.setToolTip(title)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda checked, cid=c_id: self._on_censor_click(cid))
-            layout.addWidget(btn)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"background-color: {theme['sep_color']}; max-height: 1px; margin: 4px 0px;")
-        layout.addWidget(sep)
-
-        lbl2 = QLabel("Фильтры экрана (реальное время)")
-        lbl2.setStyleSheet("color: #3b82f6; font-weight: bold; font-size: 12px; padding-left: 4px;")
-        layout.addWidget(lbl2)
-
-        for f_type, label in FILTER_NAMES.items():
-            btn = QPushButton(f"  {label}")
-            btn.setIcon(create_themed_icon("filter", self.is_dark, size=14))
-            btn.setIconSize(QSize(14, 14))
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.clicked.connect(lambda checked, ft=f_type: self._on_filter_click(ft))
             layout.addWidget(btn)
 
     def _on_censor_click(self, cid: str):
         self.hide()
         self.censor_chosen.emit(cid)
 
-    def _on_filter_click(self, f_type: str):
+    def _on_filter_click(self, ft: str):
         self.hide()
-        self.filter_chosen.emit(f_type)
+        self.filter_chosen.emit(ft)
 
 
 class RightDrawingToolbar(QFrame):
@@ -2192,8 +2161,13 @@ class BottomActionToolbar(QFrame):
         sep1.setStyleSheet(f"background-color: {theme['sep_color']}; max-width: 1px;")
         layout.addWidget(sep1)
 
-        # Фильтры перенесены в боковой инструмент цензуры и эффектов правой панели инструментов
-        self.btn_filter = ModernButton("", "Эффекты и фильтры реального времени")
+        # 6. Фильтр всего экрана (клик — выбор фильтра: размытие, ч/б, сепия, инверсия и т.д.)
+        self.btn_filter = ModernButton("", "Эффекты и цветовые фильтры всего экрана")
+        self.btn_filter.setFixedSize(28, 28)
+        self.btn_filter.setIcon(create_themed_icon("filter", self.is_dark, size=16))
+        self.btn_filter.setIconSize(QSize(16, 16))
+        self.btn_filter.clicked.connect(self._show_filter_menu)
+        layout.addWidget(self.btn_filter)
 
         # 7. Замок блокировки рамки (SVG иконка замка)
         self.btn_lock = ModernButton("", "Зафиксировать рамку от случайных сдвигов")
@@ -2312,3 +2286,8 @@ class BottomActionToolbar(QFrame):
             self.btn_filter.setStyleSheet("background-color: #2563eb; border: 1px solid #3b82f6; border-radius: 4px;")
             self.btn_filter.setIcon(create_themed_icon("filter", self.is_dark, size=16, custom_color="#ffffff"))
         self.filter_selected.emit(f_type)
+
+    def reset_filter(self):
+        self.current_filter = FilterType.NONE
+        self.btn_filter.setStyleSheet("")
+        self.btn_filter.setIcon(create_themed_icon("filter", self.is_dark, size=16))

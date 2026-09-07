@@ -28,7 +28,7 @@ from PyQt6.QtGui import (
 from config import ConfigManager
 from models.shapes import (
     BaseShape, PenShape, LineShape, ArrowShape,
-    RectangleShape, CircleShape, TextShape, MosaicShape, BlurShape
+    RectangleShape, CircleShape, TextShape, MosaicShape, BlurShape, RegionalEffectShape
 )
 from models.layers import LayerManager
 from models.history import HistoryManager, HistoryCommand
@@ -286,6 +286,8 @@ class OverlayWindow(QWidget):
             target.cached_mosaic = None
         if hasattr(target, "cached_blur"):
             target.cached_blur = None
+        if hasattr(target, "cached_pixmap"):
+            target.cached_pixmap = None
 
     def _invalidate_layers_cache(self):
         self.layers_cache_pixmap = None
@@ -296,6 +298,9 @@ class OverlayWindow(QWidget):
         self.preselected_recording_mode = preselected_recording_mode
         self.clearMask()
         self.is_passthrough = False
+        self.current_filter = FilterType.NONE
+        if hasattr(self, "bottom_toolbar") and hasattr(self.bottom_toolbar, "reset_filter"):
+            self.bottom_toolbar.reset_filter()
         self.selection_rect = QRectF()
         self.initial_selection = QRectF()
         if hasattr(self, "transform_box"):
@@ -878,7 +883,9 @@ class OverlayWindow(QWidget):
                 txt = getattr(s, "text", "")
                 s.name = f"Текст: '{txt[:10]}'" if txt else "Текст"
             if self.background_pixmap is not None:
-                if hasattr(s, "update_mosaic"):
+                if hasattr(s, "update_effect"):
+                    s.update_effect(self.background_pixmap)
+                elif hasattr(s, "update_mosaic"):
                     s.update_mosaic(self.background_pixmap)
                 elif hasattr(s, "update_blur"):
                     s.update_blur(self.background_pixmap)
@@ -1085,15 +1092,15 @@ class OverlayWindow(QWidget):
         elif self.current_tool == ToolType.CIRCLE:
             self.temp_shape = CircleShape(QRectF(pos, pos), color=col, stroke_width=size, filled=False)
         elif self.current_tool == ToolType.MOSAIC:
-            # Инструмент цензуры: мозаика или блюр
+            # Инструмент региональных эффектов и цензуры: мозаика, блюр, ч/б, инверсия, насыщенность, сепия
             if censor_mode == "blur":
                 self.temp_shape = BlurShape(QRectF(pos, pos), blur_radius=blur_r)
-                if self.background_pixmap is not None:
-                    self.temp_shape.update_blur(self.background_pixmap)
+            elif censor_mode in ("mosaic", "pixelate"):
+                self.temp_shape = MosaicShape(QRectF(pos, pos), pixel_size=grain if grain else size)
             else:
-                self.temp_shape = MosaicShape(QRectF(pos, pos), pixel_size=size)
-                if self.background_pixmap is not None:
-                    self.temp_shape.update_mosaic(self.background_pixmap)
+                self.temp_shape = RegionalEffectShape(QRectF(pos, pos), effect_type=censor_mode, intensity=size)
+            if self.background_pixmap is not None:
+                self.temp_shape.update_effect(self.background_pixmap)
         elif self.current_tool == ToolType.TEXT:
             self._open_text_editor(pos, col, size)
 
@@ -1107,15 +1114,12 @@ class OverlayWindow(QWidget):
             if origin is None:
                 origin = self.temp_shape.rect.topLeft()
             self.temp_shape.rect = QRectF(origin, pos).normalized()
-        elif isinstance(self.temp_shape, (MosaicShape, BlurShape)):
+        elif isinstance(self.temp_shape, (RegionalEffectShape, MosaicShape, BlurShape)):
             if origin is None:
                 origin = self.temp_shape.rect.topLeft()
             self.temp_shape.rect = QRectF(origin, pos).normalized()
             if self.background_pixmap is not None:
-                if isinstance(self.temp_shape, MosaicShape):
-                    self.temp_shape.update_mosaic(self.background_pixmap)
-                elif isinstance(self.temp_shape, BlurShape):
-                    self.temp_shape.update_blur(self.background_pixmap)
+                self.temp_shape.update_effect(self.background_pixmap)
 
     def _finish_drawing_shape(self):
         self.shape_origin_pos = None
@@ -1123,10 +1127,8 @@ class OverlayWindow(QWidget):
         self.temp_shape = None
 
         if shape is not None:
-            if isinstance(shape, MosaicShape) and self.background_pixmap is not None:
-                shape.update_mosaic(self.background_pixmap)
-            elif isinstance(shape, BlurShape) and self.background_pixmap is not None:
-                shape.update_blur(self.background_pixmap)
+            if isinstance(shape, (RegionalEffectShape, MosaicShape, BlurShape)) and self.background_pixmap is not None:
+                shape.update_effect(self.background_pixmap)
 
             self.layer_manager.add_shape(shape)
             cmd = HistoryCommand(

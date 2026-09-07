@@ -45,22 +45,25 @@ _HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_longlong, ctypes.c_int, wintypes.WPARAM,
 class HotkeyRecorderButton(QPushButton):
     """
     Интерактивная кнопка для перехвата и назначения комбинации клавиш.
-    При нажатии слушает пользовательский ввод и при отпускании всех клавиш
-    записывает полученную комбинацию в целевое поле ввода.
+    Отображает нажимаемые клавиши в реальном времени прямо в целевом поле ввода (target_line_edit):
+    при нажатии Ctrl пишется 'Ctrl + ', при нажатии Shift — 'Ctrl + Shift + ',
+    при нажатии клавиши — 'Ctrl + Shift + S'.
+    При отпускании клавиш комбинация фиксируется.
+    Поддерживает одиночные клавиши (Print Screen, F1-F12, буквы) и комбинации с модификаторами.
     """
     def __init__(self, target_line_edit: QLineEdit, parent=None):
         super().__init__(tr("settings_btn_record", "Назначить"), parent)
         self.target_line_edit = target_line_edit
         self.is_recording = False
-        self._pressed_keys = set()
-        self._recorded_mods = []
-        self._recorded_key_name = None
+        self._original_text = ""
+        self._active_mods = []
+        self._recorded_key = None
+        self._keys_currently_down = set()
         self._ll_hook_id = None
         self._ll_hook_proc = None
-        self._temp_kb_hook = None
         self.setToolTip(tr("settings_hk_tooltip", "Нажмите для записи комбинации клавиш (Ctrl, Shift, Alt, F1-F12, буквы, Print Screen)"))
         self.clicked.connect(self._toggle_recording)
-        self.setFixedWidth(88)
+        self.setFixedWidth(96)
 
     def _toggle_recording(self):
         if self.is_recording:
@@ -70,10 +73,12 @@ class HotkeyRecorderButton(QPushButton):
 
     def _start_recording(self):
         self.is_recording = True
-        self._pressed_keys.clear()
-        self._recorded_mods = []
-        self._recorded_key_name = None
-        self.setText(tr("settings_btn_recording", "Нажмите..."))
+        self._original_text = self.target_line_edit.text().strip() if self.target_line_edit else ""
+        self._active_mods = []
+        self._recorded_key = None
+        self._keys_currently_down = set()
+
+        self.setText(tr("settings_btn_listening", "Нажмите..."))
         self.setStyleSheet("""
             QPushButton {
                 background-color: #b45309;
@@ -82,81 +87,89 @@ class HotkeyRecorderButton(QPushButton):
                 border: 1px solid #f59e0b;
             }
         """)
-        self.grabKeyboard()
 
-        # 1. Системный низкоуровневый Win32 хук WH_KEYBOARD_LL для прямого перехвата Print Screen
-        self._ll_hook_id = None
-        self._ll_hook_proc = None
+        if self.target_line_edit:
+            self.target_line_edit.setText("Нажмите клавишу...")
+            self.target_line_edit.setFocus()
+
+        # 1. Устанавливаем фильтр событий приложения Qt для отслеживания всех клавиш
         try:
-            user32 = ctypes.windll.user32
-            def _ll_proc(nCode, wParam, lParam):
-                if nCode >= 0 and getattr(self, "is_recording", False):
-                    # 0x0100=WM_KEYDOWN, 0x0101=WM_KEYUP, 0x0104=WM_SYSKEYDOWN, 0x0105=WM_SYSKEYUP
-                    if wParam in (0x0100, 0x0104):
-                        vk = lParam.contents.vkCode
-                        if vk == 0x2C:  # VK_SNAPSHOT (Print Screen)
-                            mods = []
-                            if user32.GetAsyncKeyState(0x11) & 0x8000: mods.append("Ctrl")
-                            if user32.GetAsyncKeyState(0x12) & 0x8000: mods.append("Alt")
-                            if user32.GetAsyncKeyState(0x10) & 0x8000: mods.append("Shift")
-                            if (user32.GetAsyncKeyState(0x5B) & 0x8000) or (user32.GetAsyncKeyState(0x5C) & 0x8000): mods.append("Win")
-                            combo = "+".join(mods + ["Print Screen"]) if mods else "Print Screen"
-                            QTimer.singleShot(0, lambda c=combo: self._finish_recording(c))
-                            return 1  # Подавляем системный инструмент «Ножницы» Windows!
-                return user32.CallNextHookEx(None, nCode, wParam, lParam)
-
-            self._ll_hook_proc = _HOOKPROC(_ll_proc)
-            self._ll_hook_id = user32.SetWindowsHookExW(13, self._ll_hook_proc, None, 0)
-        except Exception:
-            self._ll_hook_id = None
-            self._ll_hook_proc = None
-
-        # 2. Дополнительный перехватчик keyboard.hook с suppress
-        self._temp_kb_hook = None
-        try:
-            import keyboard
-            def _kb_listener(e):
-                if not getattr(self, "is_recording", False):
-                    return False
-                name = str(getattr(e, "name", "")).lower()
-                scan = getattr(e, "scan_code", 0)
-                vk = getattr(e, "vk", 0)
-                if name in ("print screen", "printscreen", "prtscn", "prtsc", "snapshot") or scan in (55, 84) or vk == 0x2C:
-                    mods = list(self._recorded_mods)
-                    combo = "+".join(mods + ["Print Screen"]) if mods else "Print Screen"
-                    QTimer.singleShot(0, lambda c=combo: self._finish_recording(c))
-                    return True
-            self._temp_kb_hook = keyboard.hook(_kb_listener, suppress=True)
-        except Exception:
-            self._temp_kb_hook = None
-
-    def _cancel_recording(self):
-        self.is_recording = False
-        self._pressed_keys.clear()
-        self._recorded_mods = []
-        self._recorded_key_name = None
-        self.setText(tr("settings_btn_record", "Назначить"))
-        self.setStyleSheet("")
-        if getattr(self, "_ll_hook_id", None):
-            try:
-                ctypes.windll.user32.UnhookWindowsHookEx(self._ll_hook_id)
-            except Exception:
-                pass
-            self._ll_hook_id = None
-            self._ll_hook_proc = None
-        if getattr(self, "_temp_kb_hook", None):
-            try:
-                import keyboard
-                keyboard.unhook(self._temp_kb_hook)
-            except Exception:
-                pass
-            self._temp_kb_hook = None
-        try:
-            self.releaseKeyboard()
+            QApplication.instance().installEventFilter(self)
         except Exception:
             pass
 
+        # 2. Устанавливаем низкоуровневый Win32 хук WH_KEYBOARD_LL строго для перехвата Print Screen (VK_SNAPSHOT = 0x2C)
+        self._ll_hook_id = None
+        self._ll_hook_proc = None
+        if sys.platform == "win32":
+            try:
+                user32 = ctypes.windll.user32
+                def _ll_proc(nCode, wParam, lParam):
+                    if nCode >= 0 and getattr(self, "is_recording", False):
+                        # 0x0100=WM_KEYDOWN, 0x0101=WM_KEYUP, 0x0104=WM_SYSKEYDOWN, 0x0105=WM_SYSKEYUP
+                        if wParam in (0x0100, 0x0104):
+                            vk = lParam.contents.vkCode
+                            if vk == 0x2C:  # VK_SNAPSHOT (Print Screen)
+                                mods = self._get_win32_modifiers()
+                                combo = "+".join(mods + ["Print Screen"]) if mods else "Print Screen"
+                                self._recorded_key = "Print Screen"
+                                self._active_mods = list(mods)
+                                QTimer.singleShot(0, lambda c=combo: self._update_live_display(c))
+                                return 1  # Подавляем системные «Ножницы» Windows!
+                        elif wParam in (0x0101, 0x0105):
+                            vk = lParam.contents.vkCode
+                            if vk == 0x2C:
+                                mods = self._active_mods
+                                combo = "+".join(mods + ["Print Screen"]) if mods else "Print Screen"
+                                QTimer.singleShot(0, lambda c=combo: self._finish_recording(c))
+                                return 1
+                    return user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+                self._ll_hook_proc = _HOOKPROC(_ll_proc)
+                self._ll_hook_id = user32.SetWindowsHookExW(13, self._ll_hook_proc, None, 0)
+            except Exception:
+                self._ll_hook_id = None
+                self._ll_hook_proc = None
+
+    def _get_win32_modifiers(self) -> list:
+        mods = []
+        if sys.platform == "win32":
+            try:
+                u32 = ctypes.windll.user32
+                if u32.GetAsyncKeyState(0x11) & 0x8000: mods.append("Ctrl")
+                if u32.GetAsyncKeyState(0x12) & 0x8000: mods.append("Alt")
+                if u32.GetAsyncKeyState(0x10) & 0x8000: mods.append("Shift")
+                if (u32.GetAsyncKeyState(0x5B) & 0x8000) or (u32.GetAsyncKeyState(0x5C) & 0x8000): mods.append("Win")
+            except Exception:
+                pass
+        return mods
+
+    def _update_live_display(self, text: str):
+        if self.target_line_edit:
+            self.target_line_edit.setText(text)
+        self.setText(text if len(text) <= 12 else text[:11] + "…")
+
     def _finish_recording(self, combo_str: str):
+        self._cleanup_hooks()
+        self.is_recording = False
+        self.setText(tr("settings_btn_record", "Назначить"))
+        self.setStyleSheet("")
+        if combo_str and self.target_line_edit:
+            self.target_line_edit.setText(combo_str)
+
+    def _cancel_recording(self):
+        self._cleanup_hooks()
+        self.is_recording = False
+        self.setText(tr("settings_btn_record", "Назначить"))
+        self.setStyleSheet("")
+        if getattr(self, "_original_text", None) and self.target_line_edit:
+            self.target_line_edit.setText(self._original_text)
+
+    def _cleanup_hooks(self):
+        try:
+            QApplication.instance().removeEventFilter(self)
+        except Exception:
+            pass
         if getattr(self, "_ll_hook_id", None):
             try:
                 ctypes.windll.user32.UnhookWindowsHookEx(self._ll_hook_id)
@@ -164,117 +177,120 @@ class HotkeyRecorderButton(QPushButton):
                 pass
             self._ll_hook_id = None
             self._ll_hook_proc = None
-        if getattr(self, "_temp_kb_hook", None):
-            try:
-                import keyboard
-                keyboard.unhook(self._temp_kb_hook)
-            except Exception:
-                pass
-            self._temp_kb_hook = None
-        self._cancel_recording()
-        if combo_str and self.target_line_edit:
-            self.target_line_edit.setText(combo_str)
 
-    def focusOutEvent(self, event):
-        # Предотвращаем сброс записи при кратковременном системном изменении фокуса
-        if self.is_recording:
-            return
-        super().focusOutEvent(event)
-
-    def nativeEvent(self, eventType, message):
-        if getattr(self, "is_recording", False) and eventType in (b"windows_generic_MSG", "windows_generic_MSG"):
-            try:
-                from ctypes import wintypes
-                msg = wintypes.MSG.from_address(int(message))
-                # WM_KEYDOWN=0x0100, WM_KEYUP=0x0101, WM_SYSKEYDOWN=0x0104, WM_SYSKEYUP=0x0105
-                if msg.message in (0x0100, 0x0101, 0x0104, 0x0105) and msg.wParam == 0x2C:
-                    parts = list(self._recorded_mods)
-                    if "Print Screen" not in parts:
-                        parts.append("Print Screen")
-                    final_combo = "+".join(parts)
-                    self._finish_recording(final_combo)
-                    return True, 0
-            except Exception:
-                pass
-        return super().nativeEvent(eventType, message)
+    def eventFilter(self, watched, event):
+        if self.is_recording and event is not None:
+            etype = event.type()
+            if etype == QEvent.Type.KeyPress:
+                self._handle_key_press(event)
+                return True
+            elif etype == QEvent.Type.KeyRelease:
+                self._handle_key_release(event)
+                return True
+        return super().eventFilter(watched, event)
 
     def keyPressEvent(self, event: QKeyEvent):
-        if not self.is_recording:
-            super().keyPressEvent(event)
+        if self.is_recording:
+            self._handle_key_press(event)
+            event.accept()
             return
+        super().keyPressEvent(event)
 
-        event.accept()
+    def keyReleaseEvent(self, event: QKeyEvent):
+        if self.is_recording:
+            self._handle_key_release(event)
+            event.accept()
+            return
+        super().keyReleaseEvent(event)
+
+    def _handle_key_press(self, event: QKeyEvent):
         key = event.key()
         if key == Qt.Key.Key_Escape:
             self._cancel_recording()
             return
 
-        # Специальный перехват Print Screen при keyPress
-        if key == Qt.Key.Key_Print or key == 16777225 or getattr(event, "nativeVirtualKey", lambda: 0)() == 0x2C or getattr(event, "nativeScanCode", lambda: 0)() in (55, 84):
-            mods = []
-            if (event.modifiers() & Qt.KeyboardModifier.ControlModifier): mods.append("Ctrl")
-            if (event.modifiers() & Qt.KeyboardModifier.AltModifier): mods.append("Alt")
-            if (event.modifiers() & Qt.KeyboardModifier.ShiftModifier): mods.append("Shift")
-            if (event.modifiers() & Qt.KeyboardModifier.MetaModifier): mods.append("Win")
-            combo = "+".join(mods + ["Print Screen"]) if mods else "Print Screen"
+        self._keys_currently_down.add(key)
+
+        # Вычисляем активные модификаторы
+        mods = []
+        if (event.modifiers() & Qt.KeyboardModifier.ControlModifier) or key == Qt.Key.Key_Control:
+            mods.append("Ctrl")
+        if (event.modifiers() & Qt.KeyboardModifier.AltModifier) or key == Qt.Key.Key_Alt:
+            mods.append("Alt")
+        if (event.modifiers() & Qt.KeyboardModifier.ShiftModifier) or key == Qt.Key.Key_Shift:
+            mods.append("Shift")
+        if (event.modifiers() & Qt.KeyboardModifier.MetaModifier) or key == Qt.Key.Key_Meta:
+            mods.append("Win")
+
+        # Дополняем проверкой через Win32 GetAsyncKeyState
+        for w_mod in self._get_win32_modifiers():
+            if w_mod not in mods:
+                mods.append(w_mod)
+
+        is_modifier_only = key in (Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt, Qt.Key.Key_Meta)
+
+        if is_modifier_only:
+            self._active_mods = list(mods)
+            live_str = "+".join(mods) + "+" if mods else ""
+            if live_str:
+                self._update_live_display(live_str)
+        else:
+            kname = self._get_key_name(event)
+            if kname:
+                self._recorded_key = kname
+                self._active_mods = list(mods)
+                combo = "+".join(mods + [kname]) if mods else kname
+                self._update_live_display(combo)
+                if kname == "Print Screen" and not mods:
+                    self._finish_recording("Print Screen")
+
+    def _handle_key_release(self, event: QKeyEvent):
+        key = event.key()
+        self._keys_currently_down.discard(key)
+
+        if key == Qt.Key.Key_Escape:
+            return
+
+        if key in (Qt.Key.Key_Print, 16777225):
+            combo = "+".join(self._active_mods + ["Print Screen"]) if self._active_mods else "Print Screen"
             self._finish_recording(combo)
             return
 
-        self._pressed_keys.add(key)
-
-        mods = []
-        if (event.modifiers() & Qt.KeyboardModifier.ControlModifier) or key in (Qt.Key.Key_Control,):
-            mods.append("Ctrl")
-        if (event.modifiers() & Qt.KeyboardModifier.AltModifier) or key in (Qt.Key.Key_Alt,):
-            mods.append("Alt")
-        if (event.modifiers() & Qt.KeyboardModifier.ShiftModifier) or key in (Qt.Key.Key_Shift,):
-            mods.append("Shift")
-        if (event.modifiers() & Qt.KeyboardModifier.MetaModifier) or key in (Qt.Key.Key_Meta,):
-            mods.append("Win")
-
-        key_name = self._get_key_name(key, event.text())
-        if key_name and key not in (Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt, Qt.Key.Key_Meta):
-            self._recorded_key_name = key_name
-            self._recorded_mods = mods
-            combo = "+".join(mods + [key_name]) if mods else key_name
-            self.setText(combo)
-            if self.target_line_edit:
-                self.target_line_edit.setText(combo)
-        else:
-            if mods:
-                self.setText("+".join(mods) + "+...")
-
-    def keyReleaseEvent(self, event: QKeyEvent):
-        if not self.is_recording:
-            super().keyReleaseEvent(event)
+        if self._recorded_key:
+            combo = "+".join(self._active_mods + [self._recorded_key]) if self._active_mods else self._recorded_key
+            self._finish_recording(combo)
             return
 
-        event.accept()
+        if len(self._keys_currently_down) == 0:
+            if not self._recorded_key and self._active_mods:
+                combo = "+".join(self._active_mods)
+                self._finish_recording(combo)
+
+    def _get_key_name(self, event: QKeyEvent) -> str:
         key = event.key()
-
-        # Специальный перехват Print Screen при keyRelease (в Windows Print Screen почти всегда шлёт только KeyRelease)
-        if key == Qt.Key.Key_Print or key == 16777225 or getattr(event, "nativeVirtualKey", lambda: 0)() == 0x2C or getattr(event, "nativeScanCode", lambda: 0)() in (55, 84):
-            parts = list(self._recorded_mods)
-            if "Print Screen" not in parts:
-                parts.append("Print Screen")
-            final_combo = "+".join(parts)
-            self._finish_recording(final_combo)
-            return
-
-        self._pressed_keys.discard(key)
-
-        # Когда пользователь отпустил ВСЕ клавиши
-        if len(self._pressed_keys) == 0:
-            if self._recorded_key_name:
-                parts = list(self._recorded_mods)
-                if self._recorded_key_name not in parts:
-                    parts.append(self._recorded_key_name)
-                final_combo = "+".join(parts)
-                self._finish_recording(final_combo)
-
-    def _get_key_name(self, key: int, text: str) -> str:
         if key == Qt.Key.Key_Print or key == 16777225:
             return "Print Screen"
+        if sys.platform == "win32":
+            vk = getattr(event, "nativeVirtualKey", lambda: 0)()
+            if vk == 0x2C:
+                return "Print Screen"
+            if 0x70 <= vk <= 0x7B:
+                return f"F{vk - 0x70 + 1}"
+            if 0x41 <= vk <= 0x5A:
+                return chr(vk).upper()
+            if 0x30 <= vk <= 0x39:
+                return chr(vk)
+            if vk == 0x20: return "Space"
+            if vk == 0x0D: return "Enter"
+            if vk == 0x09: return "Tab"
+            if vk == 0x08: return "Backspace"
+            if vk == 0x2E: return "Delete"
+            if vk == 0x2D: return "Insert"
+            if vk == 0x24: return "Home"
+            if vk == 0x23: return "End"
+            if vk == 0x21: return "Page Up"
+            if vk == 0x22: return "Page Down"
+
         if Qt.Key.Key_F1 <= key <= Qt.Key.Key_F12:
             return f"F{key - Qt.Key.Key_F1 + 1}"
         if key == Qt.Key.Key_Space:
@@ -301,8 +317,9 @@ class HotkeyRecorderButton(QPushButton):
             return chr(key).upper()
         if Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
             return chr(key)
-        if text and len(text) == 1 and text.isprintable() and not text.isspace():
-            return text.upper()
+        txt = event.text()
+        if txt and len(txt) == 1 and txt.isprintable() and not txt.isspace():
+            return txt.upper()
         return None
 
 
@@ -957,11 +974,11 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
 
         # Карточка 1: Язык интерфейса
-        card_lang = SettingCard(tr("settings_lang_label", "Язык интерфейса / Language"))
+        card_lang = SettingCard(tr("settings_lang_group", "Язык интерфейса / Interface Language"))
         self.combo_lang = QComboBox()
-        self.combo_lang.addItem(tr("settings_lang_auto", "Авто (Системный)"), "auto")
-        self.combo_lang.addItem(tr("settings_lang_ru", "Русский"), "ru")
-        self.combo_lang.addItem(tr("settings_lang_en", "English"), "en")
+        self.combo_lang.addItem("Автоматически (системный) / Auto (System)", "auto")
+        self.combo_lang.addItem("Русский (Russian)", "ru")
+        self.combo_lang.addItem("English (Английский)", "en")
 
         cur_lang = getattr(self.cfg, "language", "auto")
         idx = 0
@@ -970,8 +987,12 @@ class SettingsDialog(QDialog):
                 idx = i
                 break
         self.combo_lang.setCurrentIndex(idx)
-        self.combo_lang.setFixedWidth(200)
-        card_lang.add_row("Выбор языка:", "Смена языка вступает в силу сразу после применения настроек", self.combo_lang)
+        self.combo_lang.setFixedWidth(260)
+        card_lang.add_row(
+            tr("settings_lang_label", "Язык программы:"),
+            tr("settings_lang_desc", "Смена языка вступает в силу сразу после нажатия «Применить»"),
+            self.combo_lang
+        )
         layout.addWidget(card_lang)
 
         # Карточка 2: Скриншоты и буфер обмена

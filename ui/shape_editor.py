@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QColor, QFont
 
 from models.shapes import (
-    BaseShape, LineShape, ArrowShape, RectangleShape, CircleShape, TextShape, PenShape, MosaicShape, BlurShape
+    BaseShape, LineShape, ArrowShape, RectangleShape, CircleShape, TextShape, PenShape, MosaicShape, BlurShape, RegionalEffectShape
 )
 from .toolbars import get_theme_styles, style_toggle_btn, show_smart_popup
 from .icons import create_themed_icon, create_style_preview_icon
@@ -67,7 +67,7 @@ class ShapeEditPopup(QFrame):
         if isinstance(shape, TextShape):
             self._init_text_controls()
 
-        is_censor_box = isinstance(shape, (MosaicShape, BlurShape))
+        is_censor_box = isinstance(shape, (RegionalEffectShape, MosaicShape, BlurShape))
 
         # 2. Цвет контура / основной цвет (для векторных фигур)
         if not is_censor_box:
@@ -185,7 +185,7 @@ class ShapeEditPopup(QFrame):
         self.layout.addLayout(row_c)
 
     def _init_size_controls(self):
-        is_censor_box = isinstance(self.shape, (MosaicShape, BlurShape))
+        is_censor_box = isinstance(self.shape, (RegionalEffectShape, MosaicShape, BlurShape))
 
         # Сгруппированный контейнер для ползунков
         self.sliders_frame = QFrame()

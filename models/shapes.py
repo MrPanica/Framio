@@ -62,6 +62,34 @@ def get_blurred_pixmap(source_pixmap: QPixmap, blur_radius: int = 15) -> QPixmap
     return small.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
 
+def get_filtered_pixmap(source_pixmap: QPixmap, filter_type: str, intensity: int = 10) -> QPixmap:
+    """
+    Применяет указанный эффект к фрагменту изображения:
+    'mosaic'/'pixelate', 'blur', 'grayscale', 'invert', 'vibrant', 'sepia'.
+    """
+    if source_pixmap is None or source_pixmap.isNull():
+        return None
+    ft = str(filter_type).lower()
+    if ft in ("mosaic", "pixelate"):
+        return get_pixelated_pixmap(source_pixmap, intensity)
+    elif ft == "blur":
+        return get_blurred_pixmap(source_pixmap, intensity)
+    else:
+        try:
+            from utils.image_filters import apply_filter
+            import numpy as np
+            qimg = source_pixmap.toImage().convertToFormat(QImage.Format.Format_BGR888)
+            w, h = qimg.width(), qimg.height()
+            ptr = qimg.bits()
+            ptr.setsize(h * qimg.bytesPerLine())
+            arr = np.frombuffer(ptr, np.uint8).reshape((h, qimg.bytesPerLine() // 3, 3))[:, :w, :]
+            res = apply_filter(arr.copy(), ft)
+            res_img = QImage(res.data, w, h, res.strides[0], QImage.Format.Format_BGR888)
+            return QPixmap.fromImage(res_img)
+        except Exception:
+            return source_pixmap
+
+
 class BaseShape:
     def __init__(self, color="#FF2E2E", stroke_width=4):
         self.id = str(uuid.uuid4())[:8]
@@ -779,16 +807,31 @@ class TextShape(BaseShape):
         painter.restore()
 
 
-class MosaicShape(BaseShape):
+class RegionalEffectShape(BaseShape):
     """
-    Инструмент мозаичной цензуры прямоугольных блоков (аккуратный блочный блюр).
+    Инструмент применения эффекта к прямоугольной области:
+    мозаика, размытие, ч/б, инверсия, повышенная контрастность, сепия.
     """
-    def __init__(self, rect: QRectF, pixel_size: int = 5, cached_pixmap: QPixmap = None):
-        super().__init__(color="mosaic", stroke_width=1)
+    def __init__(self, rect: QRectF, effect_type: str = "mosaic", intensity: int = 8, cached_pixmap: QPixmap = None):
+        super().__init__(color=effect_type, stroke_width=1)
         self.rect = rect
-        self.pixel_size = max(3, min(30, pixel_size))
-        self.cached_mosaic = cached_pixmap
-        self.name = "Мозаика (Цензура)"
+        self.effect_type = effect_type
+        self.intensity = intensity
+        self.cached_pixmap = cached_pixmap
+        self.name = self._format_name(effect_type)
+
+    @staticmethod
+    def _format_name(etype: str) -> str:
+        names = {
+            "mosaic": "Мозаика (Цензура)",
+            "pixelate": "Мозаика (Цензура)",
+            "blur": "Размытие (Блюр)",
+            "grayscale": "Чёрно-белый (Область)",
+            "invert": "Инверсия (Область)",
+            "vibrant": "Насыщенность (Область)",
+            "sepia": "Сепия (Область)"
+        }
+        return names.get(etype, f"Эффект: {etype}")
 
     def hit_test(self, pt: QPointF, tolerance: float = 6.0) -> bool:
         if not self.visible:
@@ -797,7 +840,7 @@ class MosaicShape(BaseShape):
 
     def translate(self, dx: float, dy: float):
         self.rect.translate(dx, dy)
-        self.cached_mosaic = None
+        self.cached_pixmap = None
 
     def scale_from_origin(self, sx: float, sy: float, origin: QPointF):
         r = self.rect.normalized()
@@ -806,7 +849,7 @@ class MosaicShape(BaseShape):
         nr = origin.x() + (r.right() - origin.x()) * sx
         nb = origin.y() + (r.bottom() - origin.y()) * sy
         self.rect = QRectF(min(nl, nr), min(nt, nb), abs(nr - nl), abs(nb - nt))
-        self.cached_mosaic = None
+        self.cached_pixmap = None
 
     def get_bounding_rect(self) -> QRectF:
         return self.rect.normalized()
@@ -814,30 +857,27 @@ class MosaicShape(BaseShape):
     def clone(self):
         new_shape = super().clone()
         new_shape.rect = QRectF(self.rect)
+        new_shape.effect_type = self.effect_type
+        new_shape.intensity = self.intensity
         new_shape.rotation = getattr(self, "rotation", 0.0)
-        new_shape.cached_mosaic = None
+        new_shape.cached_pixmap = None
         return new_shape
 
-    def set_pixel_size(self, pixel_size: int, background_pixmap: QPixmap = None):
-        self.pixel_size = max(3, min(30, pixel_size))
-        self.cached_mosaic = None
+    def set_intensity(self, intensity: int, background_pixmap: QPixmap = None):
+        self.intensity = max(2, min(50, intensity))
+        self.cached_pixmap = None
         if background_pixmap is not None:
-            self.update_mosaic(background_pixmap)
+            self.update_effect(background_pixmap)
 
-    def update_mosaic(self, background_pixmap: QPixmap):
+    def update_effect(self, background_pixmap: QPixmap):
         if background_pixmap is None or self.rect.isEmpty():
             return
         r = self.rect.normalized()
         rx, ry, rw, rh = int(r.x()), int(r.y()), int(r.width()), int(r.height())
         if rw < 2 or rh < 2:
             return
-        
         cropped = background_pixmap.copy(rx, ry, rw, rh)
-        block_w = max(1, rw // self.pixel_size)
-        block_h = max(1, rh // self.pixel_size)
-        
-        small = cropped.scaled(block_w, block_h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
-        self.cached_mosaic = small.scaled(rw, rh, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
+        self.cached_pixmap = get_filtered_pixmap(cropped, self.effect_type, self.intensity)
 
     def draw(self, painter: QPainter, offset: QPointF = QPointF(0, 0), source_pixmap: QPixmap = None):
         if not self.visible:
@@ -852,17 +892,66 @@ class MosaicShape(BaseShape):
             painter.translate(-c)
 
         r = self.rect.translated(-offset.x(), -offset.y()).normalized()
-        
-        if self.cached_mosaic is None and source_pixmap is not None:
-            self.update_mosaic(source_pixmap)
+        if self.cached_pixmap is None and source_pixmap is not None:
+            self.update_effect(source_pixmap)
 
-        if self.cached_mosaic is not None:
-            painter.drawPixmap(int(r.x()), int(r.y()), self.cached_mosaic)
+        if self.cached_pixmap is not None:
+            painter.drawPixmap(int(r.x()), int(r.y()), self.cached_pixmap)
         else:
             painter.setPen(QPen(QColor(56, 189, 248, 200), 1.5, Qt.PenStyle.DashLine))
             painter.setBrush(QColor(15, 23, 42, 160))
             painter.drawRect(r)
-            # Subtle mosaic block grid
+        painter.restore()
+
+
+class MosaicShape(RegionalEffectShape):
+    """
+    Инструмент мозаичной цензуры прямоугольных блоков (аккуратный блочный блюр).
+    """
+    def __init__(self, rect: QRectF, pixel_size: int = 5, cached_pixmap: QPixmap = None):
+        super().__init__(rect, effect_type="mosaic", intensity=pixel_size, cached_pixmap=cached_pixmap)
+        self.pixel_size = self.intensity
+        self.name = "Мозаика (Цензура)"
+
+    @property
+    def cached_mosaic(self):
+        return self.cached_pixmap
+
+    @cached_mosaic.setter
+    def cached_mosaic(self, val):
+        self.cached_pixmap = val
+
+    def set_pixel_size(self, pixel_size: int, background_pixmap: QPixmap = None):
+        self.intensity = max(3, min(30, pixel_size))
+        self.pixel_size = self.intensity
+        self.cached_pixmap = None
+        if background_pixmap is not None:
+            self.update_effect(background_pixmap)
+
+    def update_mosaic(self, background_pixmap: QPixmap):
+        self.update_effect(background_pixmap)
+
+    def draw(self, painter: QPainter, offset: QPointF = QPointF(0, 0), source_pixmap: QPixmap = None):
+        if not self.visible:
+            return
+        painter.save()
+        rot = getattr(self, "rotation", 0.0)
+        if rot != 0.0:
+            c = self.get_bounding_rect().center() - offset
+            painter.translate(c)
+            painter.rotate(rot)
+            painter.translate(-c)
+
+        r = self.rect.translated(-offset.x(), -offset.y()).normalized()
+        if self.cached_pixmap is None and source_pixmap is not None:
+            self.update_effect(source_pixmap)
+
+        if self.cached_pixmap is not None:
+            painter.drawPixmap(int(r.x()), int(r.y()), self.cached_pixmap)
+        else:
+            painter.setPen(QPen(QColor(56, 189, 248, 200), 1.5, Qt.PenStyle.DashLine))
+            painter.setBrush(QColor(15, 23, 42, 160))
+            painter.drawRect(r)
             step = max(8, int(self.pixel_size * 2))
             painter.setPen(QPen(QColor(255, 255, 255, 40), 1))
             x = r.left() + step
@@ -876,65 +965,36 @@ class MosaicShape(BaseShape):
         painter.restore()
 
 
-class BlurShape(BaseShape):
+class BlurShape(RegionalEffectShape):
     """
     Инструмент гладкого размытия (Gaussian Blur / Цензура).
     """
     def __init__(self, rect: QRectF, blur_radius: int = 15, cached_pixmap: QPixmap = None):
-        super().__init__(color="blur", stroke_width=1)
-        self.rect = rect
-        self.blur_radius = max(3, min(50, blur_radius))
-        self.cached_blur = cached_pixmap
+        super().__init__(rect, effect_type="blur", intensity=blur_radius, cached_pixmap=cached_pixmap)
+        self.blur_radius = self.intensity
         self.name = "Размытие (Блюр)"
 
-    def hit_test(self, pt: QPointF, tolerance: float = 6.0) -> bool:
-        if not self.visible:
-            return False
-        return self.rect.normalized().contains(pt)
+    @property
+    def cached_blur(self):
+        return self.cached_pixmap
 
-    def translate(self, dx: float, dy: float):
-        self.rect.translate(dx, dy)
-        self.cached_blur = None
-
-    def scale_from_origin(self, sx: float, sy: float, origin: QPointF):
-        r = self.rect.normalized()
-        nl = origin.x() + (r.left() - origin.x()) * sx
-        nt = origin.y() + (r.top() - origin.y()) * sy
-        nr = origin.x() + (r.right() - origin.x()) * sx
-        nb = origin.y() + (r.bottom() - origin.y()) * sy
-        self.rect = QRectF(min(nl, nr), min(nt, nb), abs(nr - nl), abs(nb - nt))
-        self.cached_blur = None
-
-    def get_bounding_rect(self) -> QRectF:
-        return self.rect.normalized()
-
-    def clone(self):
-        new_shape = super().clone()
-        new_shape.rect = QRectF(self.rect)
-        new_shape.rotation = getattr(self, "rotation", 0.0)
-        new_shape.cached_blur = None
-        return new_shape
+    @cached_blur.setter
+    def cached_blur(self, val):
+        self.cached_pixmap = val
 
     def set_blur_radius(self, radius: int, background_pixmap: QPixmap = None):
-        self.blur_radius = max(3, min(50, radius))
-        self.cached_blur = None
+        self.intensity = max(3, min(50, radius))
+        self.blur_radius = self.intensity
+        self.cached_pixmap = None
         if background_pixmap is not None:
-            self.update_blur(background_pixmap)
+            self.update_effect(background_pixmap)
 
     def update_blur(self, background_pixmap: QPixmap):
-        if background_pixmap is None or self.rect.isEmpty():
-            return
-        r = self.rect.normalized()
-        rx, ry, rw, rh = int(r.x()), int(r.y()), int(r.width()), int(r.height())
-        if rw < 2 or rh < 2:
-            return
-        cropped = background_pixmap.copy(rx, ry, rw, rh)
-        self.cached_blur = get_blurred_pixmap(cropped, self.blur_radius)
+        self.update_effect(background_pixmap)
 
     def draw(self, painter: QPainter, offset: QPointF = QPointF(0, 0), source_pixmap: QPixmap = None):
         if not self.visible:
             return
-
         painter.save()
         rot = getattr(self, "rotation", 0.0)
         if rot != 0.0:
@@ -944,11 +1004,11 @@ class BlurShape(BaseShape):
             painter.translate(-c)
 
         r = self.rect.translated(-offset.x(), -offset.y()).normalized()
-        if self.cached_blur is None and source_pixmap is not None:
-            self.update_blur(source_pixmap)
+        if self.cached_pixmap is None and source_pixmap is not None:
+            self.update_effect(source_pixmap)
 
-        if self.cached_blur is not None:
-            painter.drawPixmap(int(r.x()), int(r.y()), self.cached_blur)
+        if self.cached_pixmap is not None:
+            painter.drawPixmap(int(r.x()), int(r.y()), self.cached_pixmap)
         else:
             painter.setPen(QPen(QColor(147, 197, 253, 200), 1.5, Qt.PenStyle.DashLine))
             painter.setBrush(QColor(30, 41, 59, 140))
@@ -960,3 +1020,4 @@ class BlurShape(BaseShape):
                 painter.drawLine(QPointF(x, r.top()), QPointF(x - r.height(), r.bottom()))
                 x += step
         painter.restore()
+
