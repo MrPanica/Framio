@@ -628,6 +628,12 @@ TRANSLATIONS = {
         "settings_storage_portable_group": "Портативный режим",
         "tool_blur": "Размытие (Блюр)",
         "tool_shapes": "Фигуры (Линия, Стрелка, Прямоугольник, Круг)",
+        "app_already_running_title": "Framio уже запущен",
+        "app_already_running_msg": "Приложение уже работает в системном трее. Нажмите {hotkey} для захвата экрана.",
+        "prop_eyedropper_tip": "Пипетка (выбрать цвет с экрана)",
+        "eyedropper_loupe_hint": "ЛКМ: выбрать цвет | Esc / ПКМ: отмена",
+        "action_edit_text": "Редактировать текст...",
+        "prop_text_italic": "Курсив",
     },
 
     "en": {
@@ -1243,6 +1249,12 @@ TRANSLATIONS = {
         "settings_storage_portable_group": "Portable Mode",
         "tool_blur": "Blur (Censor)",
         "tool_shapes": "Shapes (Line, Arrow, Rectangle, Circle)",
+        "app_already_running_title": "Framio is already running",
+        "app_already_running_msg": "Application is already running in system tray. Press {hotkey} to capture screen.",
+        "prop_eyedropper_tip": "Eyedropper (Pick color from screen)",
+        "eyedropper_loupe_hint": "LMB: pick color | Esc / RMB: cancel",
+        "action_edit_text": "Edit text...",
+        "prop_text_italic": "Italic",
     }
 }
 

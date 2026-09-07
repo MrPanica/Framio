@@ -751,7 +751,7 @@ class CircleShape(BaseShape):
 
 class TextShape(BaseShape):
     def __init__(self, pos: QPointF, text: str = "", color="#FF2E2E", font_size=18,
-                 font_family="Segoe UI", is_bold=True, is_underline=False,
+                 font_family="Segoe UI", is_bold=True, is_italic=False, is_underline=False,
                  has_bg=False, bg_color="#000000", bg_alpha=180):
         super().__init__(color, stroke_width=1)
         self.pos = pos
@@ -759,16 +759,31 @@ class TextShape(BaseShape):
         self.font_size = font_size
         self.font_family = font_family
         self.is_bold = is_bold
+        self.is_italic = is_italic
         self.is_underline = is_underline
         self.has_bg = has_bg
         self.bg_color = bg_color
         self.bg_alpha = bg_alpha
         self.name = tr("obj_text", "Текст")
 
-    def hit_test(self, pt: QPointF, tolerance: float = 6.0) -> bool:
+    def hit_test_rotated(self, pt: QPointF, tolerance: float = 6.0) -> bool:
         if not self.visible:
             return False
-        return self.get_bounding_rect().contains(pt)
+        rot = getattr(self, "rotation", 0.0)
+        br = self.get_bounding_rect()
+        if rot == 0.0:
+            return br.adjusted(-tolerance, -tolerance, tolerance, tolerance).contains(pt)
+        c = br.center()
+        rad = math.radians(-rot)
+        cos_a = math.cos(rad)
+        sin_a = math.sin(rad)
+        dx = pt.x() - c.x()
+        dy = pt.y() - c.y()
+        unrot_pt = QPointF(c.x() + dx * cos_a - dy * sin_a, c.y() + dx * sin_a + dy * cos_a)
+        return br.adjusted(-tolerance, -tolerance, tolerance, tolerance).contains(unrot_pt)
+
+    def hit_test(self, pt: QPointF, tolerance: float = 6.0) -> bool:
+        return self.hit_test_rotated(pt, tolerance)
 
     def translate(self, dx: float, dy: float):
         delta = QPointF(dx, dy)
@@ -783,14 +798,24 @@ class TextShape(BaseShape):
     def get_bounding_rect(self) -> QRectF:
         font = QFont(self.font_family, self.font_size)
         font.setBold(self.is_bold)
+        font.setItalic(getattr(self, "is_italic", False))
         font.setUnderline(self.is_underline)
         fm = QFontMetrics(font)
-        br = fm.boundingRect(self.text)
-        return QRectF(self.pos.x() + br.left() - 4, self.pos.y() + br.top() - 3, br.width() + 8, br.height() + 6)
+        br = fm.boundingRect(self.text if self.text else " ")
+        return QRectF(self.pos.x() + br.left() - 4, self.pos.y() + br.top() - 3, max(12.0, br.width() + 8), max(12.0, br.height() + 6))
 
     def clone(self):
         new_shape = super().clone()
         new_shape.pos = QPointF(self.pos)
+        new_shape.text = self.text
+        new_shape.font_size = self.font_size
+        new_shape.font_family = self.font_family
+        new_shape.is_bold = self.is_bold
+        new_shape.is_italic = getattr(self, "is_italic", False)
+        new_shape.is_underline = self.is_underline
+        new_shape.has_bg = self.has_bg
+        new_shape.bg_color = self.bg_color
+        new_shape.bg_alpha = self.bg_alpha
         new_shape.rotation = getattr(self, "rotation", 0.0)
         return new_shape
 
@@ -807,6 +832,7 @@ class TextShape(BaseShape):
         p = self.pos - offset
         font = QFont(self.font_family, self.font_size)
         font.setBold(self.is_bold)
+        font.setItalic(getattr(self, "is_italic", False))
         font.setUnderline(self.is_underline)
         painter.setFont(font)
 

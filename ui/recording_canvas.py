@@ -108,6 +108,7 @@ class RecordingDrawingCanvas(QWidget):
             }
         """)
         self.text_editor.returnPressed.connect(self._commit_text)
+        self.text_editor.editingFinished.connect(self._commit_text)
         self.text_pos = QPointF()
 
     def showEvent(self, event):
@@ -398,6 +399,9 @@ class RecordingDrawingCanvas(QWidget):
         if event.button() != Qt.MouseButton.LeftButton:
             return
 
+        if self.text_editor.isVisible() and not self.text_editor.geometry().contains(pos.toPoint()):
+            self._commit_text()
+
         # Проверяем клик ЛКМ по маркерам активной рамки трансформации
         if self.transform_box.is_active():
             h = self.transform_box.hit_test_handle(pos, offset=offset)
@@ -433,11 +437,13 @@ class RecordingDrawingCanvas(QWidget):
         self.drag_start = stored_pos
 
         if self.current_tool == "text":
+            if self.text_editor.isVisible() and self.text_editor.text().strip():
+                self._commit_text()
             self.text_pos = stored_pos
             self.text_editor.move(int(pos.x()), int(pos.y()))
+            self.text_editor.setText("")
             self.text_editor.show()
             self.text_editor.setFocus()
-            self.text_editor.setText("")
             return
 
         with self.shape_lock:
@@ -699,7 +705,10 @@ class RecordingDrawingCanvas(QWidget):
             self.update()
 
     def _commit_text(self):
+        if not self.text_editor.isVisible():
+            return
         txt = self.text_editor.text().strip()
+        self.text_editor.clear()
         self.text_editor.hide()
         if txt:
             shape = TextShape(

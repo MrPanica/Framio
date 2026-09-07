@@ -869,6 +869,7 @@ def style_toggle_btn(btn: QPushButton, checked: bool, is_dark: bool = True):
 
 class ToolPropertiesFlyout(QFrame):
     settings_updated = pyqtSignal()
+    pipette_requested = pyqtSignal()
 
     PRESET_COLORS = [
         "#FF2E2E", "#00C0FF", "#2ECC71", "#FFD700",
@@ -1096,6 +1097,14 @@ class ToolPropertiesFlyout(QFrame):
         self.btn_bold.toggled.connect(self._on_bold_toggled)
         row_font.addWidget(self.btn_bold)
 
+        self.btn_italic = QPushButton("I")
+        self.btn_italic.setCheckable(True)
+        self.btn_italic.setFixedSize(26, 24)
+        self.btn_italic.setStyleSheet("font-style: italic; font-size: 13px; font-family: 'Times New Roman', serif;")
+        self.btn_italic.setToolTip(tr("prop_text_italic", "Курсив"))
+        self.btn_italic.toggled.connect(self._on_italic_toggled)
+        row_font.addWidget(self.btn_italic)
+
         self.btn_underline = QPushButton("U")
         self.btn_underline.setCheckable(True)
         self.btn_underline.setFixedSize(26, 24)
@@ -1168,6 +1177,17 @@ class ToolPropertiesFlyout(QFrame):
         self.btn_blur_color.clicked.connect(lambda: self._on_color_pick("blur"))
         color_layout.addWidget(self.btn_blur_color)
         self.color_buttons["blur"] = self.btn_blur_color
+
+        # Пипетка для захвата цвета с экрана (векторная SVG иконка)
+        self.btn_pipette = QPushButton()
+        self.btn_pipette.setFixedSize(24, 22)
+        self.btn_pipette.setToolTip(tr("prop_eyedropper_tip", "Пипетка (выбрать цвет с экрана)"))
+        self.btn_pipette.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_pipette.setIcon(create_themed_icon("pipette", self.is_dark, size=14))
+        self.btn_pipette.setIconSize(QSize(14, 14))
+        self.btn_pipette.setStyleSheet("background-color: #27272a; border-radius: 11px; border: 1px solid #555;")
+        self.btn_pipette.clicked.connect(self._on_pipette_clicked)
+        color_layout.addWidget(self.btn_pipette)
 
         # Выбор произвольного цвета (векторная SVG иконка палитры)
         self.btn_more_color = QPushButton()
@@ -1408,6 +1428,11 @@ class ToolPropertiesFlyout(QFrame):
             style_toggle_btn(self.btn_bold, self.btn_bold.isChecked(), self.is_dark)
             self.btn_bold.blockSignals(False)
 
+            self.btn_italic.blockSignals(True)
+            self.btn_italic.setChecked(tool_data.get("is_italic", False))
+            style_toggle_btn(self.btn_italic, self.btn_italic.isChecked(), self.is_dark)
+            self.btn_italic.blockSignals(False)
+
             self.btn_underline.blockSignals(True)
             self.btn_underline.setChecked(tool_data.get("is_underline", False))
             style_toggle_btn(self.btn_underline, self.btn_underline.isChecked(), self.is_dark)
@@ -1548,6 +1573,15 @@ class ToolPropertiesFlyout(QFrame):
         self.tool_data["is_underline"] = checked
         style_toggle_btn(self.btn_underline, checked, self.is_dark)
         self.settings_updated.emit()
+
+    def _on_italic_toggled(self, checked: bool):
+        self.tool_data["is_italic"] = checked
+        style_toggle_btn(self.btn_italic, checked, self.is_dark)
+        self.settings_updated.emit()
+
+    def _on_pipette_clicked(self):
+        self.close()
+        self.pipette_requested.emit()
 
     def _on_arrow_combo_changed(self, idx: int):
         s_key = self.combo_arrow_style.itemData(idx)
@@ -1782,6 +1816,7 @@ class RightDrawingToolbar(QFrame):
     undo_clicked = pyqtSignal()
     redo_clicked = pyqtSignal()
     filter_selected = pyqtSignal(str)
+    pipette_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1807,6 +1842,7 @@ class RightDrawingToolbar(QFrame):
                 "size": 18,
                 "font_family": "Segoe UI",
                 "is_bold": True,
+                "is_italic": False,
                 "is_underline": False,
                 "has_bg": False,
                 "bg_color": "#000000",
@@ -1927,6 +1963,7 @@ class RightDrawingToolbar(QFrame):
 
         self.properties_flyout = ToolPropertiesFlyout(self)
         self.properties_flyout.settings_updated.connect(self._on_settings_updated)
+        self.properties_flyout.pipette_requested.connect(self.pipette_requested.emit)
 
         self.shapes_flyout = ShapesFlyoutWidget(self)
         self.shapes_flyout.shape_chosen.connect(self._on_shapes_flyout_chosen)
@@ -1934,6 +1971,13 @@ class RightDrawingToolbar(QFrame):
         self.censor_flyout = CensorEffectsFlyoutWidget(self)
         self.censor_flyout.censor_chosen.connect(self._on_censor_chosen)
         self.censor_flyout.filter_chosen.connect(self._on_filter_chosen)
+
+    def set_tool_color(self, color: str):
+        if self.current_tool in self.tools_config:
+            self.tools_config[self.current_tool]["color"] = color
+        self._update_color_swatch()
+        self.properties_flyout.load_tool(self.current_tool, self.tools_config.get(self.current_tool, {}))
+        self.tool_settings_updated.emit()
 
     def _update_color_swatch(self):
         cfg = self.tools_config.get(self.current_tool, {})

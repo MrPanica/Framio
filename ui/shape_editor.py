@@ -129,6 +129,7 @@ class ShapeEditPopup(QFrame):
             props["font_size"] = s.font_size
             props["font_family"] = s.font_family
             props["is_bold"] = s.is_bold
+            props["is_italic"] = getattr(s, "is_italic", False)
             props["is_underline"] = s.is_underline
             props["has_bg"] = getattr(s, "has_bg", False)
             props["bg_color"] = getattr(s, "bg_color", "#000000")
@@ -173,6 +174,16 @@ class ShapeEditPopup(QFrame):
         self.btn_col_blur.clicked.connect(lambda: self._set_color("blur"))
         row_c.addWidget(self.btn_col_blur)
         self.color_buttons["blur"] = self.btn_col_blur
+
+        # Кнопка пипетки
+        btn_pipette = QPushButton()
+        btn_pipette.setFixedSize(22, 20)
+        btn_pipette.setToolTip(tr("prop_eyedropper_tip", "Пипетка (выбрать цвет с экрана)"))
+        btn_pipette.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_pipette.setIcon(create_themed_icon("pipette", self.is_dark, size=14))
+        btn_pipette.setIconSize(QSize(14, 14))
+        btn_pipette.clicked.connect(self._pick_screen_color)
+        row_c.addWidget(btn_pipette)
 
         btn_more = QPushButton()
         btn_more.setFixedSize(22, 20)
@@ -449,14 +460,25 @@ class ShapeEditPopup(QFrame):
         self.btn_bold.setFixedSize(26, 24)
         self.btn_bold.setStyleSheet("font-weight: bold; font-size: 13px;")
         self.btn_bold.setChecked(self.shape.is_bold)
+        self.btn_bold.setToolTip(tr("prop_bold_tip", "Жирный шрифт"))
         self.btn_bold.toggled.connect(self._on_text_bold_toggled)
         row_f.addWidget(self.btn_bold)
+
+        self.btn_italic = QPushButton("I")
+        self.btn_italic.setCheckable(True)
+        self.btn_italic.setFixedSize(26, 24)
+        self.btn_italic.setStyleSheet("font-style: italic; font-size: 13px; font-family: 'Times New Roman', serif;")
+        self.btn_italic.setChecked(getattr(self.shape, "is_italic", False))
+        self.btn_italic.setToolTip(tr("prop_text_italic", "Курсив"))
+        self.btn_italic.toggled.connect(self._on_text_italic_toggled)
+        row_f.addWidget(self.btn_italic)
 
         self.btn_underline = QPushButton("U")
         self.btn_underline.setCheckable(True)
         self.btn_underline.setFixedSize(26, 24)
         self.btn_underline.setStyleSheet("text-decoration: underline; font-size: 13px;")
         self.btn_underline.setChecked(self.shape.is_underline)
+        self.btn_underline.setToolTip(tr("prop_underline_tip", "Подчёркнутый шрифт"))
         self.btn_underline.toggled.connect(self._on_text_underline_toggled)
         row_f.addWidget(self.btn_underline)
         self.layout.addLayout(row_f)
@@ -629,6 +651,25 @@ class ShapeEditPopup(QFrame):
         self.shape.is_underline = checked
         style_toggle_btn(self.btn_underline, checked, self.is_dark)
         self.shape_modified.emit()
+
+    def _on_text_italic_toggled(self, checked: bool):
+        self.shape.is_italic = checked
+        style_toggle_btn(self.btn_italic, checked, self.is_dark)
+        self.shape_modified.emit()
+
+    def _pick_screen_color(self):
+        p = self.parent()
+        if p and hasattr(p, "start_eyedropper"):
+            self.hide()
+            p.start_eyedropper(callback=self._on_eyedropper_picked)
+        else:
+            self._pick_custom_color()
+
+    def _on_eyedropper_picked(self, color):
+        if color:
+            hex_str = color.name() if hasattr(color, "name") else str(color)
+            self._set_color(hex_str)
+        self.show()
 
     def closeEvent(self, event):
         new_props = self._snapshot_props(self.shape)

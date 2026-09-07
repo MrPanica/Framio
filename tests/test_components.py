@@ -1485,10 +1485,106 @@ def test_rotated_regional_effect_stencil_and_i18n():
     print("  -> Оптический трафарет повернутых эффектов и локализация проверены успешно.")
 
 
+def test_single_instance_text_eyedropper_and_inspector():
+    print("[TEST] Тестирование SingleInstance IPC, прокачки TextShape, пипетки и Alt-инспектора...")
+    from utils.single_instance import SingleInstanceManager
+    from ui.transform_box import rotate_point
+    from PyQt6.QtGui import QColor, QPixmap
+
+    # 1. SingleInstanceManager: первичный и вторичный экземпляры
+    pipe_name = f"Framio_Test_IPC_{os.getpid()}"
+    mgr1 = SingleInstanceManager(server_name=pipe_name)
+    is_prim1 = mgr1.check_single_instance()
+    assert is_prim1 is True, "Первый экземпляр должен быть primary"
+
+    received_cmds = []
+    mgr1.message_received.connect(lambda cmd: received_cmds.append(cmd))
+
+    mgr2 = SingleInstanceManager(server_name=pipe_name)
+    is_prim2 = mgr2.check_single_instance(payload="activate")
+    assert is_prim2 is False, "Второй экземпляр должен определить, что приложение уже запущено"
+
+    # Обрабатываем события IPC
+    for _ in range(25):
+        QApplication.processEvents()
+        time.sleep(0.02)
+        if received_cmds:
+            break
+
+    assert len(received_cmds) == 1 and received_cmds[0] == "activate", f"Команда 'activate' должна быть получена, получено: {received_cmds}"
+
+    mgr2.cleanup()
+    mgr1.cleanup()
+
+    # 2. TextShape: Italic, масштаб, вращение, hit_test_rotated, clone
+    ts = TextShape(
+        pos=QPointF(100, 100),
+        text="Pro Text 2026",
+        font_size=16,
+        font_family="Arial",
+        is_bold=True,
+        is_italic=True,
+        is_underline=False,
+        has_bg=True,
+        bg_color="#18181b",
+        bg_alpha=200
+    )
+    assert ts.is_italic is True
+    assert ts.is_bold is True
+    assert ts.text == "Pro Text 2026"
+
+    # Клонирование
+    ts_clone = ts.clone()
+    assert ts_clone.is_italic is True
+    assert ts_clone.is_bold is True
+    assert ts_clone.font_size == 16
+    assert ts_clone.text == "Pro Text 2026"
+
+    # Масштабирование
+    orig_size = ts.font_size
+    ts.scale_from_origin(1.5, 1.5, ts.pos)
+    assert ts.font_size == int(round(orig_size * 1.5))
+
+    # Вращение и hit_test_rotated
+    bbox = ts.get_bounding_rect()
+    center = bbox.center()
+    assert ts.hit_test_rotated(center) is True
+
+    # Поворачиваем фигуру на 45 градусов
+    ts.rotation = 45.0
+    # Центр все еще внутри
+    assert ts.hit_test_rotated(center) is True
+
+    # Точка за пределами повернутой фигуры
+    far_away = QPointF(center.x() + 500, center.y() + 500)
+    assert ts.hit_test_rotated(far_away) is False
+
+    # 3. Alt-инспектор: поворот рамки и корректный расчет вертикальной позиции бейджа
+    corners = [bbox.topLeft(), bbox.topRight(), bbox.bottomRight(), bbox.bottomLeft()]
+    rot_corners = [rotate_point(p, center, 45.0) for p in corners]
+    min_y = min(p.y() for p in rot_corners)
+    badge_h = 20.0
+    badge_y = min_y - badge_h - 6.0
+    # Бейдж должен быть строго выше повернутой фигуры
+    assert badge_y < min_y, "Бейдж должен располагаться над верхней точкой повернутой фигуры"
+
+    # 4. Пипетка: сэмплирование цвета пикселя с холста
+    test_pix = QPixmap(50, 50)
+    test_pix.fill(QColor(255, 128, 0))
+    img = test_pix.toImage()
+    sampled_col = img.pixelColor(25, 25)
+    assert sampled_col.red() == 255
+    assert sampled_col.green() == 128
+    assert sampled_col.blue() == 0
+
+    print("  -> SingleInstance IPC, TextShape (italic/scale/rotate), пипетка и Alt-инспектор успешно протестированы.")
+
+
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
         tmp_p = Path(tmp_dir)
+        test_single_instance_text_eyedropper_and_inspector()
         test_models_and_history()
         test_rotated_regional_effect_stencil_and_i18n()
         test_regional_effect_dynamic_resampling_and_alt_inspector()

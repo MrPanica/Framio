@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget, QApplication, QLineEdit, QFileDialog, QSystemTrayIcon, QMenu
 )
 from PyQt6.QtGui import (
-    QPainter, QPen, QColor, QBrush, QPixmap, QImage, QCursor, QFont, QRegion, QFontMetrics
+    QPainter, QPen, QColor, QBrush, QPixmap, QImage, QCursor, QFont, QRegion, QFontMetrics, QPainterPath
 )
 
 from config import ConfigManager
@@ -55,7 +55,7 @@ from .layers_dialog import LayersDialog
 from .history_dialog import HistoryDialog
 from .settings_dialog import SettingsDialog
 from .recording_window import RecordingFrameWindow
-from .transform_box import ShapeTransformBox, HandleType
+from .transform_box import ShapeTransformBox, HandleType, rotate_point
 
 HANDLE_NONE = 0
 HANDLE_TL = 1
@@ -145,6 +145,13 @@ class OverlayWindow(QWidget):
         self.text_editor = QLineEdit(self)
         self.text_editor.hide()
         self.text_editor.returnPressed.connect(self._commit_text)
+        self.text_editor.editingFinished.connect(self._commit_text)
+        self.editing_existing_text_shape = None
+
+        # Режим пипетки (взятие цвета с экрана)
+        self.is_eyedropper_active = False
+        self.eyedropper_callback = None
+        self.eyedropper_pos = QPointF()
 
         # Контекстное меню и удержание правой кнопки мыши
         self.right_clicked_shape = None
@@ -187,6 +194,7 @@ class OverlayWindow(QWidget):
         self.right_toolbar.undo_clicked.connect(self.history_manager.undo)
         self.right_toolbar.redo_clicked.connect(self.history_manager.redo)
         self.right_toolbar.filter_selected.connect(self._on_filter_changed)
+        self.right_toolbar.pipette_requested.connect(self.start_eyedropper)
 
         # Нижняя панель
         self.bottom_toolbar.save_clicked.connect(self.save_screenshot)
@@ -466,6 +474,31 @@ class OverlayWindow(QWidget):
         release_mouse_traps()
         pos = event.position()
 
+        # Режим «Пипетка»: выбор цвета кликом ЛКМ или отмена кликом ПКМ
+        if getattr(self, "is_eyedropper_active", False):
+            if event.button() == Qt.MouseButton.LeftButton:
+                color = self._sample_screen_color(pos)
+                self.is_eyedropper_active = False
+                cb = getattr(self, "eyedropper_callback", None)
+                self.eyedropper_callback = None
+                if cb:
+                    cb(color)
+                else:
+                    self.right_toolbar.set_tool_color(color.name())
+                self._set_cursor_if_needed(self._get_tool_cursor())
+                self.update()
+                return
+            elif event.button() == Qt.MouseButton.RightButton:
+                self.is_eyedropper_active = False
+                self.eyedropper_callback = None
+                self._set_cursor_if_needed(self._get_tool_cursor())
+                self.update()
+                return
+
+        # Автоматическое сохранение текста при клике мимо редактора
+        if self.text_editor.isVisible() and not self.text_editor.geometry().contains(pos.toPoint()):
+            self._commit_text()
+
         # Обработка правой кнопки мыши: трансформация фигур (масштабирование, вращение, перемещение) или контекстное меню
         if event.button() == Qt.MouseButton.RightButton:
             if self.selection_rect.isValid() and self.selection_rect.contains(pos):
@@ -580,6 +613,12 @@ class OverlayWindow(QWidget):
 
     def mouseMoveEvent(self, event):
         pos = event.position()
+
+        # Режим «Пипетка»: перемещение лупы вместе с курсором
+        if getattr(self, "is_eyedropper_active", False):
+            self.eyedropper_pos = pos
+            self.update()
+            return
 
         # 0. Проверка зажатия мыши снаружи рамки с порогом > 6 px
         if getattr(self, "pending_outside_drag", False):
@@ -791,6 +830,19 @@ class OverlayWindow(QWidget):
             self._finish_drawing_shape()
             self.update()
 
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position()
+            for shape in reversed(self.layer_manager.shapes):
+                if shape.visible and shape.hit_test_rotated(pos):
+                    if isinstance(shape, TextShape):
+                        self._edit_existing_text(shape)
+                        return
+                    else:
+                        self._open_shape_properties_editor(shape, event.globalPosition().toPoint())
+                        return
+        super().mouseDoubleClickEvent(event)
+
     def _on_right_hold_timeout(self):
         if self.right_clicked_shape is not None:
             shape = self.right_clicked_shape
@@ -813,8 +865,14 @@ class OverlayWindow(QWidget):
         menu = QMenu(self)
         menu.setStyleSheet(get_context_menu_style(is_dark))
 
+        # 0. Редактировать текст (для TextShape)
+        act_text_edit = None
+        if isinstance(shape, TextShape):
+            act_text_edit = menu.addAction(create_themed_icon("edit", is_dark, 14), tr("action_edit_text", "Редактировать текст..."))
+            menu.addSeparator()
+
         # 1. Изменить свойства
-        act_edit = menu.addAction(create_themed_icon("edit", is_dark, 14), tr("shape_menu_props", name=shape.name))
+        act_edit = menu.addAction(create_themed_icon("settings", is_dark, 14), tr("shape_menu_props", name=shape.name))
         menu.addSeparator()
 
         # 2. Дублировать
@@ -836,6 +894,12 @@ class OverlayWindow(QWidget):
         if not action:
             self.active_editing_shape = None
             self.update()
+            return
+
+        if action == act_text_edit:
+            self.active_editing_shape = None
+            self.update()
+            self._edit_existing_text(shape)
             return
 
         if action == act_edit:
@@ -1143,18 +1207,25 @@ class OverlayWindow(QWidget):
             self.history_manager.push_already_done(cmd)
 
     def _open_text_editor(self, pos: QPointF, color: str, font_size: int):
+        # Если в предыдущем поле ввода остался набранный текст — сохраняем его, а не удаляем
+        if self.text_editor.isVisible() and self.text_editor.text().strip():
+            self._commit_text()
+
         cfg = self.right_toolbar.get_current_settings()
+        self.editing_existing_text_shape = None
         self.text_editor_pos = pos
         self.text_editor_color = cfg.get("color", color)
         self.text_editor_font_size = cfg.get("size", font_size)
         self.text_editor_font_family = cfg.get("font_family", "Segoe UI")
         self.text_editor_is_bold = cfg.get("is_bold", True)
+        self.text_editor_is_italic = cfg.get("is_italic", False)
         self.text_editor_is_underline = cfg.get("is_underline", False)
         self.text_editor_has_bg = cfg.get("has_bg", False)
         self.text_editor_bg_color = cfg.get("bg_color", "#000000")
         self.text_editor_bg_alpha = cfg.get("bg_alpha", 180)
 
         weight = "bold" if self.text_editor_is_bold else "normal"
+        style = "italic" if self.text_editor_is_italic else "normal"
         decor = "underline" if self.text_editor_is_underline else "none"
         bg_css = "rgba(0, 0, 0, 200)" if self.text_editor_has_bg else "rgba(20, 22, 28, 160)"
 
@@ -1165,6 +1236,7 @@ class OverlayWindow(QWidget):
                 font-family: '{self.text_editor_font_family}', sans-serif;
                 font-size: {self.text_editor_font_size}pt;
                 font-weight: {weight};
+                font-style: {style};
                 text-decoration: {decor};
                 border: 1px dashed {self.text_editor_color};
                 padding: 2px 4px;
@@ -1176,13 +1248,87 @@ class OverlayWindow(QWidget):
         self.text_editor.show()
         self.text_editor.setFocus()
 
+    def _edit_existing_text(self, shape: TextShape):
+        """Открывает встроенный текстовый редактор для редактирования существующей надписи."""
+        if not shape:
+            return
+        if self.text_editor.isVisible() and self.text_editor.text().strip():
+            self._commit_text()
+
+        self.editing_existing_text_shape = shape
+        br = shape.get_bounding_rect()
+        self.text_editor_pos = br.topLeft()
+        self.text_editor_color = shape.color
+        self.text_editor_font_size = shape.font_size
+        self.text_editor_font_family = shape.font_family
+        self.text_editor_is_bold = shape.is_bold
+        self.text_editor_is_italic = getattr(shape, "is_italic", False)
+        self.text_editor_is_underline = shape.is_underline
+        self.text_editor_has_bg = getattr(shape, "has_bg", False)
+        self.text_editor_bg_color = getattr(shape, "bg_color", "#000000")
+        self.text_editor_bg_alpha = getattr(shape, "bg_alpha", 180)
+
+        weight = "bold" if self.text_editor_is_bold else "normal"
+        style = "italic" if self.text_editor_is_italic else "normal"
+        decor = "underline" if self.text_editor_is_underline else "none"
+        bg_css = "rgba(0, 0, 0, 200)" if self.text_editor_has_bg else "rgba(20, 22, 28, 160)"
+
+        self.text_editor.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {bg_css};
+                color: {self.text_editor_color};
+                font-family: '{self.text_editor_font_family}', sans-serif;
+                font-size: {self.text_editor_font_size}pt;
+                font-weight: {weight};
+                font-style: {style};
+                text-decoration: {decor};
+                border: 1px dashed {self.text_editor_color};
+                padding: 2px 4px;
+            }}
+        """)
+        self.text_editor.setFixedWidth(max(280, int(br.width() + 24)))
+        self.text_editor.move(int(br.left()), int(br.top()))
+        self.text_editor.setText(shape.text)
+        self.text_editor.selectAll()
+        self.text_editor.show()
+        self.text_editor.setFocus()
+
     def _commit_text(self):
+        existing_shape = getattr(self, "editing_existing_text_shape", None)
+        if not self.text_editor.isVisible() and existing_shape is None:
+            return
         text = self.text_editor.text().strip()
+        self.text_editor.clear()
         self.text_editor.hide()
+        self.editing_existing_text_shape = None
+
+        if existing_shape:
+            if not text:
+                # Если текст стерт полностью — удаляем фигуру
+                cmd = HistoryCommand(
+                    tr("hist_cmd_delete", "Удаление фигуры"),
+                    do_func=lambda s=existing_shape: self.layer_manager.remove_shape(s.id),
+                    undo_func=lambda s=existing_shape: self.layer_manager.add_shape(s)
+                )
+                self.layer_manager.remove_shape(existing_shape.id)
+                self.history_manager.push_already_done(cmd)
+            elif text != existing_shape.text:
+                old_text = existing_shape.text
+                cmd = HistoryCommand(
+                    tr("hist_cmd_text", "Текст: '{text}'", text=text[:12]),
+                    do_func=lambda s=existing_shape, t=text: setattr(s, "text", t),
+                    undo_func=lambda s=existing_shape, t=old_text: setattr(s, "text", t)
+                )
+                existing_shape.text = text
+                self.history_manager.push_already_done(cmd)
+            self.update()
+            return
+
         if text:
             from PyQt6.QtGui import QFontMetrics
             font = QFont(self.text_editor_font_family, int(self.text_editor_font_size))
             font.setBold(self.text_editor_is_bold)
+            font.setItalic(getattr(self, "text_editor_is_italic", False))
             font.setUnderline(self.text_editor_is_underline)
             fm = QFontMetrics(font)
             # Точный baseline с учетом ascent шрифта
@@ -1195,6 +1341,7 @@ class OverlayWindow(QWidget):
                 font_size=self.text_editor_font_size,
                 font_family=self.text_editor_font_family,
                 is_bold=self.text_editor_is_bold,
+                is_italic=getattr(self, "text_editor_is_italic", False),
                 is_underline=self.text_editor_is_underline,
                 has_bg=getattr(self, "text_editor_has_bg", False),
                 bg_color=getattr(self, "text_editor_bg_color", "#000000"),
@@ -1208,6 +1355,125 @@ class OverlayWindow(QWidget):
             )
             self.history_manager.push_already_done(cmd)
             self.update()
+
+    # --- Инструмент «Пипетка» (Eyedropper) ---
+    def start_eyedropper(self, callback=None):
+        """Активирует интерактивный режим пипетки для взятия цвета с экрана."""
+        self.is_eyedropper_active = True
+        self.eyedropper_callback = callback
+        self.setCursor(create_tool_cursor("pipette", getattr(self, "is_dark", True)))
+        self.eyedropper_pos = self.mapFromGlobal(QCursor.pos())
+        self.update()
+
+    def _sample_screen_color(self, pos: QPointF) -> QColor:
+        """Считывает точный цвет пикселя с холста или экрана в указанных координатах."""
+        px = int(pos.x())
+        py = int(pos.y())
+        if self.background_pixmap and not self.background_pixmap.isNull():
+            img = self.background_pixmap.toImage()
+            if 0 <= px < img.width() and 0 <= py < img.height():
+                # Если поверх нарисованы векторные фигуры — рендерим пиксель с учетом слоев
+                if self.layer_manager and self.layer_manager.shapes:
+                    canvas = QImage(1, 1, QImage.Format.Format_ARGB32_Premultiplied)
+                    p = QPainter(canvas)
+                    p.drawPixmap(0, 0, self.background_pixmap, px, py, 1, 1)
+                    for s in self.layer_manager.shapes:
+                        if getattr(s, "visible", True):
+                            s.draw(p, offset=QPointF(px, py), source_pixmap=self.background_pixmap)
+                    p.end()
+                    return canvas.pixelColor(0, 0)
+                return img.pixelColor(px, py)
+        try:
+            screen = QApplication.primaryScreen()
+            if screen:
+                pix = screen.grabWindow(0, px, py, 1, 1)
+                return pix.toImage().pixelColor(0, 0)
+        except Exception:
+            pass
+        return QColor(255, 0, 0)
+
+    def _draw_eyedropper_loupe(self, painter: QPainter):
+        """Отрисовывает экранную лупу 9x9 пикселей с HEX/RGB кодом цвета возле курсора пипетки."""
+        pos = getattr(self, "eyedropper_pos", None)
+        if pos is None:
+            return
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        cur_x = pos.x()
+        cur_y = pos.y()
+        center_col = self._sample_screen_color(pos)
+
+        loupe_radius = 44.0
+        loupe_diam = loupe_radius * 2.0
+
+        lx = cur_x + 24.0
+        ly = cur_y - 50.0
+
+        if lx + loupe_diam + 40 > self.width():
+            lx = cur_x - loupe_diam - 24.0
+        if ly - 20 < 0:
+            ly = cur_y + 24.0
+
+        center_loupe = QPointF(lx + loupe_radius, ly + loupe_radius)
+
+        clip_path = QPainterPath()
+        clip_path.addEllipse(center_loupe, loupe_radius, loupe_radius)
+        painter.save()
+        painter.setClipPath(clip_path)
+
+        pixel_size = 10.0
+        grid_half = 4
+        start_x = center_loupe.x() - (grid_half + 0.5) * pixel_size
+        start_y = center_loupe.y() - (grid_half + 0.5) * pixel_size
+
+        for gx in range(-grid_half, grid_half + 1):
+            for gy in range(-grid_half, grid_half + 1):
+                sample_pt = QPointF(cur_x + gx, cur_y + gy)
+                pix_col = self._sample_screen_color(sample_pt)
+                cell_rect = QRectF(start_x + (gx + grid_half) * pixel_size,
+                                   start_y + (gy + grid_half) * pixel_size,
+                                   pixel_size, pixel_size)
+                painter.fillRect(cell_rect, pix_col)
+                painter.setPen(QColor(255, 255, 255, 30))
+                painter.drawRect(cell_rect)
+
+        center_cell = QRectF(center_loupe.x() - pixel_size / 2.0,
+                             center_loupe.y() - pixel_size / 2.0,
+                             pixel_size, pixel_size)
+        painter.setPen(QPen(QColor(255, 255, 255, 220), 1.5))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(center_cell)
+        painter.restore()
+
+        painter.setPen(QPen(QColor(255, 255, 255), 2.5))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(center_loupe, loupe_radius, loupe_radius)
+        painter.setPen(QPen(QColor(15, 23, 42, 180), 1.0))
+        painter.drawEllipse(center_loupe, loupe_radius + 1.5, loupe_radius + 1.5)
+
+        badge_w = 140.0
+        badge_h = 24.0
+        badge_rect = QRectF(center_loupe.x() - badge_w / 2.0, center_loupe.y() + loupe_radius + 8.0, badge_w, badge_h)
+
+        painter.setPen(QPen(QColor(56, 189, 248, 200), 1))
+        painter.setBrush(QBrush(QColor(15, 23, 42, 235)))
+        painter.drawRoundedRect(badge_rect, 4, 4)
+
+        swatch_rect = QRectF(badge_rect.left() + 5, badge_rect.top() + 5, 14, 14)
+        painter.setPen(QPen(QColor(255, 255, 255, 180), 1))
+        painter.setBrush(QBrush(center_col))
+        painter.drawRoundedRect(swatch_rect, 2, 2)
+
+        font = QFont("Segoe UI", 9, QFont.Weight.Bold)
+        painter.setFont(font)
+        painter.setPen(QColor(241, 245, 249))
+        text_rect = QRectF(swatch_rect.right() + 6, badge_rect.top(), badge_w - 28, badge_h)
+        hex_text = f"{center_col.name().upper()} ({center_col.red()},{center_col.green()},{center_col.blue()})"
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, hex_text)
+
+        painter.restore()
 
     # --- Отрисовка с аппаратной оптимизацией ---
     def paintEvent(self, event):
@@ -1333,6 +1599,10 @@ class OverlayWindow(QWidget):
                 self._draw_interactive_objects_highlight(painter)
         elif getattr(self, "hovered_window_rect", None) and self.hovered_window_rect.isValid() and not self.hovered_window_rect.isEmpty():
             self._draw_hovered_window_indicator(painter)
+
+        # Экранная лупа с палитрой при активной пипетке
+        if getattr(self, "is_eyedropper_active", False):
+            self._draw_eyedropper_loupe(painter)
 
     def _draw_dragged_shape_indicator(self, painter: QPainter):
         """Отрисовывает рамку трансформации в стиле Photoshop / Figma вокруг активной фигуры."""
@@ -1521,20 +1791,46 @@ class OverlayWindow(QWidget):
             if not br.isValid() or br.isEmpty():
                 continue
 
-            # 1. Контурная рамка вокруг объекта
+            rot = getattr(s, "rotation", 0.0)
+            c = br.center()
+
+            # 1. Контурная рамка вокруг объекта с учетом угла вращения
+            painter.save()
+            if abs(rot) > 0.01:
+                painter.translate(c)
+                painter.rotate(rot)
+                painter.translate(-c)
+
             pen_box = QPen(QColor(56, 189, 248, 220), 1.5, Qt.PenStyle.DashLine)
             painter.setPen(pen_box)
             painter.setBrush(QBrush(QColor(56, 189, 248, 30)))
             adj_rect = br.adjusted(-4, -4, 4, 4)
             painter.drawRoundedRect(adj_rect, 4, 4)
+            painter.restore()
 
-            # 2. Локализованное название фигуры
+            # 2. Локализованное название фигуры (бейдж держим всегда строго горизонтально)
             tag_text = self._get_shape_display_name(s)
             text_w = fm.horizontalAdvance(tag_text)
             badge_w = text_w + 14
             badge_h = 20
-            badge_x = adj_rect.left()
-            badge_y = max(4.0, adj_rect.top() - 24.0)
+
+            # Вычисляем крайнюю верхнюю точку повернутой фигуры, чтобы плашка была над ней
+            corners = [
+                br.topLeft(),
+                br.topRight(),
+                br.bottomRight(),
+                br.bottomLeft()
+            ]
+            rot_corners = [rotate_point(p, c, rot) for p in corners] if abs(rot) > 0.01 else corners
+            min_y = min(p.y() for p in rot_corners)
+            mean_x = c.x()
+
+            badge_x = mean_x - badge_w / 2.0
+            badge_y = min_y - badge_h - 6.0
+            if badge_y < 4.0:
+                max_y = max(p.y() for p in rot_corners)
+                badge_y = max_y + 6.0
+
             badge_rect = QRectF(badge_x, badge_y, badge_w, badge_h)
 
             # Отрисовка плашки бейджа
@@ -1584,6 +1880,18 @@ class OverlayWindow(QWidget):
                 self.update()
 
         if key == Qt.Key.Key_Escape:
+            if getattr(self, "is_eyedropper_active", False):
+                self.is_eyedropper_active = False
+                self.eyedropper_callback = None
+                self._set_cursor_if_needed(self._get_tool_cursor())
+                self.update()
+                return
+            if self.text_editor.isVisible():
+                self.text_editor.clear()
+                self.text_editor.hide()
+                self.editing_existing_text_shape = None
+                self.update()
+                return
             if self.is_recording:
                 self.stop_recording()
             else:

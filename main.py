@@ -442,7 +442,34 @@ class FramioApp(QObject):
         if sys.platform == "win32":
             os.startfile(str(p))
 
+    def handle_secondary_instance_command(self, cmd: str):
+        if cmd == "capture":
+            self.trigger_capture()
+        else:
+            # Если оверлей или окно записи уже открыты, поднимаем их на передний план
+            if self.overlay and self.overlay.isVisible():
+                self.overlay.activateWindow()
+                self.overlay.raise_()
+                return
+            for rec in self.active_recordings:
+                if rec.isVisible():
+                    rec.activateWindow()
+                    rec.raise_()
+                    return
+
+            # Иначе открываем настройки и показываем уведомление
+            self._open_settings()
+            if self.tray and self.tray.isVisible():
+                self.tray.showMessage(
+                    tr("app_already_running_title", "Framio уже запущен"),
+                    tr("app_already_running_msg", "Приложение уже работает в системном трее. Нажмите {hotkey} для захвата экрана.", hotkey=self.cfg.hotkey_capture),
+                    QSystemTrayIcon.MessageIcon.Information,
+                    3500
+                )
+
     def quit_app(self):
+        if hasattr(self, "single_instance_mgr") and self.single_instance_mgr:
+            self.single_instance_mgr.cleanup()
         self.hotkey_mgr.stop()
         for rec in list(self.active_recordings):
             try:
@@ -488,6 +515,15 @@ def main():
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+
+    # Проверка на повторный запуск приложения (Single Instance)
+    from utils.single_instance import SingleInstanceManager
+    ipc_mgr = SingleInstanceManager()
+    payload = "capture" if any(arg in sys.argv for arg in ("--capture", "-c")) else "activate"
+    if not ipc_mgr.check_single_instance(payload):
+        print("[Framio] Экземпляр приложения уже запущен. Команда передана работающему процессу.")
+        sys.exit(0)
+
     app.setWindowIcon(make_app_icon())
     app.setStyleSheet("""
         QToolTip {
@@ -503,6 +539,8 @@ def main():
 
     framio = FramioApp()
     app.app_instance = framio
+    framio.single_instance_mgr = ipc_mgr
+    ipc_mgr.message_received.connect(framio.handle_secondary_instance_command)
 
     is_minimized_boot = any(arg in sys.argv for arg in ("--minimized", "-minimized", "--tray", "-m"))
     open_capture = any(arg in sys.argv for arg in ("--capture", "-c"))

@@ -61,6 +61,12 @@ SVG_ICONS = {
         <line x1="4" y1="21" x2="20" y2="21"/>
     </svg>""",
 
+    "italic": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="19" y1="4" x2="10" y2="4"/>
+        <line x1="14" y1="20" x2="5" y2="20"/>
+        <line x1="15" y1="4" x2="9" y2="20"/>
+    </svg>""",
+
     "gradient": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <rect width="18" height="18" x="3" y="3" rx="2"/>
         <path d="M3 9l6-6"/>
@@ -130,6 +136,12 @@ SVG_ICONS = {
         <circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/>
         <circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/>
         <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>
+    </svg>""",
+
+    "pipette": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m14 7 3 3"/>
+        <path d="m5 19 4-4"/>
+        <path d="M19 5a2.83 2.83 0 0 0-4 0l-9.5 9.5a1 1 0 0 0-.25.45l-1.2 4.8a.5.5 0 0 0 .6.6l4.8-1.2a1 1 0 0 0 .45-.25L19 5Z"/>
     </svg>""",
 
     "undo": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -602,6 +614,28 @@ def create_tool_cursor(tool_name: str) -> QCursor:
         p.fillRect(2, 9, 7, 7, QColor(255, 255, 255, 220))
         p.end()
         return QCursor(pix, 9, 9)
+
+    elif tool_name in ("pipette", "eyedropper"):
+        # Пипетка с острием в нижнем левом углу (2, 22)
+        poly = QPolygonF([
+            QPointF(2, 22),
+            QPointF(5, 18),
+            QPointF(14, 9),
+            QPointF(17, 6),
+            QPointF(20, 9),
+            QPointF(17, 12),
+            QPointF(8, 21),
+            QPointF(2, 22)
+        ])
+        p.setPen(QPen(QColor(0, 0, 0, 240), 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        p.setBrush(QColor(255, 255, 255, 240))
+        p.drawPolygon(poly)
+        tip_poly = QPolygonF([QPointF(2, 22), QPointF(4, 19), QPointF(6, 21)])
+        p.setBrush(QColor(56, 189, 248))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawPolygon(tip_poly)
+        p.end()
+        return QCursor(pix, 2, 22)
 
     p.end()
     return QCursor(Qt.CursorShape.CrossCursor)
