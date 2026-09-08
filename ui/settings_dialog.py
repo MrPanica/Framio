@@ -16,12 +16,13 @@ from PyQt6.QtWidgets import (
     QPushButton, QComboBox, QCheckBox, QFileDialog,
     QWidget, QMessageBox, QGridLayout, QTextBrowser,
     QScrollArea, QFrame, QStackedWidget, QListWidget, QListWidgetItem,
-    QSpinBox, QColorDialog
+    QSpinBox, QColorDialog, QApplication
 )
 from config import (
     ConfigManager, AppConfig, get_base_dir, DEFAULT_HOTKEY,
     DEFAULT_HOTKEY_RECORD_FULLSCREEN, DEFAULT_HOTKEY_STOP_RECORDING,
-    DEFAULT_HOTKEY_QUICK_FULLSCREEN, DEFAULT_HOTKEY_HIGHLIGHT_OBJECTS, normalize_portable_path
+    DEFAULT_HOTKEY_QUICK_FULLSCREEN, DEFAULT_HOTKEY_SCREENSHOT,
+    DEFAULT_HOTKEY_HIGHLIGHT_OBJECTS, normalize_portable_path
 )
 from utils.autostart import set_windows_autostart, is_windows_autostart_enabled
 from utils.i18n import tr, set_language, get_current_language
@@ -61,6 +62,8 @@ class HotkeyRecorderButton(QPushButton):
         self._keys_currently_down = set()
         self._ll_hook_id = None
         self._ll_hook_proc = None
+        self._global_hotkey_manager = None
+        self._global_hotkeys_were_active = False
         self.setToolTip(tr("settings_hk_tooltip", "Нажмите для записи комбинации клавиш (Ctrl, Shift, Alt, F1-F12, буквы, Print Screen)"))
         self.clicked.connect(self._toggle_recording)
         self.setFixedWidth(96)
@@ -92,9 +95,16 @@ class HotkeyRecorderButton(QPushButton):
             self.target_line_edit.setText(tr("settings_btn_listening_key", "Нажмите клавишу..."))
             self.target_line_edit.setFocus()
 
-        # 1. Устанавливаем фильтр событий приложения Qt для отслеживания всех клавиш
+        # Глобальный Print Screen не должен запускать снимок поверх записи
+        # комбинации. Возвращаем обработчик после завершения или отмены.
+        self._suspend_global_hotkeys()
+
+        # 1. Слушаем только активное поле, а не всё приложение. Глобальный
+        # фильтр конфликтует с нативным хуком Print Screen и может ломать ввод.
         try:
-            QApplication.instance().installEventFilter(self)
+            if self.target_line_edit:
+                self.target_line_edit.installEventFilter(self)
+            self.installEventFilter(self)
         except Exception:
             pass
 
@@ -167,7 +177,9 @@ class HotkeyRecorderButton(QPushButton):
 
     def _cleanup_hooks(self):
         try:
-            QApplication.instance().removeEventFilter(self)
+            if self.target_line_edit:
+                self.target_line_edit.removeEventFilter(self)
+            self.removeEventFilter(self)
         except Exception:
             pass
         if getattr(self, "_ll_hook_id", None):
@@ -177,6 +189,27 @@ class HotkeyRecorderButton(QPushButton):
                 pass
             self._ll_hook_id = None
             self._ll_hook_proc = None
+
+        self._restore_global_hotkeys()
+
+    def _suspend_global_hotkeys(self):
+        app = QApplication.instance()
+        app_instance = getattr(app, "app_instance", None) if app else None
+        manager = getattr(app_instance, "hotkey_mgr", None)
+        if manager and hasattr(manager, "suspend"):
+            self._global_hotkey_manager = manager
+            self._global_hotkeys_were_active = manager.suspend()
+
+    def _restore_global_hotkeys(self):
+        manager = self._global_hotkey_manager
+        was_active = self._global_hotkeys_were_active
+        self._global_hotkey_manager = None
+        self._global_hotkeys_were_active = False
+        if manager and hasattr(manager, "resume"):
+            try:
+                manager.resume(was_active)
+            except Exception:
+                pass
 
     def eventFilter(self, watched, event):
         if self.is_recording and event is not None:
@@ -935,7 +968,24 @@ class SettingsDialog(QDialog):
         l_quick.addWidget(btn_reset_quick)
         card_hotkey.add_row(tr("settings_hk_quick_screen", "Быстрый скриншот экрана:"), tr("settings_hk_quick_desc", "Мгновенно сохраняет изображение всех экранов без рамок"), w_quick)
 
-        # 3. Запись всего экрана
+        # 3. Обычный Print Screen без выделения
+        w_screenshot = QWidget()
+        l_screenshot = QHBoxLayout(w_screenshot)
+        l_screenshot.setContentsMargins(0, 0, 0, 0)
+        l_screenshot.setSpacing(6)
+        self.edit_hotkey_screenshot = QLineEdit(getattr(self.cfg, "hotkey_screenshot", DEFAULT_HOTKEY_SCREENSHOT))
+        self.edit_hotkey_screenshot.setFixedWidth(170)
+        btn_rec_screenshot = HotkeyRecorderButton(self.edit_hotkey_screenshot)
+        btn_rec_screenshot.setFixedWidth(82)
+        btn_reset_screenshot = QPushButton(tr("settings_btn_reset", "Сбросить"))
+        btn_reset_screenshot.setFixedWidth(72)
+        btn_reset_screenshot.clicked.connect(lambda: self.edit_hotkey_screenshot.setText(DEFAULT_HOTKEY_SCREENSHOT))
+        l_screenshot.addWidget(self.edit_hotkey_screenshot)
+        l_screenshot.addWidget(btn_rec_screenshot)
+        l_screenshot.addWidget(btn_reset_screenshot)
+        card_hotkey.add_row(tr("settings_hk_screenshot", "Обычный скриншот всего экрана:"), tr("settings_hk_screenshot_desc", "Сохраняет весь экран сразу в папку скриншотов без выделения и диалога"), w_screenshot)
+
+        # 4. Запись всего экрана
         w_rec = QWidget()
         l_rec = QHBoxLayout(w_rec)
         l_rec.setContentsMargins(0, 0, 0, 0)
@@ -1208,10 +1258,11 @@ class SettingsDialog(QDialog):
 
         hk_cap = self.cfg.hotkey_capture
         hk_quick = getattr(self.cfg, "hotkey_quick_fullscreen", DEFAULT_HOTKEY_QUICK_FULLSCREEN)
+        hk_screenshot = getattr(self.cfg, "hotkey_screenshot", DEFAULT_HOTKEY_SCREENSHOT)
         hk_rec = getattr(self.cfg, "hotkey_record_fullscreen", DEFAULT_HOTKEY_RECORD_FULLSCREEN)
         hk_stop = getattr(self.cfg, "hotkey_stop_recording", DEFAULT_HOTKEY_STOP_RECORDING)
 
-        help_html = tr("help_content", hk_capture=hk_cap, hk_quick=hk_quick, hk_rec_fs=hk_rec, hk_stop=hk_stop)
+        help_html = tr("help_content", hk_capture=hk_cap, hk_quick=hk_quick, hk_screenshot=hk_screenshot, hk_rec_fs=hk_rec, hk_stop=hk_stop)
         browser.setHtml(help_html)
         layout.addWidget(browser)
 
@@ -1278,6 +1329,7 @@ class SettingsDialog(QDialog):
         old_language = getattr(self.cfg, "language", "auto")
         self.cfg.hotkey_capture = self.edit_hotkey_capture.text().strip()
         self.cfg.hotkey_quick_fullscreen = self.edit_hotkey_quick_screen.text().strip()
+        self.cfg.hotkey_screenshot = self.edit_hotkey_screenshot.text().strip() or DEFAULT_HOTKEY_SCREENSHOT
         self.cfg.hotkey_record_fullscreen = self.edit_hotkey_record_fs.text().strip()
         self.cfg.hotkey_stop_recording = self.edit_hotkey_stop.text().strip()
         if hasattr(self, "edit_hotkey_highlight"):

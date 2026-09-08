@@ -28,7 +28,7 @@ from PyQt6.QtGui import (
 )
 
 from datetime import datetime
-from config import ConfigManager
+from config import ConfigManager, DEFAULT_HOTKEY_SCREENSHOT
 from ui.overlay import OverlayWindow
 from ui.settings_dialog import SettingsDialog
 from utils.hotkey_manager import GlobalHotkeyManager
@@ -364,11 +364,13 @@ class FramioApp(QObject):
         self.hotkey_mgr = GlobalHotkeyManager(
             hotkey_capture=self.cfg.hotkey_capture,
             hotkey_quick_fullscreen=getattr(self.cfg, "hotkey_quick_fullscreen", "Ctrl+Print Screen"),
+            hotkey_screenshot=getattr(self.cfg, "hotkey_screenshot", DEFAULT_HOTKEY_SCREENSHOT),
             hotkey_record_fullscreen=getattr(self.cfg, "hotkey_record_fullscreen", "Ctrl+Shift+F9"),
             hotkey_stop_recording=getattr(self.cfg, "hotkey_stop_recording", "Ctrl+Shift+F10")
         )
         self.hotkey_mgr.capture_triggered.connect(self.trigger_capture)
         self.hotkey_mgr.quick_fullscreen_triggered.connect(self.quick_fullscreen_capture)
+        self.hotkey_mgr.screenshot_triggered.connect(self.quick_fullscreen_capture)
         self.hotkey_mgr.record_fullscreen_triggered.connect(self.start_fullscreen_recording)
         self.hotkey_mgr.stop_recording_triggered.connect(self.stop_all_recordings)
         self.hotkey_mgr.start()
@@ -670,12 +672,14 @@ class FramioApp(QObject):
             self.tray.setIcon(make_app_icon(is_recording=False))
             cap_key = self.cfg.hotkey_capture
             quick_key = getattr(self.cfg, "hotkey_quick_fullscreen", "Ctrl+Print Screen")
+            screenshot_key = getattr(self.cfg, "hotkey_screenshot", DEFAULT_HOTKEY_SCREENSHOT)
             fs_key = getattr(self.cfg, "hotkey_record_fullscreen", "Ctrl+Shift+F9")
             stop_key = getattr(self.cfg, "hotkey_stop_recording", "Ctrl+Shift+F10")
             self.tray.setToolTip(
                 f"{tr('app_title')}\n"
                 f"{tr('tray_hotkey_capture', key=cap_key)}\n"
                 f"{tr('tray_hotkey_quick_screen', key=quick_key)}\n"
+                f"{tr('tray_hotkey_screenshot', key=screenshot_key)}\n"
                 f"{tr('tray_hotkey_fullscreen', key=fs_key)}\n"
                 f"{tr('tray_hotkey_stop', key=stop_key)}\n"
                 f"{tr('tray_ready')}"
@@ -730,6 +734,11 @@ class FramioApp(QObject):
         act_quick_screen = QAction(tr("tray_menu_quick_fullscreen", key=quick_key), menu)
         act_quick_screen.triggered.connect(self.quick_fullscreen_capture)
         menu.addAction(act_quick_screen)
+
+        screenshot_key = getattr(self.cfg, "hotkey_screenshot", DEFAULT_HOTKEY_SCREENSHOT)
+        act_screenshot = QAction(tr("tray_menu_screenshot", key=screenshot_key), menu)
+        act_screenshot.triggered.connect(self.quick_fullscreen_capture)
+        menu.addAction(act_screenshot)
 
         fs_key = getattr(self.cfg, "hotkey_record_fullscreen", "Ctrl+Shift+F9")
         act_fullscreen = QAction(tr("tray_menu_rec_fullscreen", key=fs_key), menu)
@@ -859,6 +868,7 @@ class FramioApp(QObject):
         self.hotkey_mgr.update_hotkeys(
             capture=self.cfg.hotkey_capture,
             quick_fullscreen=getattr(self.cfg, "hotkey_quick_fullscreen", "Ctrl+Print Screen"),
+            screenshot=getattr(self.cfg, "hotkey_screenshot", DEFAULT_HOTKEY_SCREENSHOT),
             record_fullscreen=getattr(self.cfg, "hotkey_record_fullscreen", "Ctrl+Shift+F9"),
             stop_recording=getattr(self.cfg, "hotkey_stop_recording", "Ctrl+Shift+F10")
         )

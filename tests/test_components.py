@@ -959,6 +959,17 @@ def test_video_and_gif_recorders(tmp_path):
 
 def test_hotkey_parsing():
     print("[TEST] Тестирование разбора горячих клавиш...")
+    from config import DEFAULT_HOTKEY_SCREENSHOT
+    from utils.hotkey_manager import GlobalHotkeyManager
+
+    # Print Screen должен делать быстрый снимок всего экрана без оверлея.
+    assert DEFAULT_HOTKEY_SCREENSHOT == "Print Screen"
+    mods_default, vk_default = parse_hotkey_string(DEFAULT_HOTKEY_SCREENSHOT)
+    assert mods_default == 0
+    assert vk_default == 0x2C
+    manager = GlobalHotkeyManager(hotkey_screenshot=DEFAULT_HOTKEY_SCREENSHOT)
+    assert manager.hotkey_screenshot == "Print Screen"
+
     mods, vk = parse_hotkey_string("Ctrl+Shift+Print Screen")
     assert vk == 0x2C  # VK_SNAPSHOT
     assert mods > 0
@@ -1299,12 +1310,40 @@ def test_hotkey_recorder_button():
     assert btn.text() == "Назначить"
     assert not btn.is_recording
 
+    # Пока пользователь назначает хоткей, глобальный обработчик не должен
+    # превратить Print Screen в настоящий снимок.
+    from types import SimpleNamespace
+
+    class FakeHotkeyManager:
+        def __init__(self):
+            self.suspend_calls = 0
+            self.resume_calls = []
+
+        def suspend(self):
+            self.suspend_calls += 1
+            return True
+
+        def resume(self, was_active):
+            self.resume_calls.append(was_active)
+
+    app = QApplication.instance()
+    old_app_instance = getattr(app, "app_instance", None)
+    fake_manager = FakeHotkeyManager()
+    app.app_instance = SimpleNamespace(hotkey_mgr=fake_manager)
+
+    # Пауза/возврат глобального обработчика во время назначения.
+    btn._suspend_global_hotkeys()
+    assert fake_manager.suspend_calls == 1
+    btn._restore_global_hotkeys()
+    assert fake_manager.resume_calls == [True]
+
     # Старт записи
     btn._start_recording()
     assert btn.is_recording
     assert btn.text() == "Нажмите..."
 
     # Эмуляция нажатия Ctrl
+    btn._start_recording()
     ev_ctrl = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Control, Qt.KeyboardModifier.ControlModifier)
     btn.keyPressEvent(ev_ctrl)
 
@@ -1339,6 +1378,14 @@ def test_hotkey_recorder_button():
     btn.keyReleaseEvent(ev_prt_rel)
     assert not btn.is_recording
     assert edit.text() == "Print Screen"
+
+    if old_app_instance is None:
+        try:
+            del app.app_instance
+        except AttributeError:
+            pass
+    else:
+        app.app_instance = old_app_instance
 
     print("  -> HotkeyRecorderButton корректно перехватывает комбинации и одиночный Print Screen.")
 

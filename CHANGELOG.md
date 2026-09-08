@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.5] - 2026-09-08
+
+### English
+
+Added a standalone `Print Screen` hotkey for fullscreen screenshots.
+
+- Press `Print Screen` to save the full desktop directly to the screenshots folder.
+- No area selection or save dialog is shown.
+- The existing area-capture and `Ctrl+Print Screen` shortcuts remain available.
+
+### Русский
+
+Добавлена отдельная горячая клавиша `Print Screen` для полного скриншота.
+
+- Нажмите `Print Screen`, чтобы сразу сохранить весь рабочий стол в папку скриншотов.
+- Выбор области и диалог сохранения не открываются.
+- Захват области и сочетание `Ctrl+Print Screen` продолжают работать отдельно.
+
 ## [1.0.4] - 2026-09-08
 
 ### English

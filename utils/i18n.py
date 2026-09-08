@@ -22,8 +22,10 @@ TRANSLATIONS = {
         "tray_hotkey_fullscreen": "• Запись экрана: {key}",
         "tray_hotkey_stop": "• Остановка записи: {key}",
         "tray_hotkey_quick_screen": "• Быстрый полный скриншот: {key}",
+        "tray_hotkey_screenshot": "• Обычный скриншот всего экрана: {key}",
         "tray_menu_capture": "Сделать скриншот ({key})",
         "tray_menu_quick_fullscreen": "Быстрый скриншот экрана ({key})",
+        "tray_menu_screenshot": "Обычный скриншот всего экрана ({key})",
         "tray_menu_rec_fullscreen": "Записать весь экран ({key})",
         "tray_menu_rec_video": "Записать видео области MP4",
         "tray_menu_rec_gif": "Записать GIF области",
@@ -295,6 +297,8 @@ TRANSLATIONS = {
         "settings_hotkeys_group": "Глобальные комбинации клавиш",
         "settings_hk_capture": "Захват области экрана (скриншот):",
         "settings_hk_quick_screen": "Быстрый скриншот всего экрана сразу в папку:",
+        "settings_hk_screenshot": "Обычный скриншот всего экрана:",
+        "settings_hk_screenshot_desc": "Сохраняет весь экран сразу в папку скриншотов без выделения и диалога",
         "settings_hk_rec_fs": "Запись всего экрана (видео):",
         "settings_hk_stop_rec": "Остановка активной записи экрана:",
 
@@ -335,6 +339,7 @@ TRANSLATIONS = {
 <ul>
   <li><b>Захват области:</b> Нажмите <code>{hk_capture}</code> или кликните по иконке в трее. Зажмите левую кнопку мыши и выделите нужную область экрана.</li>
   <li><b>Быстрый скриншот всего экрана:</b> Нажмите <code>{hk_quick}</code>. Снимок всех мониторов мгновенно сохранится в папку со скриншотами и скопируется в буфер обмена — без открытия рамок и лишних кликов!</li>
+  <li><b>Обычный Print Screen:</b> Нажмите <code>{hk_screenshot}</code>, чтобы сохранить полный экран в папку скриншотов без выбора области и диалога сохранения.</li>
   <li><b>Точная подгонка:</b> Потяните за маркеры по краям рамки для изменения размера или зажмите центр (при активном инструменте «Перемещение») для сдвига выделения.</li>
   <li><b>Быстрые действия:</b> <code>Ctrl+C</code> — копировать в буфер обмена, <code>Ctrl+S</code> — сохранить в файл, <code>Esc</code> — закрыть.</li>
 </ul>
@@ -737,8 +742,10 @@ TRANSLATIONS = {
         "tray_hotkey_fullscreen": "• Screen Recording: {key}",
         "tray_hotkey_stop": "• Stop Recording: {key}",
         "tray_hotkey_quick_screen": "• Quick Fullscreen Screenshot: {key}",
+        "tray_hotkey_screenshot": "• Standard fullscreen screenshot: {key}",
         "tray_menu_capture": "Capture Area ({key})",
         "tray_menu_quick_fullscreen": "Quick Fullscreen Screenshot ({key})",
+        "tray_menu_screenshot": "Standard Fullscreen Screenshot ({key})",
         "tray_menu_rec_fullscreen": "Record Entire Screen ({key})",
         "tray_menu_rec_video": "Record Area Video MP4",
         "tray_menu_rec_gif": "Record Area GIF",
@@ -1011,6 +1018,8 @@ TRANSLATIONS = {
         "settings_hotkeys_group": "Global Hotkey Shortcuts",
         "settings_hk_capture": "Screen area capture (screenshot):",
         "settings_hk_quick_screen": "Quick fullscreen screenshot to folder:",
+        "settings_hk_screenshot": "Standard fullscreen screenshot:",
+        "settings_hk_screenshot_desc": "Saves the entire screen directly to the screenshots folder without selection or a dialog",
         "settings_hk_rec_fs": "Record entire screen (video):",
         "settings_hk_stop_rec": "Stop active screen recording:",
 
@@ -1051,6 +1060,7 @@ TRANSLATIONS = {
 <ul>
   <li><b>Capture Area:</b> Press <code>{hk_capture}</code> or click the tray icon. Click and drag left mouse button to select any screen area.</li>
   <li><b>Quick Fullscreen Screenshot:</b> Press <code>{hk_quick}</code>. A screenshot of all monitors will be saved directly into your screenshots folder and copied to your clipboard instantly — without showing overlay or extra clicks!</li>
+  <li><b>Standard Print Screen:</b> Press <code>{hk_screenshot}</code> to save the full screen into the screenshots folder without selecting an area or opening a save dialog.</li>
   <li><b>Fine Tuning:</b> Drag handles on the borders to resize, or drag from the center (with the Move tool selected) to reposition.</li>
   <li><b>Quick Shortcuts:</b> <code>Ctrl+C</code> to copy, <code>Ctrl+S</code> to save to disk, <code>Esc</code> to cancel.</li>
 </ul>

@@ -73,6 +73,7 @@ def parse_hotkey_string(hotkey_str: str):
 class GlobalHotkeyManager(QObject):
     capture_triggered = pyqtSignal()
     quick_fullscreen_triggered = pyqtSignal()
+    screenshot_triggered = pyqtSignal()
     record_fullscreen_triggered = pyqtSignal()
     stop_recording_triggered = pyqtSignal()
     hotkey_triggered = pyqtSignal()  # Псевдоним для совместимости с кодом захвата области
@@ -81,14 +82,17 @@ class GlobalHotkeyManager(QObject):
     ID_RECORD_FULLSCREEN = 102
     ID_STOP_RECORDING = 103
     ID_QUICK_FULLSCREEN = 104
+    ID_SCREENSHOT = 105
 
     def __init__(self, hotkey_capture="Ctrl+Shift+Print Screen",
                  hotkey_quick_fullscreen="Ctrl+Print Screen",
                  hotkey_record_fullscreen="Ctrl+Shift+F9",
-                 hotkey_stop_recording="Ctrl+Shift+F10", parent=None):
+                 hotkey_stop_recording="Ctrl+Shift+F10", parent=None,
+                 hotkey_screenshot="Print Screen"):
         super().__init__(parent)
         self.hotkey_capture = hotkey_capture
         self.hotkey_quick_fullscreen = hotkey_quick_fullscreen
+        self.hotkey_screenshot = hotkey_screenshot
         self.hotkey_record_fullscreen = hotkey_record_fullscreen
         self.hotkey_stop_recording = hotkey_stop_recording
         self.hotkey_str = hotkey_capture
@@ -123,17 +127,32 @@ class GlobalHotkeyManager(QObject):
                 pass
             self._use_keyboard_lib = False
 
+    def suspend(self) -> bool:
+        """Временно отключает глобальные хуки и возвращает их прежнее состояние."""
+        was_active = bool(
+            (self._thread and self._thread.is_alive()) or self._use_keyboard_lib
+        )
+        self.stop()
+        return was_active
+
+    def resume(self, was_active: bool) -> None:
+        """Восстанавливает глобальные хуки после временной паузы."""
+        if was_active:
+            self.start()
+
     def update_hotkey(self, new_hotkey_str):
         self.hotkey_capture = new_hotkey_str
         self.hotkey_str = new_hotkey_str
         self.start()
 
-    def update_hotkeys(self, capture=None, quick_fullscreen=None, record_fullscreen=None, stop_recording=None):
+    def update_hotkeys(self, capture=None, quick_fullscreen=None, record_fullscreen=None, stop_recording=None, screenshot=None):
         if capture:
             self.hotkey_capture = capture
             self.hotkey_str = capture
         if quick_fullscreen:
             self.hotkey_quick_fullscreen = quick_fullscreen
+        if screenshot:
+            self.hotkey_screenshot = screenshot
         if record_fullscreen:
             self.hotkey_record_fullscreen = record_fullscreen
         if stop_recording:
@@ -148,6 +167,7 @@ class GlobalHotkeyManager(QObject):
         hotkey_configs = [
             (self.ID_CAPTURE, self.hotkey_capture, self.capture_triggered),
             (self.ID_QUICK_FULLSCREEN, self.hotkey_quick_fullscreen, self.quick_fullscreen_triggered),
+            (self.ID_SCREENSHOT, self.hotkey_screenshot, self.screenshot_triggered),
             (self.ID_RECORD_FULLSCREEN, self.hotkey_record_fullscreen, self.record_fullscreen_triggered),
             (self.ID_STOP_RECORDING, self.hotkey_stop_recording, self.stop_recording_triggered),
         ]
@@ -263,4 +283,3 @@ class GlobalHotkeyManager(QObject):
             print(f"[HotkeyManager] Keyboard library hook активен для: {kb_hotkey} (suppress={suppress})")
         except Exception as e:
             print(f"[HotkeyManager] Ошибка fallback keyboard hook: {e}")
-

@@ -76,6 +76,7 @@ Framio sends images only to the search engine you choose. Yandex Images receives
 | --- | --- |
 | Capture an area | `Ctrl+Shift+Print Screen` |
 | Quick screenshot of all screens | `Ctrl+Print Screen` |
+| Standard fullscreen screenshot to the screenshots folder | `Print Screen` |
 | Record all screens | `Ctrl+Shift+F9` |
 | Stop active recording | `Ctrl+Shift+F10` |
 | Copy selected areas | `Ctrl+C` |
@@ -192,6 +193,7 @@ Framio отправляет изображение только в выбран�
 | --- | --- |
 | Выделить область | `Ctrl+Shift+Print Screen` |
 | Быстрый скриншот всех экранов | `Ctrl+Print Screen` |
+| Обычный скриншот всего экрана в папку | `Print Screen` |
 | Записать все экраны | `Ctrl+Shift+F9` |
 | Остановить запись | `Ctrl+Shift+F10` |
 | Скопировать выбранные области | `Ctrl+C` |
