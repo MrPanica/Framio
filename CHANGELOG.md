@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.0.3] - 2026-09-08
+
+### English
+
+Google Lens search reliability fix.
+
+- Stopped opening Google’s short-lived private `vsrid` result links, which could show “Visual search request is no longer valid”.
+- Google Lens now opens its official page, copies the screenshot to the Windows clipboard, and attempts a guarded automatic `Ctrl+V`; manual paste remains available.
+- Yandex Images still receives the PNG directly, and no intermediate image-hosting service is used.
+
+| Build | FFmpeg | Main difference |
+| --- | --- | --- |
+| Folder portable | Included | Fastest start; move the complete folder, including `_internal`. |
+| Full single-file | Included | One EXE; unpacks private files into `%TEMP%` at startup. |
+| Lite single-file | Not bundled | Smaller EXE; no FFmpeg-dependent audio muxing or post-processing. |
+
+### Русский
+
+Исправлена надёжность поиска через Google Lens.
+
+- Убрано открытие короткоживущих внутренних ссылок Google с `vsrid`, из-за которых появлялось сообщение «Запрос для визуального поиска больше не действителен».
+- Google Lens теперь открывается на официальной странице, снимок помещается в буфер обмена Windows, а приложение осторожно пытается выполнить `Ctrl+V`; ручная вставка остаётся доступной.
+- Яндекс.Картинки по-прежнему получает PNG напрямую, промежуточные сервисы размещения изображений не используются.
+
+| Сборка | FFmpeg | Главное отличие |
+| --- | --- | --- |
+| Папочная portable | Включён | Быстрее запускается; переносить нужно всю папку, включая `_internal`. |
+| Полная одним файлом | Включён | Один EXE; при запуске распаковывает внутренние файлы в `%TEMP%`. |
+| Lite одним файлом | Не включён | Меньше EXE; нет функций с FFmpeg для сведения звука и постобработки. |
+
 ## [1.0.2] - 2026-09-08
 
 ### English

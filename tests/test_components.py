@@ -3117,8 +3117,8 @@ def test_double_click_selects_window_below_topmost_overlay():
     print("  -> Окно под topmost overlay найдено, hover-контур не используется, двойной клик выбирает его целиком.")
 
 
-def test_image_search_uploads_only_to_selected_search_engine():
-    print("[TEST] Проверка прямой отправки изображения только в Google Lens или Яндекс Картинки...")
+def test_image_search_uses_google_clipboard_flow_and_direct_yandex_upload():
+    print("[TEST] Проверка Google Lens через буфер и прямой отправки в Яндекс.Картинки...")
     from unittest.mock import patch
     import utils.image_search as image_search
 
@@ -3136,11 +3136,6 @@ def test_image_search_uploads_only_to_selected_search_engine():
 
     def fake_post(url, **kwargs):
         calls.append((url, kwargs))
-        if url == "https://lens.google.com/v3/upload":
-            return Response(
-                303,
-                headers={"Location": "https://www.google.com/search?vsrid=test"},
-            )
         if url == "https://yandex.ru/images/search":
             return Response(
                 200,
@@ -3156,15 +3151,13 @@ def test_image_search_uploads_only_to_selected_search_engine():
         raise AssertionError(f"unexpected upload target: {url}")
 
     with patch.object(image_search.requests, "post", side_effect=fake_post), \
-            patch.object(image_search, "open_in_browser", side_effect=lambda url: opened.append(url) or True):
+            patch.object(image_search, "open_in_browser", side_effect=lambda url: opened.append(url) or True), \
+            patch.object(image_search, "_paste_into_browser_after_open"):
         image_search.search_by_image("google", b"test-png")
         image_search.search_by_image("yandex", b"test-png")
 
-    assert [url for url, _ in calls] == [
-        "https://lens.google.com/v3/upload",
-        "https://yandex.ru/images/search",
-    ]
-    assert "https://www.google.com/search?vsrid=test" in opened
+    assert [url for url, _ in calls] == ["https://yandex.ru/images/search"]
+    assert opened[0] == "https://lens.google.com/"
     assert opened[-1].startswith("https://yandex.ru/images/search?rpt=imageview&")
     assert "cbir_id=test-cbir-id" in opened[-1]
     assert "url=https%3A%2F%2Favatars.mds.yandex.net%2Ftest%2Forig" in opened[-1]
@@ -3173,7 +3166,8 @@ def test_image_search_uploads_only_to_selected_search_engine():
     for forbidden_host in ("freeimage.host", "uguu.se", "tmpfiles.org"):
         assert forbidden_host not in source
     assert "FRAMIO_FREEIMAGE_API_KEY" not in source
-    print("  -> Google Lens и Яндекс получают изображение напрямую; промежуточные хостинги и ключи отсутствуют.")
+    assert "v3/upload" not in source
+    print("  -> Google Lens открывается через буфер, Яндекс получает PNG напрямую; промежуточные хостинги отсутствуют.")
 
 
 if __name__ == "__main__":
@@ -3247,7 +3241,7 @@ if __name__ == "__main__":
         test_single_recording_closes_overlay_when_no_regions_remain()
         test_recording_start_hides_selection_overlay()
         test_double_click_selects_window_below_topmost_overlay()
-        test_image_search_uploads_only_to_selected_search_engine()
+        test_image_search_uses_google_clipboard_flow_and_direct_yandex_upload()
         import time
         time.sleep(0.5)
         QApplication.processEvents()

@@ -68,7 +68,7 @@ Use **Copy** to place an image or file in the Windows clipboard. Use **View** or
 
 ### Reverse image search
 
-Framio sends the captured PNG directly to the search engine you choose: Google Lens or Yandex Images. It does not use FreeImage, Uguu, tmpfiles, or any other intermediate image-hosting service. If the direct upload is unavailable, Framio opens the search page and keeps the image in the clipboard so you can paste it there yourself.
+Framio sends images only to the search engine you choose. Yandex Images receives the PNG directly. For Google Lens, Framio opens the official Lens page, puts the PNG in the Windows clipboard, and tries to paste it automatically; if needed, press `Ctrl+V`. Framio does not use FreeImage, Uguu, tmpfiles, or any other intermediate image-hosting service. Google’s private `vsrid` result links are not reused because they can become invalid outside the upload session.
 
 ### Default hotkeys
 
@@ -184,7 +184,7 @@ python main.py
 
 ### Поиск по картинке
 
-Framio отправляет PNG напрямую в выбранный сервис — Google Lens или Яндекс.Картинки. FreeImage, Uguu, tmpfiles и другие промежуточные сервисы размещения изображений не используются. Если прямая отправка недоступна, Framio открывает страницу поиска и оставляет изображение в буфере обмена, чтобы его можно было вставить вручную.
+Framio отправляет изображение только в выбранный сервис. Яндекс.Картинки получает PNG напрямую. Для Google Lens Framio открывает официальную страницу Lens, кладёт PNG в буфер обмена Windows и пытается вставить его автоматически; если вставка не сработала, нажмите `Ctrl+V`. FreeImage, Uguu, tmpfiles и другие промежуточные сервисы размещения изображений не используются. Внутренние ссылки Google с `vsrid` не применяются, потому что вне исходной сессии загрузки они могут стать недействительными.
 
 ### Горячие клавиши по умолчанию
 

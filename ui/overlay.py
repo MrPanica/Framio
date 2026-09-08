@@ -3289,7 +3289,10 @@ class OverlayWindow(QWidget):
             saved_info = f"\nСохранён: {filename}"
 
         # 2. Копирование в буфер обмена
-        if self.cfg.auto_copy_to_clipboard:
+        # Google Lens надёжно принимает снимок через официальный интерфейс
+        # вставки. Кладём его в буфер всегда для этого действия, даже если
+        # обычное автоматическое копирование отключено в настройках.
+        if self.cfg.auto_copy_to_clipboard or engine == "google":
             QApplication.clipboard().setImage(img)
 
         # 3. Звук захвата
@@ -3305,9 +3308,16 @@ class OverlayWindow(QWidget):
 
         # 5. Уведомление
         engine_name = "Google Lens" if engine == "google" else "Яндекс Картинки"
+        if engine == "google":
+            notification_body = tr("image_search_google_preparing") + saved_info
+        else:
+            notification_body = tr(
+                "image_search_direct_preparing",
+                engine=engine_name,
+            ) + saved_info
         self._notify(
             f"Поиск в {engine_name}",
-            f"Скриншот отправлен в {engine_name}.{saved_info}\nРезультаты открываются в браузере.",
+            notification_body,
             QSystemTrayIcon.MessageIcon.Information,
             3500
         )
