@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.6] - 2026-09-08
+
+### English
+
+Fixed hotkey assignment in Settings.
+
+- Keyboard events are now captured correctly by the shortcut recorder.
+- `Print Screen` can be assigned inside a combination without triggering a screenshot.
+- The previous shortcut is restored when assigning is cancelled.
+
+### Русский
+
+Исправлено назначение горячих клавиш в настройках.
+
+- Кнопка назначения теперь корректно принимает нажатия клавиш.
+- `Print Screen` можно назначить частью комбинации без запуска скриншота.
+- При отмене назначения возвращается предыдущая комбинация.
+
 ## [1.0.5] - 2026-09-08
 
 ### English

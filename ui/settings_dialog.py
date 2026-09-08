@@ -9,7 +9,7 @@
 import sys
 import os
 from pathlib import Path
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize, QEvent
 from PyQt6.QtGui import QKeyEvent, QColor, QIcon
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,

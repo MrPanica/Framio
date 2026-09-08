@@ -1342,21 +1342,18 @@ def test_hotkey_recorder_button():
     assert btn.is_recording
     assert btn.text() == "Нажмите..."
 
-    # Эмуляция нажатия Ctrl
-    btn._start_recording()
+    # Эмуляция реального пути: Qt передаёт события в eventFilter целевого поля.
     ev_ctrl = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Control, Qt.KeyboardModifier.ControlModifier)
-    btn.keyPressEvent(ev_ctrl)
+    assert btn.eventFilter(edit, ev_ctrl) is True
 
     # Эмуляция нажатия F9 при удержании Ctrl
     ev_f9 = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_F9, Qt.KeyboardModifier.ControlModifier)
-    btn.keyPressEvent(ev_f9)
+    assert btn.eventFilter(edit, ev_f9) is True
     assert edit.text() == "Ctrl+F9"
 
     # Эмуляция отпускания F9 и Ctrl
     ev_rel_f9 = QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_F9, Qt.KeyboardModifier.ControlModifier)
-    btn.keyReleaseEvent(ev_rel_f9)
-    ev_rel_ctrl = QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_Control, Qt.KeyboardModifier.NoModifier)
-    btn.keyReleaseEvent(ev_rel_ctrl)
+    assert btn.eventFilter(edit, ev_rel_f9) is True
 
     # Запись завершена
     assert not btn.is_recording
