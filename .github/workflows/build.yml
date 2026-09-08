@@ -51,7 +51,8 @@ jobs:
             'models/shapes.py',
             'recorder/capture_worker.py',
             'utils/capture_mask.py',
-            'utils/i18n.py'
+            'utils/i18n.py',
+            'utils/image_search.py'
           )
           python -m py_compile $files
 

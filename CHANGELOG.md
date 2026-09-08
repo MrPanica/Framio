@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.0.2] - 2026-09-08
+
+### English
+
+Privacy and release documentation update.
+
+- Reverse image search now uploads directly to Google Lens or Yandex Images.
+- Removed all intermediate image-hosting services and the old FreeImage API key path.
+- Documented the differences between folder portable, full single-file, and Lite builds in every release section.
+
+| Build | FFmpeg | Main difference |
+| --- | --- | --- |
+| Folder portable | Included | Fastest start; move the complete folder, including `_internal`. |
+| Full single-file | Included | One EXE; unpacks private files into `%TEMP%` at startup. |
+| Lite single-file | Not bundled | Smaller EXE; no FFmpeg-dependent audio muxing or post-processing. |
+
+### Русский
+
+Обновление приватности и описания сборок.
+
+- Поиск по картинке теперь отправляет изображение напрямую в Google Lens или Яндекс.Картинки.
+- Удалены все промежуточные сервисы размещения изображений и старый путь с ключом FreeImage.
+- Различия между папочной portable-, полной однофайловой и Lite-сборками указаны в каждом разделе релиза.
+
+| Сборка | FFmpeg | Главное отличие |
+| --- | --- | --- |
+| Папочная portable | Включён | Быстрее запускается; переносить нужно всю папку, включая `_internal`. |
+| Полная одним файлом | Включён | Один EXE; при запуске распаковывает внутренние файлы в `%TEMP%`. |
+| Lite одним файлом | Не включён | Меньше EXE; нет функций с FFmpeg для сведения звука и постобработки. |
+
 ## [1.0.1] - 2026-09-08
 
 ### English
@@ -11,6 +41,12 @@ Maintenance release with recording, multi-zone, mask, startup, and release-build
 - Removed unused Qt PDF, software OpenGL, and Poppler runtime files from Windows builds.
 - Updated the Windows release workflow to publish the matching changelog section.
 
+| Build | FFmpeg | Main difference |
+| --- | --- | --- |
+| Folder portable | Included | Fastest start; move the complete folder, including `_internal`. |
+| Full single-file | Included | One EXE; unpacks private files into `%TEMP%` at startup. |
+| Lite single-file | Not bundled | Smaller EXE; no FFmpeg-dependent audio muxing or post-processing. |
+
 ### Русский
 
 Технический релиз с исправлениями записи, нескольких зон, масок, запуска и сборки.
@@ -19,6 +55,12 @@ Maintenance release with recording, multi-zone, mask, startup, and release-build
 - Блокировка повторного запуска стала атомарной на Windows.
 - Из Windows-сборок убраны неиспользуемые Qt PDF, программный OpenGL и Poppler-файлы.
 - Workflow релиза теперь публикует соответствующий раздел changelog.
+
+| Сборка | FFmpeg | Главное отличие |
+| --- | --- | --- |
+| Папочная portable | Включён | Быстрее запускается; переносить нужно всю папку, включая `_internal`. |
+| Полная одним файлом | Включён | Один EXE; при запуске распаковывает внутренние файлы в `%TEMP%`. |
+| Lite одним файлом | Не включён | Меньше EXE; нет функций с FFmpeg для сведения звука и постобработки. |
 
 ## [1.0.0] - 2026-09-08
 
@@ -33,6 +75,12 @@ First public release of Framio.
 - Undo and redo for annotations, masks, and capture-area editing.
 - Portable folder, full single-file, and lightweight single-file Windows builds.
 
+| Build | FFmpeg | Main difference |
+| --- | --- | --- |
+| Folder portable | Included | Fastest start; move the complete folder, including `_internal`. |
+| Full single-file | Included | One EXE; unpacks private files into `%TEMP%` at startup. |
+| Lite single-file | Not bundled | Smaller EXE; no FFmpeg-dependent audio muxing or post-processing. |
+
 ### Русский
 
 Первый публичный релиз Framio.
@@ -43,3 +91,9 @@ First public release of Framio.
 - Панель последних материалов с фильтрами, превью, копированием, открытием и перетаскиванием.
 - Отмена и повтор действий для аннотаций, масок и областей захвата.
 - Папочная, полная сборка одним файлом и облегчённая сборка одним файлом для Windows.
+
+| Сборка | FFmpeg | Главное отличие |
+| --- | --- | --- |
+| Папочная portable | Включён | Быстрее запускается; переносить нужно всю папку, включая `_internal`. |
+| Полная одним файлом | Включён | Один EXE; при запуске распаковывает внутренние файлы в `%TEMP%`. |
+| Lite одним файлом | Не включён | Меньше EXE; нет функций с FFmpeg для сведения звука и постобработки. |

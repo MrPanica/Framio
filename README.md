@@ -2,7 +2,7 @@
 
 Framio is a portable Windows app for taking screenshots and recording screen areas as MP4 or GIF. It can work with one area, several areas, the whole desktop, or a complete application window.
 
-The current release is `1.0.1`. See [CHANGELOG.md](CHANGELOG.md) for the release history.
+The current release is `1.0.2`. See [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## English
 
@@ -66,6 +66,10 @@ Open **Framio — Recent Media** from the tray menu. The panel contains filters 
 
 Use **Copy** to place an image or file in the Windows clipboard. Use **View** or click the preview to open the file with the default Windows application. A preview can also be dragged into a chat, editor, or another application.
 
+### Reverse image search
+
+Framio sends the captured PNG directly to the search engine you choose: Google Lens or Yandex Images. It does not use FreeImage, Uguu, tmpfiles, or any other intermediate image-hosting service. If the direct upload is unavailable, Framio opens the search page and keeps the image in the clipboard so you can paste it there yourself.
+
 ### Default hotkeys
 
 | Action | Keys |
@@ -84,9 +88,11 @@ Change these shortcuts in **Settings → Hotkeys**. The tray menu shows the curr
 
 ### Portable builds
 
-- **Single-file build** — one `Framio.exe`. PyInstaller unpacks its private files into a temporary directory at startup, so no DLL folder needs to be copied. The current full build is about 114 MiB and starts a little slower.
-- **Lite single-file build** — a smaller file without the bundled FFmpeg executable. Basic MP4/GIF recording remains available; FFmpeg-dependent audio muxing and post-processing are not included.
-- **Folder build** — starts faster and does not unpack anything into `%TEMP%`, but the complete `Framio` folder, including `_internal`, must be moved together. The current folder is about 302 MiB.
+| Build | What to copy | FFmpeg | Main difference |
+| --- | --- | --- | --- |
+| Folder portable | The complete `Framio` folder, including `_internal` | Included | Starts fastest and does not unpack into `%TEMP%`; the whole folder must stay together. |
+| Full single-file | One `Framio.exe` | Included | Easiest to carry; unpacks its private files into `%TEMP%` at each start; about 114 MiB. |
+| Lite single-file | One `Framio.exe` | Not bundled | Smaller download; basic MP4/GIF recording remains available, but FFmpeg-dependent audio muxing and post-processing are not included. |
 
 The app keeps `settings.json` and the `Captures` folders next to the executable. Move the whole portable build when changing computers or folders.
 
@@ -114,7 +120,7 @@ The GitHub Actions workflow runs the tests, builds all three Windows packages, u
 
 ## Русский
 
-Текущая версия — `1.0.1`. История изменений находится в [CHANGELOG.md](CHANGELOG.md).
+Текущая версия — `1.0.2`. История изменений находится в [CHANGELOG.md](CHANGELOG.md).
 
 ### Быстрый запуск
 
@@ -176,6 +182,10 @@ python main.py
 
 Кнопка **Копировать** помещает изображение или файл в буфер обмена Windows. Кнопка **Просмотр** и клик по превью открывают файл стандартным приложением Windows. Превью также можно перетащить в чат, редактор или другую программу.
 
+### Поиск по картинке
+
+Framio отправляет PNG напрямую в выбранный сервис — Google Lens или Яндекс.Картинки. FreeImage, Uguu, tmpfiles и другие промежуточные сервисы размещения изображений не используются. Если прямая отправка недоступна, Framio открывает страницу поиска и оставляет изображение в буфере обмена, чтобы его можно было вставить вручную.
+
 ### Горячие клавиши по умолчанию
 
 | Действие | Клавиши |
@@ -194,9 +204,11 @@ python main.py
 
 ### Портативные сборки
 
-- **Один файл** — один `Framio.exe`. При запуске PyInstaller временно распаковывает внутренние файлы, поэтому переносить отдельную папку с DLL не нужно. Полная сборка сейчас занимает около 114 МиБ и запускается немного дольше.
-- **Облегчённая сборка** — один файл без встроенного FFmpeg. Обычная запись MP4/GIF остаётся доступной, но функции, которым нужен FFmpeg, например объединение аудио и постобработка, не входят в эту сборку.
-- **Папочная сборка** — запускается быстрее и ничего не распаковывает в `%TEMP%`, но переносить нужно всю папку `Framio`, включая `_internal`. Текущий размер папки — около 302 МиБ.
+| Сборка | Что переносить | FFmpeg | Главное отличие |
+| --- | --- | --- | --- |
+| Папочная portable | Всю папку `Framio`, включая `_internal` | Включён | Запускается быстрее и не распаковывает файлы в `%TEMP%`; папку нельзя разделять. |
+| Полная одним файлом | Один `Framio.exe` | Включён | Удобнее всего переносить; при каждом запуске распаковывает внутренние файлы в `%TEMP%`; около 114 МиБ. |
+| Lite одним файлом | Один `Framio.exe` | Не включён | Меньше размер; обычная запись MP4/GIF остаётся, но функции с FFmpeg, например сведение звука и постобработка, недоступны. |
 
 `settings.json` и папки `Captures` создаются рядом с exe. Для переноса на другой компьютер переносите всю выбранную portable-сборку.
 
@@ -225,3 +237,7 @@ GitHub Actions запускает тесты, собирает три вариа
 ## License
 
 [Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)](LICENSE)
+
+This notice covers Framio's original source code and original assets. Dependencies bundled with the application keep their own licenses. In particular, PyQt6 is distributed under GPLv3 or a separate commercial license; check those terms before redistributing modified or commercial builds.
+
+Это уведомление относится к оригинальному коду и оригинальным материалам Framio. Вложенные зависимости сохраняют собственные лицензии. В частности, PyQt6 распространяется по GPLv3 или отдельной коммерческой лицензии; перед распространением изменённых или коммерческих сборок нужно учитывать эти условия.

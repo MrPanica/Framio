@@ -9,11 +9,11 @@ import os
 import subprocess
 import webbrowser
 import urllib.parse
-import base64
+import json
 import requests
 
-
-FREEIMAGE_API_KEY = os.environ.get("FRAMIO_FREEIMAGE_API_KEY", "").strip()
+GOOGLE_LENS_UPLOAD_URL = "https://lens.google.com/v3/upload"
+YANDEX_IMAGE_SEARCH_URL = "https://yandex.ru/images/search"
 
 def open_in_browser(url: str) -> bool:
     """Гарантированно открывает URL в браузере по умолчанию в новой вкладке."""
@@ -41,54 +41,66 @@ def open_in_browser(url: str) -> bool:
     return False
 
 
-def upload_image_to_cdn(png_bytes: bytes) -> str | None:
-    """Загружает PNG на быстрый анонимный CDN и возвращает прямую ссылку на файл."""
-    # Провайдер 1: FreeImage.host. Его ключ задаётся только через окружение;
-    # секреты не должны попадать в исходники и публичные сборки.
-    if FREEIMAGE_API_KEY:
-        try:
-            b64 = base64.b64encode(png_bytes).decode("ascii")
-            r = requests.post(
-                "https://freeimage.host/api/1/upload",
-                data={
-                    "key": FREEIMAGE_API_KEY,
-                    "action": "upload",
-                    "source": b64,
-                    "format": "json"
-                },
-                timeout=5
+def _google_lens_search_url(png_bytes: bytes) -> str | None:
+    """Отправляет PNG непосредственно в Google Lens."""
+    try:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 Chrome/124 Safari/537.36"
             )
-            if r.status_code == 200:
-                url = r.json().get("image", {}).get("url")
-                if url:
-                    return url
-        except Exception as e:
-            print(f"[ImageSearch] FreeImage upload failed: {e}")
+        }
+        files = {"encoded_image": ("screenshot.png", png_bytes, "image/png")}
+        response = requests.post(
+            GOOGLE_LENS_UPLOAD_URL,
+            files=files,
+            headers=headers,
+            allow_redirects=False,
+            timeout=10,
+        )
+        if response.status_code in {301, 302, 303, 307, 308}:
+            return response.headers.get("Location") or None
+    except Exception as exc:
+        print(f"[ImageSearch] Google Lens upload failed: {exc}")
+    return None
 
-    # Провайдер 2: Uguu.se (прямой CDN URL, без задержек)
+
+def _yandex_image_search_url(png_bytes: bytes) -> str | None:
+    """Отправляет PNG непосредственно в загрузчик Яндекс.Картинок."""
+    params = {
+        "rpt": "imageview",
+        "format": "json",
+        "request": json.dumps(
+            {"blocks": [{"block": "b-page_type_search-by-image__link"}]},
+            separators=(",", ":"),
+        ),
+    }
+    files = {"upfile": ("screenshot.png", png_bytes, "image/png")}
     try:
-        files = {"files[]": ("screenshot.png", png_bytes, "image/png")}
-        r = requests.post("https://uguu.se/upload.php", files=files, timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            if data.get("success") and data.get("files"):
-                file_url = data["files"][0].get("url")
-                if file_url:
-                    return file_url
-    except Exception as e:
-        print(f"[ImageSearch] Uguu upload failed: {e}")
-
-    # Провайдер 3: tmpfiles.org (резервный прямой CDN)
-    try:
-        files = {"file": ("screenshot.png", png_bytes, "image/png")}
-        r = requests.post("https://tmpfiles.org/api/v1/upload", files=files, timeout=5)
-        if r.status_code == 200:
-            raw_url = r.json().get("data", {}).get("url", "")
-            if raw_url:
-                return raw_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
-    except Exception as e:
-        print(f"[ImageSearch] tmpfiles upload failed: {e}")
-
+        response = requests.post(
+            YANDEX_IMAGE_SEARCH_URL,
+            params=params,
+            files=files,
+            timeout=10,
+        )
+        if response.status_code != 200:
+            return None
+        payload = response.json()
+        for block in payload.get("blocks", []):
+            block_params = block.get("params", {})
+            cbir_id = block_params.get("cbirId")
+            original_url = block_params.get("originalImageUrl")
+            if cbir_id and original_url:
+                query = urllib.parse.urlencode(
+                    {
+                        "rpt": "imageview",
+                        "cbir_id": cbir_id,
+                        "url": original_url,
+                    }
+                )
+                return f"{YANDEX_IMAGE_SEARCH_URL}?{query}"
+    except Exception as exc:
+        print(f"[ImageSearch] Yandex Images upload failed: {exc}")
     return None
 
 
@@ -99,28 +111,7 @@ def search_by_image(engine: str, png_bytes: bytes, notify_func=None):
     """
     try:
         if engine == "google":
-            target_url = None
-            # Шаг 1: Загружаем на быстрый CDN и открываем uploadbyurl напрямую в браузере.
-            # Это позволяет Google Lens в браузере создать собственную валидную сессию без ошибки истекшего токена.
-            cdn_url = upload_image_to_cdn(png_bytes)
-            if cdn_url:
-                enc = urllib.parse.quote(cdn_url, safe="")
-                target_url = f"https://lens.google.com/uploadbyurl?url={enc}"
-
-            if not target_url:
-                # Резервная попытка через прямой Google Lens API
-                try:
-                    headers = {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                    }
-                    files = {"encoded_image": ("screenshot.png", png_bytes, "image/png")}
-                    res = requests.post("https://lens.google.com/v3/upload", files=files, headers=headers, allow_redirects=False, timeout=6)
-                    loc = res.headers.get("Location")
-                    if loc:
-                        target_url = loc
-                except Exception as e:
-                    print(f"[ImageSearch] Google direct upload failed: {e}")
-
+            target_url = _google_lens_search_url(png_bytes)
             if target_url:
                 open_in_browser(target_url)
             else:
@@ -134,12 +125,7 @@ def search_by_image(engine: str, png_bytes: bytes, notify_func=None):
 
         else:
             # Яндекс Картинки
-            target_url = None
-            cdn_url = upload_image_to_cdn(png_bytes)
-            if cdn_url:
-                enc = urllib.parse.quote(cdn_url, safe="")
-                target_url = f"https://yandex.ru/images/search?rpt=imageview&url={enc}"
-
+            target_url = _yandex_image_search_url(png_bytes)
             if target_url:
                 open_in_browser(target_url)
             else:
