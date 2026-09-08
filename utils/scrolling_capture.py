@@ -11,11 +11,11 @@
 5. Компактный плавающий HUD управления со счетчиком кадров, высоты и подсказками.
 """
 
+from __future__ import annotations
+
 import sys
 import ctypes
 from ctypes import wintypes
-import cv2
-import numpy as np
 from pathlib import Path
 from datetime import datetime
 
@@ -288,7 +288,7 @@ class ScrollingCaptureEngine(QObject):
     - Опциональную автоматическую прокрутку
     """
     progress = pyqtSignal(int, int)  # (frames_captured, total_height_px)
-    finished = pyqtSignal(np.ndarray)  # final stacked BGR numpy array
+    finished = pyqtSignal(object)  # final stacked BGR numpy array
     error = pyqtSignal(str)
     cancelled = pyqtSignal()
 
@@ -318,6 +318,8 @@ class ScrollingCaptureEngine(QObject):
 
     def start(self):
         """Запуск захвата первого кадра, отображение направляющей рамки и запуск мониторинга скролла."""
+        import numpy as np
+
         rx, ry, rw, rh = self.region
         try:
             img0 = safe_grab_screen_bgr(rx, ry, rw, rh, self.target_hwnd)
@@ -413,6 +415,8 @@ class ScrollingCaptureEngine(QObject):
 
     def _poll_scroll(self):
         """Периодическая проверка изменения экрана при прокрутке колесом мыши."""
+        import numpy as np
+
         if not self.is_running:
             return
         rx, ry, rw, rh = self.region
@@ -464,6 +468,8 @@ class ScrollingCaptureEngine(QObject):
         высокоточный многополосный шаблонный поиск OpenCV matchTemplate.
         Бесшовно склеивает изображение вниз с точностью до 1 пикселя.
         """
+        import numpy as np
+
         if curr_bgr is None or curr_bgr.size == 0 or self.accumulated_bgr is None:
             return False
 
@@ -502,6 +508,9 @@ class ScrollingCaptureEngine(QObject):
         Многополосный высокоточный алгоритм вычисления вертикального сдвига dy.
         Устойчив к плавающим шапкам сайтов (sticky navbars) и скроллбарам.
         """
+        import cv2
+        import numpy as np
+
         H, W = prev_bgr.shape[:2]
         g_prev = cv2.cvtColor(prev_bgr, cv2.COLOR_BGR2GRAY)
         g_curr = cv2.cvtColor(curr_bgr, cv2.COLOR_BGR2GRAY)

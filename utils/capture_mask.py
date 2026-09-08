@@ -2,7 +2,7 @@
 """Общие операции с маской захвата для скриншотов, MP4 и GIF."""
 
 from PyQt6.QtCore import QPointF, QRectF
-from PyQt6.QtGui import QImage, QPainter, QPainterPath, QTransform
+from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath, QTransform
 
 
 def _mask_list(shapes):
@@ -44,7 +44,10 @@ def create_mask_image(shape, width: int, height: int, region) -> QImage:
         return mask
     painter = QPainter(mask)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.fillPath(path, 255)
+    # Для Grayscale8 число 255 интерпретируется Qt как цветовой индекс,
+    # поэтому даже центр маски становился серым. Явный белый цвет оставляет
+    # внутреннюю область полностью видимой, а сглаживание — только на краю.
+    painter.fillPath(path, QColor(255, 255, 255, 255))
     painter.end()
     return mask
 
@@ -78,6 +81,9 @@ def apply_mask_to_bgr(frame, shape, region):
     bits = qmask.constBits()
     bits.setsize(qmask.bytesPerLine() * qmask.height())
     mask = np.frombuffer(bits, dtype=np.uint8).reshape((qmask.height(), qmask.bytesPerLine()))[:, :width]
-    result = frame.copy()
-    result[mask == 0] = 0
-    return result
+    # Сохраняем промежуточные значения антиалиасинга на наклонных границах.
+    # Бинарное mask == 0 превращало частично покрытые пиксели в лесенку.
+    coverage = mask.astype(np.float32) / 255.0
+    if frame.ndim > 2:
+        coverage = coverage[..., None]
+    return np.rint(frame.astype(np.float32) * coverage).astype(frame.dtype)

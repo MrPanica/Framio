@@ -43,7 +43,19 @@ a = Analysis(
 # может завершиться с «не найдена указанная процедура».
 a.binaries = [
     entry for entry in a.binaries
-    if Path(entry[0]).name.lower() not in {"icuuc.dll", "icudt78.dll"}
+    if Path(entry[0]).name.lower() not in {
+        # These are pulled in by optional Qt/PDF support from the build
+        # environment. Framio does not import QtPdf or use Poppler.
+        "icuuc.dll",
+        "icudt78.dll",
+        "qt6pdf.dll",
+        "libcrypto-3-x64.dll",
+        "libssl-3-x64.dll",
+        # Framio uses Qt's raster widgets; no QOpenGLWidget or Qt Quick
+        # surface is used, so the 20 MiB software OpenGL fallback is not
+        # needed in the portable distribution.
+        "opengl32sw.dll",
+    }
 ]
 
 pyz = PYZ(a.pure)

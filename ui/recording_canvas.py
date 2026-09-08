@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QMenu, QApplication
 )
 from PyQt6.QtGui import (
-    QPainter, QPen, QColor, QBrush, QFont, QCursor, QAction, QIcon
+    QPainter, QPen, QColor, QBrush, QFont, QCursor, QAction, QIcon, QPixmap
 )
 
 from models.shapes import (
@@ -31,6 +31,7 @@ from ui.toolbars import show_smart_popup, get_context_menu_style, get_theme_styl
 from ui.layers_dialog import LayersDialog
 from ui.widgets import ColorPalettePopup
 from ui.transform_box import ShapeTransformBox, HandleType
+from utils.screen_lock import safe_grab_screen_pixmap
 from utils.i18n import tr
 
 user32 = ctypes.windll.user32
@@ -65,12 +66,19 @@ class RecordingDrawingCanvas(QWidget):
         self.layer_manager = LayerManager(self)
         self.history_manager = HistoryManager(self)
         self.layer_manager.layers_changed.connect(self.update)
+        self.layer_manager.layers_changed.connect(self._sync_live_effect_timer)
 
         self.current_tool = "cursor"  # cursor, pen, arrow, rect, highlighter, text
         self.current_color = "#ef4444"
         self.stroke_width = 4
         self.current_grain = 8
         self.current_blur = 15
+        # Живой фон нужен только пока на холсте есть мозаика/блюр. В простое
+        # таймер не работает и не запускает дорогостоящий захват экрана.
+        self._live_effect_background = None
+        self._live_effect_timer = QTimer(self)
+        self._live_effect_timer.setInterval(100)
+        self._live_effect_timer.timeout.connect(self._refresh_live_effect_background)
         # По умолчанию рисунки привязаны к рамке (перемещаются вместе с ней плавно)
         self.is_pinned = False
         self.temp_shape = None
@@ -118,6 +126,11 @@ class RecordingDrawingCanvas(QWidget):
                 user32.SetWindowDisplayAffinity(int(self.winId()), 0x00000011)
             except Exception:
                 pass
+        self._sync_live_effect_timer()
+
+    def hideEvent(self, event):
+        self._live_effect_timer.stop()
+        super().hideEvent(event)
 
     def set_tool(self, tool_name: str):
         self.current_tool = tool_name
@@ -127,6 +140,7 @@ class RecordingDrawingCanvas(QWidget):
         else:
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
             self.setCursor(Qt.CursorShape.CrossCursor)
+        self._sync_live_effect_timer()
         self.update()
 
     def set_color(self, color_hex: str):
@@ -144,6 +158,52 @@ class RecordingDrawingCanvas(QWidget):
     def set_blur(self, blur_radius: int):
         self.current_blur = max(3, min(45, int(blur_radius)))
         self.update()
+
+    def _has_live_effects(self) -> bool:
+        """Проверяет, нужен ли холсту периодический фон для живого эффекта."""
+        shapes = list(self.layer_manager.shapes)
+        if self.temp_shape is not None:
+            shapes.append(self.temp_shape)
+        return any(
+            getattr(shape, "visible", True)
+            and (
+                getattr(shape, "is_mosaic", False)
+                or getattr(shape, "is_blur", False)
+                or shape.__class__.__name__ in ("MosaicShape", "BlurShape")
+            )
+            for shape in shapes
+        )
+
+    def _sync_live_effect_timer(self):
+        """Включает обновление живого фона только для активной мозаики/блюра."""
+        needs_background = self.isVisible() and (
+            self.current_tool in ("mosaic", "blur") or self._has_live_effects()
+        )
+        if needs_background:
+            if not self._live_effect_timer.isActive():
+                self._live_effect_timer.start()
+        else:
+            self._live_effect_timer.stop()
+            self._live_effect_background = None
+
+    def _refresh_live_effect_background(self):
+        """Захватывает фон под холстом для живого предпросмотра цензуры."""
+        if not self.isVisible() or not getattr(self.rec_win, "isVisible", lambda: True)():
+            return
+        try:
+            pixmap = safe_grab_screen_pixmap(
+                int(self.rec_win.inner_x),
+                int(self.rec_win.inner_y),
+                max(1, int(self.width())),
+                max(1, int(self.height())),
+            )
+            if pixmap is not None and not pixmap.isNull():
+                self._live_effect_background = pixmap
+                self.update()
+        except Exception:
+            # Живой предпросмотр не должен мешать записи, если захват экрана
+            # временно недоступен (например, при смене рабочего стола).
+            pass
 
     def set_pinned(self, pinned: bool):
         """
@@ -211,10 +271,18 @@ class RecordingDrawingCanvas(QWidget):
         # поэтому смещаем отрисовку на (-inner_x, -inner_y).
         # Если не закреплено — координаты локальны для рамки, offset = (0, 0).
         offset = QPointF(float(self.rec_win.inner_x), float(self.rec_win.inner_y)) if self.is_pinned else QPointF(0.0, 0.0)
-        self.layer_manager.draw_all(painter, offset=offset)
+        self.layer_manager.draw_all(
+            painter,
+            offset=offset,
+            source_pixmap=self._live_effect_background,
+        )
 
         if self.temp_shape is not None:
-            self.temp_shape.draw(painter, offset=offset)
+            self.temp_shape.draw(
+                painter,
+                offset=offset,
+                source_pixmap=self._live_effect_background,
+            )
 
         self._draw_dragged_shape_indicator(painter, offset=offset)
 

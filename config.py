@@ -8,6 +8,7 @@
 import os
 import json
 import sys
+import tempfile
 from pathlib import Path
 from dataclasses import dataclass, asdict
 
@@ -143,17 +144,13 @@ class ConfigManager:
 
     def __init__(self):
         base = get_base_dir()
+        self.base_dir = base
         portable_file = base / "settings.json"
 
         # Проверяем, доступна ли запись в каталог программы
-        can_write_base = False
-        try:
-            test_file = base / ".write_test"
-            test_file.touch()
-            test_file.unlink()
-            can_write_base = True
-        except Exception:
-            can_write_base = False
+        can_write_base = self._is_directory_writable(base)
+        self.portable_directory_writable = can_write_base
+        self.storage_warning = not can_write_base
 
         if can_write_base:
             self.config_dir = base
@@ -163,9 +160,61 @@ class ConfigManager:
             app_data = os.getenv("APPDATA") or str(Path.home() / ".config")
             self.config_dir = Path(app_data) / "Framio"
             self.config_file = self.config_dir / "settings.json"
+        self.storage_path = self.config_dir / "Captures"
 
         self.config = AppConfig()
+        if not can_write_base:
+            self._use_user_storage_defaults()
         self.load()
+        if not can_write_base:
+            self._rebase_protected_default_paths()
+            # Сохраняем результат один раз, чтобы при следующем запуске не
+            # возвращать защищённый portable-путь обратно в настройки.
+            self.save()
+
+    @staticmethod
+    def _is_directory_writable(directory: Path) -> bool:
+        """Проверяет запись временным файлом и не меняет ACL каталога."""
+        name = None
+        try:
+            directory = Path(directory)
+            directory.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(prefix=".framio_write_test_", dir=str(directory))
+            os.close(fd)
+            Path(name).unlink(missing_ok=True)
+            return True
+        except Exception:
+            try:
+                if name:
+                    Path(name).unlink(missing_ok=True)
+            except Exception:
+                pass
+            return False
+
+    def _use_user_storage_defaults(self):
+        root = self.storage_path
+        self.config.is_portable = False
+        self.config.save_dir_screenshots = str(root / "Screenshots")
+        self.config.save_dir_videos = str(root / "Videos")
+        self.config.save_dir_gifs = str(root / "GIFs")
+
+    def _rebase_protected_default_paths(self):
+        """Переносит только стандартные portable-пути, не трогая выбор пользователя."""
+        defaults = {
+            "save_dir_screenshots": "Screenshots",
+            "save_dir_videos": "Videos",
+            "save_dir_gifs": "GIFs",
+        }
+        for field, subfolder in defaults.items():
+            current = Path(getattr(self.config, field, ""))
+            try:
+                current.relative_to(self.base_dir)
+                is_under_base = True
+            except (ValueError, TypeError):
+                is_under_base = False
+            if not str(current) or is_under_base:
+                setattr(self.config, field, str(self.storage_path / subfolder))
+        self.config.is_portable = False
 
     @classmethod
     def get_instance(cls):

@@ -5,6 +5,8 @@
 инструмент перемещения по умолчанию, мозаичную цензуру текста и память настроек для каждого инструмента.
 """
 
+from __future__ import annotations
+
 import sys
 import os
 import time
@@ -13,9 +15,6 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 
-import cv2
-import numpy as np
-import requests
 import math
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QPoint, QRect, QBuffer, QIODevice, QTimer, QUrl
 from PyQt6.QtWidgets import (
@@ -32,12 +31,10 @@ from models.shapes import (
 )
 from models.layers import LayerManager
 from models.history import HistoryManager, HistoryCommand
-from recorder.capture_worker import CaptureWorker
 from utils.image_filters import apply_filter, FilterType
 from utils.sound import play_capture_sound
 from utils.screen_lock import safe_grab_screen_pixmap, qimage_to_cv2_bgr, user32, enumerate_recordable_windows, POINT
 from utils.window_icon import get_window_qicon
-from utils.scrolling_capture import ScrollingCaptureEngine, ScrollingCaptureHUD
 from utils.capture_mask import apply_mask_to_qimage
 from utils.image_search import search_by_image
 from utils.win32_helper import release_mouse_traps, force_foreground_window
@@ -51,13 +48,17 @@ from .toolbars import (
 )
 from .icons import create_themed_icon, create_tool_cursor
 from .shape_editor import ShapeEditPopup
-from .widgets import DimensionBadge
+from .widgets import DimensionBadge, MassRecordingHud
 from .text_widget import InteractiveTextEditor
 from .layers_dialog import LayersDialog
 from .history_dialog import HistoryDialog
 from .settings_dialog import SettingsDialog
-from .recording_window import RecordingFrameWindow
 from .transform_box import ShapeTransformBox, HandleType, rotate_point
+
+# Загружается только при фактическом старте записи. Оставляем имя на уровне
+# модуля для совместимости с тестами и внешними интеграциями, которые его
+# подменяют через unittest.mock.patch.
+RecordingFrameWindow = None
 
 HANDLE_NONE = 0
 HANDLE_TL = 1
@@ -113,6 +114,10 @@ class OverlayWindow(QWidget):
         self.active_handle = HANDLE_NONE
         self.drag_start_pos = QPointF()
         self.initial_selection = QRectF()
+        self.region_transform_initial_idx = None
+        self.region_transform_initial_rect = QRectF()
+        self.region_transform_initial_masks = []
+        self.region_selection_history_before = None
         self.is_locked = False
         self.dynamic_bg = False  # По умолчанию фон замирает (статический режим)
         self.is_passthrough = False  # Режим неосязаемой рамки (сквозные клики в фоновые окна)
@@ -265,6 +270,177 @@ class OverlayWindow(QWidget):
         idx = self.active_region_idx if region_idx is None else region_idx
         return list(self.capture_masks.get(idx, []))
 
+    def _refresh_region_geometry(self, region_idx: int):
+        """Обновляет интерфейс после изменения рамки зоны или её масок."""
+        if region_idx == getattr(self, "active_region_idx", region_idx):
+            self._update_toolbar_positions()
+        self._sync_close_button_tooltip()
+        if getattr(self, "is_passthrough", False) and hasattr(self, "_sync_passthrough_mask"):
+            self._sync_passthrough_mask()
+        self._invalidate_layers_cache()
+        self.update()
+
+    def _apply_region_history_state(self, region_idx: int, region: QRectF, mask_states=None):
+        """Применяет сохранённое состояние рамки и геометрии её масок."""
+        if not (0 <= region_idx < len(self.regions)):
+            return
+        self.regions[region_idx] = QRectF(region)
+        if mask_states is not None:
+            for target, source in zip(self._capture_masks_for_region(region_idx), mask_states):
+                self._apply_shape_geometry(target, source)
+        self._refresh_region_geometry(region_idx)
+
+    def _push_region_geometry_history(
+        self,
+        region_idx: int,
+        old_region: QRectF,
+        new_region: QRectF,
+        old_masks=None,
+        new_masks=None,
+        description: str | None = None,
+    ):
+        """Добавляет одно Undo/Redo-действие для итогового жеста зоны."""
+        history = getattr(self, "history_manager", None)
+        if history is None:
+            return
+        cmd = HistoryCommand(
+            description or tr("hist_cmd_region_transform", "Изменение области записи"),
+            do_func=lambda: self._apply_region_history_state(region_idx, new_region, new_masks),
+            undo_func=lambda: self._apply_region_history_state(region_idx, old_region, old_masks),
+        )
+        history.push_already_done(cmd)
+
+    def _capture_region_layout_state(self):
+        """Сохраняет список зон и привязанные к ним маски для Undo/Redo."""
+        return {
+            "regions": [QRectF(region) for region in self.regions],
+            "capture_masks": {
+                idx: list(masks) for idx, masks in self.capture_masks.items()
+            },
+            "active_region_idx": self.active_region_idx,
+        }
+
+    def _restore_region_layout_state(self, state):
+        """Восстанавливает список зон без создания новой команды истории."""
+        self.regions = [QRectF(region) for region in state["regions"]]
+        self.capture_masks = {
+            idx: list(masks) for idx, masks in state["capture_masks"].items()
+        }
+        self.active_region_idx = state["active_region_idx"]
+        if hasattr(self, "transform_box"):
+            masks = self._capture_masks_for_region()
+            self.transform_box.set_shape(masks[-1] if masks else None)
+        if self.regions:
+            self._update_toolbar_positions()
+        self._sync_close_button_tooltip()
+        self._invalidate_layers_cache()
+        self.update()
+
+    def _push_region_layout_history(self, before, after, description: str):
+        """Добавляет одно действие для добавления или удаления зон."""
+        history = getattr(self, "history_manager", None)
+        if history is None:
+            return
+        cmd = HistoryCommand(
+            description,
+            do_func=lambda state=after: self._restore_region_layout_state(state),
+            undo_func=lambda state=before: self._restore_region_layout_state(state),
+        )
+        history.push_already_done(cmd)
+
+    def _commit_region_selection_history(self):
+        """Фиксирует добавление зоны после завершения её выделения."""
+        before = self.region_selection_history_before
+        self.region_selection_history_before = None
+        if before is None:
+            return False
+        self._push_region_layout_history(
+            before,
+            self._capture_region_layout_state(),
+            tr("hist_cmd_add_region", "Добавление области записи"),
+        )
+        return True
+
+    def _begin_region_transform_history(self):
+        """Запоминает начало ресайза/перемещения до первого события мыши."""
+        self.region_transform_initial_idx = self.active_region_idx
+        self.region_transform_initial_rect = QRectF(self.selection_rect)
+        self.region_transform_initial_masks = [
+            mask.clone() for mask in self._capture_masks_for_region(self.active_region_idx)
+        ]
+
+    def _commit_region_transform_history(self) -> bool:
+        """Фиксирует весь жест изменения зоны одной командой истории."""
+        idx = getattr(self, "region_transform_initial_idx", None)
+        old_region = getattr(self, "region_transform_initial_rect", QRectF())
+        if idx is None or not (0 <= idx < len(self.regions)):
+            return False
+
+        new_region = QRectF(self.regions[idx])
+        changed = any(
+            abs(left - right) > 0.01
+            for left, right in (
+                (old_region.left(), new_region.left()),
+                (old_region.top(), new_region.top()),
+                (old_region.width(), new_region.width()),
+                (old_region.height(), new_region.height()),
+            )
+        )
+        old_masks = list(getattr(self, "region_transform_initial_masks", []))
+        new_masks = [mask.clone() for mask in self._capture_masks_for_region(idx)]
+        self.region_transform_initial_idx = None
+        self.region_transform_initial_rect = QRectF()
+        self.region_transform_initial_masks = []
+        if not changed:
+            return False
+
+        self._push_region_geometry_history(
+            idx,
+            old_region,
+            new_region,
+            old_masks=old_masks,
+            new_masks=new_masks,
+        )
+        return True
+
+    def _fit_region_to_capture_masks(self, region_idx: int | None = None) -> bool:
+        """Подгоняет рамку зоны под общий bounding box всех её масок.
+
+        Маски хранятся в координатах overlay, поэтому нельзя использовать
+        ``selection_rect``: его setter масштабирует фигуры вместе с рамкой.
+        Прямое обновление ``regions`` меняет только область последующего
+        захвата и оставляет контуры неизменными.
+        """
+        idx = self.active_region_idx if region_idx is None else region_idx
+        if not hasattr(self, "regions") or not (0 <= idx < len(self.regions)):
+            return False
+
+        bounds = QRectF()
+        for mask in self._capture_masks_for_region(idx):
+            if not getattr(mask, "visible", True):
+                continue
+            path = mask.path()
+            if path.isEmpty():
+                continue
+            mask_bounds = path.boundingRect().normalized()
+            if mask_bounds.isEmpty():
+                continue
+            bounds = mask_bounds if bounds.isEmpty() else bounds.united(mask_bounds)
+
+        if bounds.isEmpty():
+            return False
+
+        old_region = QRectF(self.regions[idx])
+        self.regions[idx] = bounds
+        self._refresh_region_geometry(idx)
+        self._push_region_geometry_history(
+            idx,
+            old_region,
+            bounds,
+            description=tr("hist_cmd_mask_fit_region", "Область по размеру маски"),
+        )
+        return True
+
     def _capture_mask_at(self, pos: QPointF, region_idx: int | None = None):
         """Находит верхнюю маску под точкой, чтобы её можно было редактировать."""
         for mask in reversed(self._capture_masks_for_region(region_idx)):
@@ -272,12 +448,39 @@ class OverlayWindow(QWidget):
                 return mask
         return None
 
+    def _set_capture_mask_presence(self, region_idx: int, mask: CaptureMaskShape, present: bool, index: int):
+        """Восстанавливает наличие маски без создания новой команды истории."""
+        masks = list(self.capture_masks.get(region_idx, []))
+        if present:
+            if not any(item is mask for item in masks):
+                masks.insert(min(max(0, index), len(masks)), mask)
+            self.capture_masks[region_idx] = masks
+            if hasattr(self, "transform_box"):
+                self.transform_box.set_shape(mask)
+            self.active_editing_shape = mask
+            self.last_active_shape = mask
+        else:
+            masks = [item for item in masks if item is not mask]
+            if masks:
+                self.capture_masks[region_idx] = masks
+            else:
+                self.capture_masks.pop(region_idx, None)
+            if getattr(self, "transform_box", None) is not None and self.transform_box.shape is mask:
+                self.transform_box.set_shape(masks[-1] if masks else None)
+            if getattr(self, "active_editing_shape", None) is mask:
+                self.active_editing_shape = None
+            if getattr(self, "last_active_shape", None) is mask:
+                self.last_active_shape = None
+        self._invalidate_layers_cache()
+        self.update()
+
     def _delete_capture_mask(self, mask: CaptureMaskShape):
         """Удаляет один контур маски, не затрагивая остальные контуры зоны."""
         if mask is None:
             return
         for region_idx, masks in list(self.capture_masks.items()):
-            if mask not in masks:
+            mask_index = next((idx for idx, item in enumerate(masks) if item is mask), None)
+            if mask_index is None:
                 continue
             masks = [item for item in masks if item is not mask]
             if masks:
@@ -293,6 +496,14 @@ class OverlayWindow(QWidget):
                 self.last_active_shape = None
             self._invalidate_layers_cache()
             self.update()
+            history = getattr(self, "history_manager", None)
+            if history is not None:
+                cmd = HistoryCommand(
+                    tr("hist_cmd_delete", "Удаление {name}", name=mask.name),
+                    do_func=lambda i=region_idx, m=mask, n=mask_index: self._set_capture_mask_presence(i, m, False, n),
+                    undo_func=lambda i=region_idx, m=mask, n=mask_index: self._set_capture_mask_presence(i, m, True, n),
+                )
+                history.push_already_done(cmd)
             return
 
     def get_valid_regions(self) -> list[QRectF]:
@@ -325,6 +536,7 @@ class OverlayWindow(QWidget):
         self.regions.clear()
         self.capture_masks.clear()
         self.active_region_idx = 0
+        self.region_selection_history_before = None
         if hasattr(self, "recording_region_indices"):
             self.recording_region_indices.clear()
         self._set_add_region_mode(False)
@@ -370,6 +582,7 @@ class OverlayWindow(QWidget):
         """Закрывает только активную зону, если их несколько, или закрывает весь оверлей."""
         valid = self.get_valid_regions()
         if len(valid) > 1 and 0 <= self.active_region_idx < len(self.regions):
+            layout_before = self._capture_region_layout_state()
             removed_idx = self.active_region_idx
             if removed_idx in getattr(self, "recording_region_indices", set()):
                 return
@@ -392,6 +605,11 @@ class OverlayWindow(QWidget):
             self._update_toolbar_positions()
             self._sync_close_button_tooltip()
             self.update()
+            self._push_region_layout_history(
+                layout_before,
+                self._capture_region_layout_state(),
+                tr("hist_cmd_delete_region", "Удаление области записи"),
+            )
         else:
             self.close_overlay()
 
@@ -522,6 +740,12 @@ class OverlayWindow(QWidget):
         for attr in ("rect", "p1", "p2", "points", "path", "pos", "font_size", "rotation"):
             if hasattr(source, attr):
                 val = getattr(source, attr)
+                # У CaptureMaskShape ``path`` — метод, а не поле геометрии.
+                # Не затеняем им одноимённый метод целевого объекта после
+                # Undo/Redo: иначе следующий drag меняет точки маски, а
+                # отрисовка продолжает брать контур из старой копии.
+                if callable(val):
+                    continue
                 setattr(target, attr, copy.copy(val) if attr in ("points", "path", "rect") else val)
         if hasattr(target, "cached_mosaic"):
             target.cached_mosaic = None
@@ -827,6 +1051,7 @@ class OverlayWindow(QWidget):
         # Если рамок ещё нет — начинаем первое выделение
         if not valid_regions:
             self.clear_regions()
+            self.region_selection_history_before = self._capture_region_layout_state()
             self.is_selecting = True
             self.drag_start_pos = pos
             self.selection_rect = QRectF(pos, pos)
@@ -867,6 +1092,7 @@ class OverlayWindow(QWidget):
             self.active_handle = handle
             self.drag_start_pos = pos
             self.initial_selection = QRectF(self.selection_rect)
+            self._begin_region_transform_history()
             self._set_handle_cursor(self.active_handle)
             return
 
@@ -911,6 +1137,7 @@ class OverlayWindow(QWidget):
                 self.active_handle = HANDLE_MOVE
                 self.drag_start_pos = pos
                 self.initial_selection = QRectF(self.selection_rect)
+                self._begin_region_transform_history()
                 self._set_cursor_if_needed(Qt.CursorShape.ClosedHandCursor)
                 return
 
@@ -950,6 +1177,7 @@ class OverlayWindow(QWidget):
         # Новая зона создаётся только явным режимом «+» или удержанием Ctrl.
         # Обычный drag снаружи существующих зон ничего не сбрасывает.
         if self.is_adding_region or ctrl_held:
+            self.region_selection_history_before = self._capture_region_layout_state()
             self.is_selecting = True
             self.drag_start_pos = pos
             self.regions.append(QRectF(pos, pos))
@@ -1180,6 +1408,7 @@ class OverlayWindow(QWidget):
             add_mode_was_active = bool(self.is_adding_region)
 
             if self.selection_rect.width() > 20 and self.selection_rect.height() > 20:
+                self._commit_region_selection_history()
                 if add_mode_was_active:
                     self._set_add_region_mode(False)
                 # В стиле Lightshot: сразу после выделения выбирается инструмент перемещения!
@@ -1199,6 +1428,7 @@ class OverlayWindow(QWidget):
                     self.bottom_toolbar._show_gif_popup()
                     self.preselected_recording_mode = None
             else:
+                self.region_selection_history_before = None
                 if len(self.regions) > 1 and 0 <= self.active_region_idx < len(self.regions):
                     self.regions.pop(self.active_region_idx)
                     self.active_region_idx = max(0, len(self.regions) - 1)
@@ -1217,6 +1447,7 @@ class OverlayWindow(QWidget):
             return
 
         if self.is_resizing:
+            self._commit_region_transform_history()
             self.is_resizing = False
             self.active_handle = HANDLE_NONE
             self.selection_rect = self.selection_rect.normalized()
@@ -1287,11 +1518,18 @@ class OverlayWindow(QWidget):
         theme = get_theme_styles()
         menu = QMenu(self)
         menu.setStyleSheet(get_context_menu_style(theme["is_dark"]))
+        fit_action = menu.addAction(
+            tr("capture_mask_fit_region", "Установить область по размеру маски"),
+        )
+        menu.addSeparator()
         delete_action = menu.addAction(
             create_themed_icon("trash", theme["is_dark"], 14),
             tr("shape_menu_delete", "Удалить"),
         )
-        if menu.exec(global_pos) == delete_action:
+        selected_action = menu.exec(global_pos)
+        if selected_action == fit_action:
+            self._fit_region_to_capture_masks()
+        elif selected_action == delete_action:
             self._delete_capture_mask(mask)
 
     def _show_shape_context_menu(self, shape: BaseShape, global_pos: QPoint):
@@ -1692,9 +1930,19 @@ class OverlayWindow(QWidget):
             if isinstance(shape, CaptureMaskShape):
                 valid = (len(shape.points) >= 3) if shape.kind == "freeform" else not shape.rect.normalized().isEmpty()
                 if valid and shape.get_bounding_rect().width() > 4 and shape.get_bounding_rect().height() > 4:
-                    self.capture_masks.setdefault(self.active_region_idx, []).append(shape)
+                    region_idx = self.active_region_idx
+                    mask_index = len(self.capture_masks.setdefault(region_idx, []))
+                    self.capture_masks[region_idx].append(shape)
                     self.transform_box.set_shape(shape)
                     self._invalidate_layers_cache()
+                    history = getattr(self, "history_manager", None)
+                    if history is not None:
+                        cmd = HistoryCommand(
+                            tr("hist_cmd_add", "Добавлен {name}", name=shape.name),
+                            do_func=lambda i=region_idx, m=shape, n=mask_index: self._set_capture_mask_presence(i, m, True, n),
+                            undo_func=lambda i=region_idx, m=shape, n=mask_index: self._set_capture_mask_presence(i, m, False, n),
+                        )
+                        history.push_already_done(cmd)
                 self.update()
                 return
             if isinstance(shape, (RegionalEffectShape, MosaicShape, BlurShape)) and self.background_pixmap is not None:
@@ -2347,6 +2595,9 @@ class OverlayWindow(QWidget):
 
     def _paint_filtered_region(self, painter: QPainter, rect: QRectF):
         try:
+            import cv2
+            import numpy as np
+
             rx, ry, rw, rh = int(rect.x()), int(rect.y()), int(rect.width()), int(rect.height())
             if rw <= 0 or rh <= 0: return
             crop = self.background_pixmap.copy(rx, ry, rw, rh)
@@ -2406,7 +2657,14 @@ class OverlayWindow(QWidget):
 
     def _draw_interactive_objects_highlight(self, painter: QPainter):
         """Подсвечивает все интерактивные/перемещаемые объекты рамками и бейджами с названиями при удержании Alt."""
-        if not hasattr(self, "layer_manager") or not self.layer_manager.shapes:
+        layer_shapes = list(getattr(getattr(self, "layer_manager", None), "shapes", []) or [])
+        capture_masks = [
+            mask
+            for masks in getattr(self, "capture_masks", {}).values()
+            for mask in (masks or [])
+        ]
+        interactive_shapes = layer_shapes + capture_masks
+        if not interactive_shapes:
             return
 
         painter.save()
@@ -2415,28 +2673,39 @@ class OverlayWindow(QWidget):
         font = QFont("Segoe UI", 9, QFont.Weight.Bold)
         fm = QFontMetrics(font)
 
-        for s in self.layer_manager.shapes:
+        for s in interactive_shapes:
             if not getattr(s, "visible", True):
                 continue
-            br = s.get_bounding_rect()
+            is_capture_mask = isinstance(s, CaptureMaskShape)
+            mask_path = s.path() if is_capture_mask else None
+            br = mask_path.boundingRect() if mask_path is not None else s.get_bounding_rect()
             if not br.isValid() or br.isEmpty():
                 continue
 
-            rot = getattr(s, "rotation", 0.0)
+            rot = 0.0 if is_capture_mask else getattr(s, "rotation", 0.0)
             c = br.center()
 
-            # 1. Контурная рамка вокруг объекта с учетом угла вращения
+            # 1. Контурная рамка вокруг объекта с учетом угла вращения.
             painter.save()
-            if abs(rot) > 0.01:
-                painter.translate(c)
-                painter.rotate(rot)
-                painter.translate(-c)
+            if is_capture_mask:
+                # У маски путь уже содержит поворот. Рисуем именно контур,
+                # чтобы Alt показывал фактическую область захвата, включая
+                # несколько масок одной зоны.
+                pen_box = QPen(QColor(250, 204, 21, 235), 1.8, Qt.PenStyle.DashLine)
+                painter.setPen(pen_box)
+                painter.setBrush(QBrush(QColor(250, 204, 21, 35)))
+                painter.drawPath(mask_path)
+            else:
+                if abs(rot) > 0.01:
+                    painter.translate(c)
+                    painter.rotate(rot)
+                    painter.translate(-c)
 
-            pen_box = QPen(QColor(56, 189, 248, 220), 1.5, Qt.PenStyle.DashLine)
-            painter.setPen(pen_box)
-            painter.setBrush(QBrush(QColor(56, 189, 248, 30)))
-            adj_rect = br.adjusted(-4, -4, 4, 4)
-            painter.drawRoundedRect(adj_rect, 4, 4)
+                pen_box = QPen(QColor(56, 189, 248, 220), 1.5, Qt.PenStyle.DashLine)
+                painter.setPen(pen_box)
+                painter.setBrush(QBrush(QColor(56, 189, 248, 30)))
+                adj_rect = br.adjusted(-4, -4, 4, 4)
+                painter.drawRoundedRect(adj_rect, 4, 4)
             painter.restore()
 
             # 2. Локализованное название фигуры (бейдж держим всегда строго горизонтально)
@@ -2464,12 +2733,14 @@ class OverlayWindow(QWidget):
 
             badge_rect = QRectF(badge_x, badge_y, badge_w, badge_h)
 
-            # Отрисовка плашки бейджа
-            painter.setPen(QPen(QColor(56, 189, 248), 1))
+            # Цвет бейджа совпадает с контуром маски, чтобы её можно было
+            # отличить от обычных аннотаций.
+            highlight_color = QColor(250, 204, 21) if is_capture_mask else QColor(56, 189, 248)
+
+            painter.setPen(QPen(highlight_color, 1))
             painter.setBrush(QBrush(QColor(15, 23, 42, 230)))
             painter.drawRoundedRect(badge_rect, 4, 4)
 
-            # Текст бейджа
             painter.setPen(QColor(241, 245, 249))
             painter.setFont(font)
             painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, tag_text)
@@ -2751,6 +3022,8 @@ class OverlayWindow(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         if self.current_filter != FilterType.NONE:
+            import cv2
+
             bgr = qimage_to_cv2_bgr(crop_pix.toImage())
             fbgr = apply_filter(bgr, self.current_filter)
             frgb = cv2.cvtColor(fbgr, cv2.COLOR_BGR2RGB)
@@ -3048,6 +3321,8 @@ class OverlayWindow(QWidget):
 
     # --- Длинный скриншот (Scrolling Screenshot) ---
     def start_scrolling_screenshot(self):
+        from utils.scrolling_capture import ScrollingCaptureEngine, ScrollingCaptureHUD
+
         r = self.selection_rect.normalized()
         rx, ry, rw, rh = int(r.x()), int(r.y()), int(r.width()), int(r.height())
         if rw < 30 or rh < 30:
@@ -3129,6 +3404,8 @@ class OverlayWindow(QWidget):
             self.scrolling_hud.set_paused_state(is_paused)
 
     def _on_scrolling_screenshot_finished(self, accumulated_bgr: np.ndarray):
+        import cv2
+
         if self.scrolling_engine:
             self.scrolling_engine.cleanup()
             self.scrolling_engine = None
@@ -3196,10 +3473,17 @@ class OverlayWindow(QWidget):
         if rec_window in self.recording_windows:
             self.recording_windows.remove(rec_window)
         if self.recording_windows:
+            hud = self.__dict__.get("recording_hud")
+            if hud:
+                video_count, gif_count = self._mass_recording_counts()
+                hud.update_counts(video_count, gif_count)
             self._sync_region_header()
             self.update()
             return
 
+        hud = self.__dict__.get("recording_hud")
+        if hud:
+            hud.hide()
         self.is_recording = False
         if getattr(self, "_mass_recording", False):
             self._mass_recording = False
@@ -3219,13 +3503,111 @@ class OverlayWindow(QWidget):
 
     def stop_recording(self):
         """Останавливает все записи, запущенные из текущего multi-selection."""
+        hud = self.__dict__.get("recording_hud")
+        if hud:
+            hud.hide()
         for rec_window in list(self.recording_windows):
             try:
                 rec_window.stop_and_save()
             except Exception:
                 pass
 
+    def _mass_recording_counts(self):
+        """Возвращает число активных видеозаписей и GIF отдельно."""
+        video_count = 0
+        gif_count = 0
+        for rec_window in self.__dict__.get("recording_windows", []):
+            mode = getattr(rec_window, "mode", None)
+            if mode == "video":
+                video_count += 1
+            elif mode == "gif":
+                gif_count += 1
+        return video_count, gif_count
+
+    def _toggle_mass_pause(self, mode: str):
+        """Поставить на паузу или продолжить записи только одного типа."""
+        windows = [
+            rec_window for rec_window in self.__dict__.get("recording_windows", [])
+            if getattr(rec_window, "mode", None) == mode
+        ]
+        if not windows:
+            return
+
+        should_pause = any(not bool(getattr(rec_window, "is_paused", False)) for rec_window in windows)
+        for rec_window in windows:
+            setter = getattr(rec_window, "set_paused", None)
+            if callable(setter):
+                setter(should_pause)
+            else:
+                worker = getattr(rec_window, "capture_worker", None)
+                if worker is not None:
+                    (worker.pause if should_pause else worker.resume)()
+                rec_window.is_paused = should_pause
+
+        hud = self.__dict__.get("recording_hud")
+        if hud:
+            hud.set_paused(mode, should_pause)
+
+    def _stop_recording_mode(self, mode: str):
+        """Остановить только видео или только GIF, не затрагивая другой тип."""
+        for rec_window in list(self.__dict__.get("recording_windows", [])):
+            if getattr(rec_window, "mode", None) != mode:
+                continue
+            try:
+                rec_window.stop_and_save()
+            except Exception:
+                pass
+
+    def _keep_mass_recording_hud_on_top(self):
+        """Поднимает общую панель после показа/активации окон записи."""
+        hud = self.__dict__.get("recording_hud")
+        if hud is None or not hud.isVisible():
+            return
+        hud.raise_()
+        ensure_topmost = getattr(hud, "_ensure_topmost", None)
+        if callable(ensure_topmost):
+            ensure_topmost()
+
+    def _show_mass_recording_hud(self):
+        """Показывает независимое управление массовой записью поверх рабочего стола."""
+        if self.recording_hud is None:
+            self.recording_hud = MassRecordingHud()
+            self.recording_hud.stop_clicked.connect(self.stop_recording)
+            self.recording_hud.pause_video_clicked.connect(
+                lambda: self._toggle_mass_pause("video")
+            )
+            self.recording_hud.pause_gif_clicked.connect(
+                lambda: self._toggle_mass_pause("gif")
+            )
+            self.recording_hud.stop_video_clicked.connect(
+                lambda: self._stop_recording_mode("video")
+            )
+            self.recording_hud.stop_gif_clicked.connect(
+                lambda: self._stop_recording_mode("gif")
+            )
+
+        video_count, gif_count = self._mass_recording_counts()
+        if video_count or gif_count or not self.recording_windows:
+            self.recording_hud.update_counts(video_count, gif_count)
+        else:
+            # Совместимость со старыми/тестовыми объектами без поля mode.
+            self.recording_hud.update_count(len(self.recording_windows))
+        screen = QApplication.primaryScreen()
+        geo = screen.availableGeometry() if screen is not None else self.geometry()
+        self.recording_hud.adjustSize()
+        hud_x = geo.left() + max(0, (geo.width() - self.recording_hud.width()) // 2)
+        hud_y = geo.top() + 8
+        self.recording_hud.move(int(hud_x), int(hud_y))
+        self.recording_hud.show()
+        self.recording_hud.raise_()
+        self._keep_mass_recording_hud_on_top()
+
     def start_recording(self, mode="video", params=None, all_regions: bool = False):
+        global RecordingFrameWindow
+        if RecordingFrameWindow is None:
+            from .recording_window import RecordingFrameWindow as _RecordingFrameWindow
+            RecordingFrameWindow = _RecordingFrameWindow
+
         params = params or {}
         valid_items = self.get_valid_region_items()
         target_items = self.get_action_region_items(all_regions=all_regions)
@@ -3263,6 +3645,12 @@ class OverlayWindow(QWidget):
         self.recording_region_indices.update(idx for idx, _ in target_items)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
         self.clearMask()
+        # RecordingFrameWindow запускает CaptureWorker уже в __init__. Поэтому
+        # overlay и верхняя панель должны исчезнуть до создания первого окна,
+        # иначе первые кадры массовой записи могут содержать интерфейс Framio.
+        self._hide_toolbars()
+        self.hide()
+        QApplication.processEvents()
         self.update()
         QApplication.processEvents()
 
@@ -3300,23 +3688,25 @@ class OverlayWindow(QWidget):
                 app_inst.add_recording(rec_window)
             rec_window.show()
 
+        if all_regions:
+            self._show_mass_recording_hud()
+
         if hasattr(self, "_unclip_timer"):
             self._unclip_timer.stop()
         while QApplication.overrideCursor():
             QApplication.restoreOverrideCursor()
         release_mouse_traps()
 
-        # После фактического старта записи overlay больше не должен оставаться
-        # затемнённым и интерактивным. Остальные зоны сохраняются в модели и
-        # могут быть открыты снова после остановки, но не перехватывают мышь
-        # поверх уже начавшейся записи.
-        self._hide_toolbars()
-        self.hide()
+        # После фактического старта записи overlay уже был скрыт до запуска
+        # CaptureWorker, поэтому он не перехватывает мышь и не попадает в кадр.
         for rec_window in self.recording_windows:
             rec_window.raise_()
         self.recording_windows[-1].activateWindow()
+        self._keep_mass_recording_hud_on_top()
 
     def close_overlay(self):
+        if getattr(self, "recording_hud", None) is not None:
+            self.recording_hud.hide()
         if hasattr(self, "_unclip_timer"):
             self._unclip_timer.stop()
         if hasattr(self, "right_hold_timer"):

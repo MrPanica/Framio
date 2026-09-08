@@ -121,11 +121,31 @@ jobs:
           Copy-Item -LiteralPath 'dist-onefile/Framio.exe' -Destination "release/Framio-$version-windows-single-file.exe"
           Copy-Item -LiteralPath 'dist-lite/Framio.exe' -Destination "release/Framio-$version-windows-lite.exe"
 
+          $lines = @(Get-Content -LiteralPath 'CHANGELOG.md')
+          $versionPattern = "^## \[$([regex]::Escape($version))\](?:\s|$)"
+          $start = -1
+          for ($index = 0; $index -lt $lines.Count; $index++) {
+            if ($lines[$index] -match $versionPattern) {
+              $start = $index
+              break
+            }
+          }
+          if ($start -lt 0) { throw "CHANGELOG.md does not contain a section for version '$version'." }
+          $end = $lines.Count
+          for ($index = $start + 1; $index -lt $lines.Count; $index++) {
+            if ($lines[$index] -match '^## \[') {
+              $end = $index
+              break
+            }
+          }
+          $notes = ($lines[$start..($end - 1)] -join [Environment]::NewLine).Trim()
+          Set-Content -LiteralPath 'release/release-notes.md' -Value $notes -Encoding utf8
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $files = @(Get-ChildItem -LiteralPath 'release' -File | ForEach-Object { $_.FullName })
-          gh release create $env:GITHUB_REF_NAME @files --title "Framio $env:GITHUB_REF_NAME" --generate-notes --latest
+          $files = @(Get-ChildItem -LiteralPath 'release' -File | Where-Object { $_.Name -ne 'release-notes.md' } | ForEach-Object { $_.FullName })
+          gh release create $env:GITHUB_REF_NAME @files --title "Framio $env:GITHUB_REF_NAME" --notes-file 'release/release-notes.md' --latest

@@ -5,6 +5,8 @@
 а также живую запись видео и GIF в виде нативного Windows приложения.
 """
 
+from __future__ import annotations
+
 import sys
 import os
 import ctypes
@@ -28,7 +30,6 @@ from PyQt6.QtGui import (
 from datetime import datetime
 from config import ConfigManager
 from ui.overlay import OverlayWindow
-from ui.recording_window import RecordingFrameWindow
 from ui.settings_dialog import SettingsDialog
 from utils.hotkey_manager import GlobalHotkeyManager
 from utils.screen_lock import safe_grab_screen_pixmap
@@ -347,6 +348,10 @@ class FramioApp(QObject):
         self.processing_tasks: dict[str, dict] = {}
         self.recent_media: list[dict] = []
         self._last_notification_path = ""
+        self._mass_saved_pending: list[tuple[str, str]] = []
+        self._mass_saved_notification_timer = QTimer(self)
+        self._mass_saved_notification_timer.setSingleShot(True)
+        self._mass_saved_notification_timer.timeout.connect(self._flush_mass_saved_notification)
         self._load_recent_media()
 
         # Системный трей
@@ -371,6 +376,9 @@ class FramioApp(QObject):
         # Клик по трею и по уведомлениям
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.messageClicked.connect(self._on_tray_notification_clicked)
+
+        if getattr(self.config_mgr, "storage_warning", False):
+            QTimer.singleShot(700, self._show_storage_warning)
 
     def add_recording(self, rec_window: RecordingFrameWindow):
         if rec_window not in self.active_recordings:
@@ -528,6 +536,12 @@ class FramioApp(QObject):
         if path and Path(path).exists():
             p = Path(path)
             self.add_recent_media(path=str(p), label=p.name)
+            if getattr(rec_window, "region_count", 1) > 1:
+                self._queue_mass_saved_notification(
+                    "gif" if p.suffix.lower() == ".gif" else "video",
+                    str(p),
+                )
+                return
             fname = p.name
             folder = str(p.parent)
             is_gif = p.suffix.lower() == ".gif"
@@ -546,6 +560,55 @@ class FramioApp(QObject):
                 QSystemTrayIcon.MessageIcon.Warning,
                 3000
             )
+
+    def _queue_mass_saved_notification(self, mode: str, path: str):
+        self._mass_saved_pending.append((mode, path))
+        self._mass_saved_notification_timer.start(600)
+
+    def _flush_mass_saved_notification(self):
+        """Показывает одно итоговое уведомление после завершения всей группы."""
+        # Через __dict__ поддерживаем лёгкие unit-тесты, где QObject не
+        # запускает свой конструктор и getattr может бросить RuntimeError.
+        active = self.__dict__.get("active_recordings", [])
+        if any(getattr(window, "region_count", 1) > 1 for window in active):
+            self._mass_saved_notification_timer.start(600)
+            return
+
+        pending = list(self.__dict__.get("_mass_saved_pending", []))
+        self._mass_saved_pending = []
+        if not pending:
+            return
+
+        counts = {"video": 0, "gif": 0}
+        for mode, _path in pending:
+            counts[mode] = counts.get(mode, 0) + 1
+        message = tr(
+            "notif_mass_saved_body",
+            "Видео: {video}\nGIF: {gif}",
+            video=counts.get("video", 0),
+            gif=counts.get("gif", 0),
+        )
+        self.show_notification(
+            tr("notif_mass_saved_title", "Массовая запись сохранена"),
+            message,
+            QSystemTrayIcon.MessageIcon.Information,
+            5000,
+            target_path=pending[-1][1],
+        )
+
+    def _show_storage_warning(self):
+        capture_root = getattr(self.config_mgr, "storage_path", None)
+        location = str(capture_root) if capture_root else str(Path(self.cfg.save_dir_videos).parent)
+        self.show_notification(
+            tr("storage_warning_title", "Папка приложения защищена"),
+            tr(
+                "storage_warning_body",
+                "Нет права записи рядом с приложением. Записи сохраняются в:\n{path}",
+                path=location,
+            ),
+            QSystemTrayIcon.MessageIcon.Warning,
+            7000,
+        )
 
     @pyqtSlot()
     def quick_fullscreen_capture(self):
@@ -730,6 +793,8 @@ class FramioApp(QObject):
 
     @pyqtSlot()
     def start_fullscreen_recording(self, mode="video"):
+        from ui.recording_window import RecordingFrameWindow
+
         # Если оверлей открыт — скрываем его
         if self.overlay and self.overlay.isVisible():
             self.overlay.hide()
@@ -764,6 +829,8 @@ class FramioApp(QObject):
         self.overlay.start_capture(preselected_recording_mode=mode)
 
     def start_direct_recording(self, mode="video"):
+        from ui.recording_window import RecordingFrameWindow
+
         rec_window = RecordingFrameWindow(
             mode=mode,
             record_mic=getattr(self.cfg, "record_mic", True),
@@ -829,15 +896,62 @@ class FramioApp(QObject):
                 )
 
     def quit_app(self):
-        if hasattr(self, "single_instance_mgr") and self.single_instance_mgr:
-            self.single_instance_mgr.cleanup()
-        self.hotkey_mgr.stop()
-        for rec in list(self.active_recordings):
+        # Сначала запрещаем новые глобальные события, затем останавливаем
+        # записи и только после этого завершаем Qt-приложение. Иначе
+        # QApplication.quit() закрывает цикл событий раньше QThread/FFmpeg.
+        try:
+            self.hotkey_mgr.stop()
+        except Exception:
+            pass
+
+        try:
+            self.overlay.close_overlay()
+        except Exception:
+            pass
+
+        recordings = list(self.active_recordings)
+        for rec in list(getattr(self.overlay, "recording_windows", []) or []):
+            if all(rec is not existing for existing in recordings):
+                recordings.append(rec)
+
+        for rec in recordings:
             try:
                 rec.cancel_recording()
             except Exception:
                 pass
+
+            try:
+                rec.wait_for_shutdown()
+            except Exception:
+                pass
+
+        settings_dlg = getattr(self, "_settings_dlg", None)
+        if settings_dlg is not None:
+            try:
+                settings_dlg.close()
+            except Exception:
+                pass
+
+        history_dlg = getattr(self.overlay, "history_dialog", None)
+        if history_dlg is not None:
+            try:
+                history_dlg.close()
+            except Exception:
+                pass
+
         self.active_recordings.clear()
+
+        try:
+            self.tray.hide()
+        except Exception:
+            pass
+
+        if hasattr(self, "single_instance_mgr") and self.single_instance_mgr:
+            try:
+                self.single_instance_mgr.cleanup()
+            except Exception:
+                pass
+
         QApplication.quit()
 
 

@@ -7,11 +7,11 @@
 аппаратных оверлеев и Direct3D/Vulkan flip-моделей с 100% точностью пикселей 1:1 с учетом DPI.
 """
 
+from __future__ import annotations
+
 import threading
 import ctypes
 from ctypes import wintypes
-import numpy as np
-import cv2
 from PyQt6.QtGui import QPixmap, QImage
 from PyQt6.QtWidgets import QApplication
 
@@ -175,6 +175,8 @@ def win32_captureblt_bgr(rx: int, ry: int, rw: int, rh: int) -> np.ndarray | Non
     Не интерполирует и не размывает изображение.
     """
     try:
+        import numpy as np
+
         try:
             dwmapi.DwmFlush()
         except Exception:
@@ -238,6 +240,8 @@ def win32_captureblt_bgr(rx: int, ry: int, rw: int, rh: int) -> np.ndarray | Non
 
 def safe_grab_screen_bgr(rx: int, ry: int, rw: int, rh: int, target_hwnd: int | None = None) -> np.ndarray:
     """Безопасно захватывает область экрана напрямую в формат OpenCV BGR 1:1 под глобальным мьютексом."""
+    import numpy as np
+
     if target_hwnd is not None and int(target_hwnd) > 0:
         return capture_window_or_screen_bgr(rx, ry, rw, rh, target_hwnd)
 
@@ -288,6 +292,9 @@ def safe_grab_screen_pixmap(rx: int, ry: int, rw: int, rh: int) -> QPixmap:
 
 def qimage_to_cv2_bgr(qimg: QImage) -> np.ndarray:
     """Безопасная конвертация QImage (ARGB32) в numpy BGR массив без сбоев памяти и переполнения."""
+    import cv2
+    import numpy as np
+
     if qimg is None or qimg.isNull() or qimg.width() <= 0 or qimg.height() <= 0:
         return np.zeros((16, 16, 3), dtype=np.uint8)
 
@@ -387,6 +394,8 @@ def capture_window_bgr(hwnd: int, rx: int, ry: int, rw: int, rh: int) -> np.ndar
     Использует прямой BitBlt из контекста окна (GetDC) для Direct3D/OpenGL/Win32 окон,
     мягкий fallback на PrintWindow и кэширование кадров при сворачивании/перекрытии.
     """
+    import numpy as np
+
     try:
         if not user32.IsWindow(hwnd):
             _WINDOW_FRAME_CACHE.pop(hwnd, None)
@@ -513,6 +522,8 @@ def capture_window_or_screen_bgr(rx: int, ry: int, rw: int, rh: int, target_hwnd
     - Если target_hwnd указан: строго изолированный захват целевого окна без чужих перекрывающих окон.
     - В противном случае (по умолчанию): прямой захват экрана под рамкой через safe_grab_screen_bgr.
     """
+    import numpy as np
+
     if target_hwnd is not None and int(target_hwnd) > 0:
         hwnd = int(target_hwnd)
         if user32.IsWindow(hwnd):

@@ -3,6 +3,8 @@
 Вспомогательные UI виджеты: бейджи размеров, HUD записи, палитры цветов и выбор толщины.
 """
 
+import ctypes
+
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
@@ -376,3 +378,143 @@ class RecordingHud(QFrame):
         self.btn_pause.setIcon(create_themed_icon("play" if self.is_paused else "pause", is_dark=True, size=14))
         self.rec_label.setText("PAUSE" if self.is_paused else ("REC" if self.mode == "video" else "GIF"))
         self.pause_clicked.emit()
+
+
+class MassRecordingHud(RecordingHud):
+    """Небольшая отдельная панель управления всеми параллельными записями."""
+
+    pause_video_clicked = pyqtSignal()
+    pause_gif_clicked = pyqtSignal()
+    stop_video_clicked = pyqtSignal()
+    stop_gif_clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(mode="video", parent=None)
+        self.setWindowFlags(
+            Qt.WindowType.Tool |
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.rec_label.setText(tr("mass_recording_title", "Массовая запись"))
+        self.rec_label.setStyleSheet("color: #f59e0b;")
+        self.rec_label.setFixedWidth(140)
+        self.time_label.setFixedWidth(150)
+        self.btn_pause.hide()
+        # Общее действие оставляем доступным рядом с раздельными кнопками:
+        # оно по-прежнему останавливает все форматы сразу. Видимые кнопки
+        # ниже разделены по типу записи, чтобы GIF не останавливал видео.
+        self.btn_stop.setText(tr("mass_recording_stop", "Остановить всё"))
+        self.btn_stop.setToolTip(tr("mass_recording_stop_tip", "Остановить все видео и GIF"))
+        self.btn_stop.setMinimumHeight(26)
+        self.btn_stop.setMinimumWidth(0)
+        self.btn_stop.setFixedWidth(96)
+
+        self.btn_pause_video = self._make_action_button(
+            "mass_video_pause", "mass_video_pause_tip", "pause"
+        )
+        self.btn_stop_video = self._make_action_button(
+            "mass_video_stop", "mass_video_stop_tip", "stop", destructive=True
+        )
+        self.btn_pause_gif = self._make_action_button(
+            "mass_gif_pause", "mass_gif_pause_tip", "pause"
+        )
+        self.btn_stop_gif = self._make_action_button(
+            "mass_gif_stop", "mass_gif_stop_tip", "stop", destructive=True
+        )
+
+        layout = self.layout()
+        layout.setContentsMargins(6, 3, 6, 3)
+        layout.setSpacing(5)
+        layout.addWidget(self.btn_pause_video)
+        layout.addWidget(self.btn_stop_video)
+        layout.addWidget(self.btn_pause_gif)
+        layout.addWidget(self.btn_stop_gif)
+
+        self.btn_pause_video.clicked.connect(self.pause_video_clicked.emit)
+        self.btn_pause_gif.clicked.connect(self.pause_gif_clicked.emit)
+        self.btn_stop_video.clicked.connect(self.stop_video_clicked.emit)
+        self.btn_stop_gif.clicked.connect(self.stop_gif_clicked.emit)
+        self.adjustSize()
+
+    def _make_action_button(self, text_key, tip_key, icon_name, destructive=False):
+        button = ModernButton(tr(text_key, text_key), tr(tip_key, tip_key))
+        button.setIcon(create_themed_icon(icon_name, is_dark=True, size=13))
+        button.setMinimumHeight(26)
+        button.setMinimumWidth(0)
+        button.setFixedWidth(88)
+        if destructive:
+            button.setStyleSheet("""
+                QPushButton {
+                    background-color: #d9383a;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 4px 7px;
+                    font-weight: bold;
+                }
+                QPushButton:hover { background-color: #f0484a; }
+                QPushButton:disabled { background-color: #5b2730; color: #b7a4a6; }
+            """)
+        return button
+
+    def update_count(self, count: int):
+        self.time_label.setText(
+            tr("mass_recording_active", "Активных зон: {count}", count=max(0, int(count)))
+        )
+        enabled = max(0, int(count)) > 0
+        for button in (
+            self.btn_pause_video, self.btn_stop_video,
+            self.btn_pause_gif, self.btn_stop_gif,
+        ):
+            button.setEnabled(enabled)
+        self.adjustSize()
+
+    def update_counts(self, video_count: int, gif_count: int):
+        video_count = max(0, int(video_count))
+        gif_count = max(0, int(gif_count))
+        self.time_label.setText(
+            tr(
+                "mass_recording_active_types",
+                "Видео: {video} · GIF: {gif}",
+                video=video_count,
+                gif=gif_count,
+            )
+        )
+        self.btn_pause_video.setEnabled(video_count > 0)
+        self.btn_stop_video.setEnabled(video_count > 0)
+        self.btn_pause_gif.setEnabled(gif_count > 0)
+        self.btn_stop_gif.setEnabled(gif_count > 0)
+        self.adjustSize()
+
+    def set_paused(self, mode: str, paused: bool):
+        button = self.btn_pause_video if mode == "video" else self.btn_pause_gif
+        key = "mass_video_resume" if mode == "video" else "mass_gif_resume"
+        tip_key = "mass_video_resume_tip" if mode == "video" else "mass_gif_resume_tip"
+        if not paused:
+            key = "mass_video_pause" if mode == "video" else "mass_gif_pause"
+            tip_key = "mass_video_pause_tip" if mode == "video" else "mass_gif_pause_tip"
+        button.setText(tr(key, key))
+        button.setToolTip(tr(tip_key, tip_key))
+        button.setIcon(create_themed_icon("play" if paused else "pause", is_dark=True, size=13))
+        self.adjustSize()
+
+    def _ensure_topmost(self):
+        """Возвращает HUD поверх шапок окон записи без перехвата фокуса."""
+        try:
+            hwnd = int(self.winId())
+            # HWND_TOPMOST = -1; SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE.
+            ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0013)
+        except Exception:
+            # На Linux/offscreen тестах Win32 API отсутствует; обычного
+            # WindowStaysOnTopHint достаточно для Qt-среды.
+            pass
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._ensure_topmost()
+        try:
+            import ctypes
+            ctypes.windll.user32.SetWindowDisplayAffinity(int(self.winId()), 0x00000011)
+        except Exception:
+            pass

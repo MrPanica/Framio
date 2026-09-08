@@ -10,13 +10,14 @@ import ctypes
 from ctypes import wintypes
 from pathlib import Path
 from datetime import datetime
-from PyQt6.QtCore import Qt, QRect, QPoint, pyqtSignal, QSize, QEvent, QObject, QTimer
+from PyQt6.QtCore import Qt, QRect, QRectF, QPoint, pyqtSignal, QSize, QEvent, QObject, QTimer
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QFrame,
     QApplication, QComboBox
 )
 from PyQt6.QtGui import (
-    QPainter, QPen, QColor, QBrush, QRegion, QIcon
+    QPainter, QPen, QColor, QBrush, QRegion, QIcon, QPolygon,
+    QPainterPathStroker
 )
 
 from recorder.capture_worker import CaptureWorker
@@ -45,6 +46,7 @@ MA_ACTIVATE = 1
 
 BORDER_THICKNESS = 3
 HEADER_HEIGHT = 38
+COLLAPSED_HEADER_HEIGHT = 30
 HANDLE_SIZE = 8
 
 
@@ -69,6 +71,7 @@ class HeaderDragFilter(QObject):
             if event.button() == Qt.MouseButton.LeftButton:
                 if isinstance(watched, (QPushButton, QComboBox)):
                     return False
+                self.rec_win._raise_for_pointer()
                 self.dragging = True
                 self.drag_start = event.globalPosition().toPoint()
                 self.start_inner_x = self.rec_win.inner_x
@@ -86,6 +89,7 @@ class HeaderDragFilter(QObject):
                 self.rec_win._sync_position()
                 return True
             elif not isinstance(watched, (QPushButton, QComboBox)):
+                self.rec_win._raise_for_pointer()
                 if QApplication.overrideCursor() is None:
                     watched.setCursor(Qt.CursorShape.SizeAllCursor)
         elif etype == QEvent.Type.MouseButtonRelease:
@@ -249,6 +253,8 @@ class RecordingFrameWindow(QWidget):
 
         self.mode = mode
         self.is_fullscreen = is_fullscreen
+        self.header_collapsed = False
+        self.header_on_bottom = False
         self.record_mic = record_mic if record_mic is not None else getattr(self.cfg, "record_mic", True)
         self.record_system = record_system if record_system is not None else getattr(self.cfg, "record_system", True)
         self.codec = codec if codec is not None else self.cfg.video_codec
@@ -276,7 +282,7 @@ class RecordingFrameWindow(QWidget):
             init_w, init_h = 800, 600
             init_x = screen_geo.left() + (screen_geo.width() - init_w) // 2
             init_y = screen_geo.top() + (screen_geo.height() - init_h) // 2
-            min_top = screen_geo.top() + HEADER_HEIGHT + BORDER_THICKNESS
+            min_top = screen_geo.top() + BORDER_THICKNESS
             self.inner_x = max(screen_geo.left() + BORDER_THICKNESS, min(init_x, screen_geo.right() - init_w - BORDER_THICKNESS))
             self.inner_y = max(min_top, min(init_y, screen_geo.bottom() - init_h - BORDER_THICKNESS))
             self.inner_w = max(160, min(init_w, screen_geo.width() - 2 * BORDER_THICKNESS))
@@ -286,7 +292,7 @@ class RecordingFrameWindow(QWidget):
             init_y = int(rect.y())
             init_w = int(rect.width())
             init_h = int(rect.height())
-            min_top = screen_geo.top() + HEADER_HEIGHT + BORDER_THICKNESS
+            min_top = screen_geo.top() + BORDER_THICKNESS
             self.inner_x = max(screen_geo.left() + BORDER_THICKNESS, min(init_x, screen_geo.right() - init_w - BORDER_THICKNESS))
             self.inner_y = max(min_top, min(init_y, screen_geo.bottom() - init_h - BORDER_THICKNESS))
             self.inner_w = max(160, min(init_w, screen_geo.width() - 2 * BORDER_THICKNESS))
@@ -350,6 +356,14 @@ class RecordingFrameWindow(QWidget):
             self._start_countdown()
         else:
             self._start_capture()
+
+    def showEvent(self, event):
+        """Повторно исключает окно записи из системного захвата после показа."""
+        super().showEvent(event)
+        try:
+            user32.SetWindowDisplayAffinity(int(self.winId()), 0x00000011)
+        except Exception:
+            pass
 
     def nativeEvent(self, eventType, message):
         """
@@ -539,6 +553,27 @@ class RecordingFrameWindow(QWidget):
         btn_cancel.clicked.connect(self.cancel_recording)
         layout.addWidget(btn_cancel)
 
+        # Компактное состояние оставляет только эту кнопку, чтобы шапка не
+        # закрывала соседние панели и область записи у края экрана.
+        self.btn_header_toggle = QPushButton()
+        self.btn_header_toggle.setIcon(create_themed_icon("chevron_up", is_dark=True, size=14))
+        self.btn_header_toggle.setIconSize(QSize(14, 14))
+        self.btn_header_toggle.setFixedSize(26, 26)
+        self.btn_header_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_header_toggle.clicked.connect(self._toggle_header_collapsed)
+        layout.addWidget(self.btn_header_toggle)
+
+        self._header_content_widgets = [
+            self.lbl_mode_icon, self.lbl_mode, self.lbl_target_icon,
+            self.lbl_timer, self.lbl_size, self.btn_draw, self.btn_pause,
+            self.btn_stop, self.btn_lock, self.btn_settings, btn_cancel,
+        ]
+        if self.btn_mic is not None:
+            self._header_content_widgets.append(self.btn_mic)
+        if self.btn_system is not None:
+            self._header_content_widgets.append(self.btn_system)
+        self._update_header_toggle_ui()
+
     def _show_settings_popup(self):
         self.popup_settings.populate_windows(self.target_hwnd)
         p = self.btn_settings.mapToGlobal(QPoint(0, self.btn_settings.height() + 4))
@@ -574,14 +609,57 @@ class RecordingFrameWindow(QWidget):
             print("[RecordingWindow] Выбран захват всего экрана под рамкой")
 
     def _get_min_top(self):
-        head_h = HEADER_HEIGHT + (30 if getattr(self, "draw_bar_visible", False) else 0)
-        return head_h + BORDER_THICKNESS
+        screen = QApplication.primaryScreen()
+        return (screen.geometry().top() if screen is not None else 0) + BORDER_THICKNESS
+
+    def _header_height(self):
+        if getattr(self, "header_collapsed", False):
+            return COLLAPSED_HEADER_HEIGHT
+        return HEADER_HEIGHT + (30 if getattr(self, "draw_bar_visible", False) else 0)
+
+    def _update_header_placement(self):
+        """Выбирает сторону шапки, чтобы она не закрывала верхнюю часть записи."""
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            self.header_on_bottom = False
+            return
+        geo = screen.geometry()
+        head_h = self._header_height()
+        has_space_above = self.inner_y - geo.top() >= head_h + BORDER_THICKNESS
+        self.header_on_bottom = not has_space_above
+
+    def _capture_origin_y(self):
+        return BORDER_THICKNESS if self.header_on_bottom else self._header_height() + BORDER_THICKNESS
+
+    def _toggle_header_collapsed(self):
+        self.header_collapsed = not self.header_collapsed
+        if self.header_collapsed:
+            self.draw_bar_visible = False
+            if self.drawing_toolbar:
+                self.drawing_toolbar.hide()
+        self._update_header_toggle_ui()
+        self._sync_geometry()
+
+    def _update_header_toggle_ui(self):
+        if not hasattr(self, "btn_header_toggle"):
+            return
+        icon_name = "chevron_down" if self.header_collapsed else "chevron_up"
+        tip_key = "rec_header_expand_tip" if self.header_collapsed else "rec_header_collapse_tip"
+        self.btn_header_toggle.setIcon(create_themed_icon(icon_name, is_dark=True, size=14))
+        self.btn_header_toggle.setToolTip(tr(tip_key, "Развернуть шапку" if self.header_collapsed else "Свернуть шапку"))
+        for widget in getattr(self, "_header_content_widgets", []):
+            widget.setVisible(not self.header_collapsed)
+        self.btn_header_toggle.setVisible(True)
 
     def _toggle_mic(self):
         self.record_mic = not self.record_mic
         if self.capture_worker:
             self.capture_worker.set_mic_muted(not self.record_mic)
         self._update_mic_button()
+
+    def _raise_for_pointer(self):
+        """Делает рамку под курсором верхней среди перекрывающихся зон."""
+        self.raise_()
 
     def _update_mic_button(self):
         if not self.btn_mic:
@@ -642,12 +720,15 @@ class RecordingFrameWindow(QWidget):
         Легковесная синхронизация координат при перетаскивании рамки без перестроения масок.
         Обеспечивает плавное перемещение со скоростью 60-144 FPS без лагов DWM.
         """
-        head_h = HEADER_HEIGHT + (30 if getattr(self, "draw_bar_visible", False) else 0)
+        self._update_header_placement()
+        head_h = self._header_height()
         if getattr(self, "is_fullscreen", False):
             self.move(self.inner_x, self.inner_y)
         else:
             win_x = self.inner_x - BORDER_THICKNESS
-            win_y = self.inner_y - BORDER_THICKNESS - head_h
+            win_y = self.inner_y - BORDER_THICKNESS
+            if not self.header_on_bottom:
+                win_y -= head_h
             self.move(win_x, win_y)
 
         if self.canvas:
@@ -656,7 +737,8 @@ class RecordingFrameWindow(QWidget):
                 self.canvas.update()
 
     def _sync_geometry(self):
-        head_h = HEADER_HEIGHT + (30 if getattr(self, "draw_bar_visible", False) else 0)
+        self._update_header_placement()
+        head_h = self._header_height()
 
         if getattr(self, "is_fullscreen", False):
             win_x = self.inner_x
@@ -667,29 +749,36 @@ class RecordingFrameWindow(QWidget):
             self.setGeometry(win_x, win_y, win_w, win_h)
             header_w = min(560, win_w - 40)
             header_x = (win_w - header_w) // 2
-            self.header_frame.setGeometry(header_x, 6, header_w, HEADER_HEIGHT)
+            header_y = max(0, self.inner_h - head_h - 6) if self.header_on_bottom else 6
+            self.header_frame.setGeometry(header_x, header_y, header_w, COLLAPSED_HEADER_HEIGHT if self.header_collapsed else HEADER_HEIGHT)
 
             if self.drawing_toolbar:
                 if self.draw_bar_visible:
-                    self.drawing_toolbar.setGeometry(header_x, 6 + HEADER_HEIGHT, header_w, 30)
+                    toolbar_y = header_y + HEADER_HEIGHT if not self.header_on_bottom else max(0, header_y - 30)
+                    self.drawing_toolbar.setGeometry(header_x, toolbar_y, header_w, 30)
                     self.drawing_toolbar.show()
                 else:
                     self.drawing_toolbar.hide()
 
-            header_region = QRegion(header_x, 6, header_w, head_h)
-            self.setMask(header_region)
+            header_region = QRegion(header_x, header_y, header_w, head_h)
+            indicator_region = self._mask_indicator_region(0, 0, self.inner_w, self.inner_h)
+            self.setMask(header_region.united(indicator_region))
         else:
             win_x = self.inner_x - BORDER_THICKNESS
-            win_y = self.inner_y - BORDER_THICKNESS - head_h
+            win_y = self.inner_y - BORDER_THICKNESS
+            if not self.header_on_bottom:
+                win_y -= head_h
             win_w = self.inner_w + 2 * BORDER_THICKNESS
             win_h = self.inner_h + 2 * BORDER_THICKNESS + head_h
 
             self.setGeometry(win_x, win_y, win_w, win_h)
-            self.header_frame.setGeometry(0, 0, win_w, HEADER_HEIGHT)
+            header_y = self.inner_h + BORDER_THICKNESS if self.header_on_bottom else 0
+            self.header_frame.setGeometry(0, header_y, win_w, COLLAPSED_HEADER_HEIGHT if self.header_collapsed else HEADER_HEIGHT)
 
             if self.drawing_toolbar:
                 if self.draw_bar_visible:
-                    self.drawing_toolbar.setGeometry(0, HEADER_HEIGHT, win_w, 30)
+                    toolbar_y = header_y + HEADER_HEIGHT if not self.header_on_bottom else max(BORDER_THICKNESS, header_y - 30)
+                    self.drawing_toolbar.setGeometry(0, toolbar_y, win_w, 30)
                     self.drawing_toolbar.show()
                 else:
                     self.drawing_toolbar.hide()
@@ -700,15 +789,25 @@ class RecordingFrameWindow(QWidget):
                 mask_region = outer_region
                 for reg in self.regions:
                     rx = int(reg.x() - self.inner_x + BORDER_THICKNESS)
-                    ry = int(reg.y() - self.inner_y + head_h + BORDER_THICKNESS)
+                    ry = int(reg.y() - self.inner_y + self._capture_origin_y())
                     rw = int(reg.width())
                     rh = int(reg.height())
                     mask_region = mask_region.subtracted(QRegion(rx, ry, rw, rh))
-                self.setMask(mask_region)
             else:
-                inner_region = QRegion(BORDER_THICKNESS, head_h + BORDER_THICKNESS, self.inner_w, self.inner_h)
+                inner_region = QRegion(BORDER_THICKNESS, self._capture_origin_y(), self.inner_w, self.inner_h)
                 mask_region = outer_region.subtracted(inner_region)
-                self.setMask(mask_region)
+
+            # Внутренняя область обычно вырезается из окна записи, чтобы
+            # клики проходили в приложение под ним. Для маски добавляем
+            # обратно только узкий штрих её контура: саму запись это не
+            # перекрывает, но пользователь видит точную область захвата.
+            indicator_region = self._mask_indicator_region(
+                BORDER_THICKNESS, self._capture_origin_y(),
+                self.inner_w, self.inner_h,
+            )
+            if not indicator_region.isEmpty():
+                mask_region = mask_region.united(indicator_region)
+            self.setMask(mask_region)
 
         if self.canvas:
             self.canvas.sync_to_rec_geometry(self.inner_x, self.inner_y, self.inner_w, self.inner_h)
@@ -719,6 +818,32 @@ class RecordingFrameWindow(QWidget):
 
         self.lbl_size.setText(f"{self.inner_w}×{self.inner_h}")
         self.update()
+
+    def _mask_indicator_region(self, bx: int, by: int, bw: int, bh: int) -> QRegion:
+        """Возвращает узкую видимую область для контура одной или нескольких масок."""
+        if self.capture_mask is None:
+            return QRegion()
+
+        base_w, base_h = self.capture_mask_region or (bw, bh)
+        path = mask_path_for_frame(
+            self.capture_mask,
+            bw,
+            bh,
+            (0, 0, base_w, base_h),
+        )
+        if path.isEmpty():
+            return QRegion()
+
+        path = path.translated(float(bx), float(by))
+        stroker = QPainterPathStroker()
+        stroker.setWidth(6.0)
+        stroke_path = stroker.createStroke(path)
+        result = QRegion()
+        for polygon_f in stroke_path.toFillPolygons():
+            points = [QPoint(round(point.x()), round(point.y())) for point in polygon_f]
+            if len(points) >= 3:
+                result = result.united(QRegion(QPolygon(points)))
+        return result
 
     def _start_capture(self):
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -784,6 +909,12 @@ class RecordingFrameWindow(QWidget):
             self.btn_pause.setIcon(create_themed_icon("pause", is_dark=True, size=14))
             self.btn_pause.setToolTip("Приостановить запись [Пробел]")
             self.lbl_mode.setText(f"⋮⋮ {mode_text}")
+
+    def set_paused(self, paused: bool):
+        """Устанавливает состояние паузы без переключения наугад."""
+        paused = bool(paused)
+        if self.is_paused != paused:
+            self._toggle_pause()
 
     def _toggle_lock(self):
         self.is_locked = not self.is_locked
@@ -908,9 +1039,11 @@ class RecordingFrameWindow(QWidget):
             self.canvas.hide()
             self.canvas.close()
 
-        # 2. Уведомление Windows о начале сохранения (1-е уведомление)
+        # 2. Для массовой записи итоговое уведомление будет одно на всю
+        # группу. Поэтому не засыпаем пользователя одинаковыми сообщениями
+        # при остановке 4–5 зон одновременно.
         app_inst = getattr(QApplication.instance(), "app_instance", None)
-        if app_inst:
+        if app_inst and self.region_count <= 1:
             is_gif = self.mode == "gif"
             title = tr("notif_rec_saving_gif", "Сохранение GIF...") if is_gif else tr("notif_rec_saving_video", "Сохранение видео...")
             body = tr("rec_exporting_wait", "Идёт оптимизация и кодирование в высоком качестве (в фоне)...")
@@ -949,6 +1082,21 @@ class RecordingFrameWindow(QWidget):
             pass
         self.recording_closed.emit("")
         self.close()
+
+    def wait_for_shutdown(self, timeout_ms: int = 10000) -> bool:
+        """Дожидается остановки потока захвата и всех его дочерних рекордеров."""
+        worker = self.capture_worker
+        if worker is None:
+            return True
+
+        if worker.isRunning():
+            if hasattr(worker, "cancel"):
+                worker.cancel()
+            if not worker.wait(max(0, int(timeout_ms))):
+                print("[RecordingWindow] Поток записи не завершился за отведённое время.")
+                return False
+
+        return not worker.isRunning()
 
     def _on_finished(self, out_path: str):
         self.is_finished = True
@@ -993,14 +1141,36 @@ class RecordingFrameWindow(QWidget):
 
     def paintEvent(self, event):
         if getattr(self, "is_fullscreen", False):
+            # У полноэкранной записи видна только шапка. Если задана маска,
+            # оставляем её тонкий контур видимым и в этом режиме.
+            if self.capture_mask is not None:
+                painter = QPainter(self)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                mask_path = mask_path_for_frame(
+                    self.capture_mask,
+                    self.inner_w,
+                    self.inner_h,
+                    (0, 0, *(self.capture_mask_region or (self.inner_w, self.inner_h))),
+                )
+                if not mask_path.isEmpty():
+                    painter.setPen(QPen(
+                        QColor("#38bdf8"),
+                        1.5,
+                        Qt.PenStyle.DashLine,
+                        Qt.PenCapStyle.RoundCap,
+                        Qt.PenJoinStyle.RoundJoin,
+                    ))
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawPath(mask_path)
+                painter.end()
             return
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        head_h = HEADER_HEIGHT + (30 if getattr(self, "draw_bar_visible", False) else 0)
+        head_h = self._header_height()
         bx = BORDER_THICKNESS
-        by = head_h + BORDER_THICKNESS
+        by = self._capture_origin_y()
         bw = self.inner_w
         bh = self.inner_h
 
@@ -1008,10 +1178,17 @@ class RecordingFrameWindow(QWidget):
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
 
-        # При записи по маске показываем тот же контур, который реально
-        # попадёт в кадр. Раньше здесь всегда рисовался внешний прямоугольник
-        # исходной зоны, из-за чего круг/произвольная фигура выглядели как
-        # смещённая или вообще не связанная с записью область.
+        # Красная рамка всегда показывает границы зоны записи.
+        painter.drawRect(
+            bx - BORDER_THICKNESS // 2,
+            by - BORDER_THICKNESS // 2,
+            bw + BORDER_THICKNESS,
+            bh + BORDER_THICKNESS,
+        )
+
+        # Отдельный тонкий пунктир показывает фактический контур маски,
+        # который попадёт в кадр. Он намеренно отличается от красной рамки,
+        # чтобы область захвата была понятна во время записи.
         mask_bounds = None
         if self.capture_mask is not None:
             base_w, base_h = self.capture_mask_region or (bw, bh)
@@ -1022,23 +1199,22 @@ class RecordingFrameWindow(QWidget):
                 (0, 0, base_w, base_h),
             )
             if not mask_path.isEmpty():
+                painter.setPen(QPen(
+                    QColor("#38bdf8"),
+                    1.5,
+                    Qt.PenStyle.DashLine,
+                    Qt.PenCapStyle.RoundCap,
+                    Qt.PenJoinStyle.RoundJoin,
+                ))
                 painter.drawPath(mask_path.translated(float(bx), float(by)))
                 mask_bounds = mask_path.boundingRect().translated(float(bx), float(by))
-
-        if mask_bounds is None:
-            painter.drawRect(
-                bx - BORDER_THICKNESS // 2,
-                by - BORDER_THICKNESS // 2,
-                bw + BORDER_THICKNESS,
-                bh + BORDER_THICKNESS,
-            )
 
         if getattr(self, "regions", None) and len(self.regions) > 1:
             pen_sub = QPen(QColor(self.accent_color.red(), self.accent_color.green(), self.accent_color.blue(), 180), 1.5, Qt.PenStyle.DashLine)
             painter.setPen(pen_sub)
             for reg in self.regions:
                 rx = int(reg.x() - self.inner_x + BORDER_THICKNESS)
-                ry = int(reg.y() - self.inner_y + head_h + BORDER_THICKNESS)
+                ry = int(reg.y() - self.inner_y + self._capture_origin_y())
                 rw = int(reg.width())
                 rh = int(reg.height())
                 painter.drawRect(rx, ry, rw, rh)
@@ -1069,8 +1245,8 @@ class RecordingFrameWindow(QWidget):
             return
 
         pos = event.position().toPoint()
-        head_h = HEADER_HEIGHT + (30 if getattr(self, "draw_bar_visible", False) else 0)
-        if pos.y() <= head_h or self.header_frame.geometry().contains(pos):
+        if self.header_frame.geometry().contains(pos):
+            self._raise_for_pointer()
             self.is_moving = True
             self.drag_start_pos = event.globalPosition().toPoint()
             self.start_inner_x = self.inner_x
@@ -1081,6 +1257,7 @@ class RecordingFrameWindow(QWidget):
         if not self.is_locked:
             h = self._hit_test_handle(pos)
             if h > 0:
+                self._raise_for_pointer()
                 self.is_resizing = True
                 self.active_handle = h
                 self.drag_start_pos = event.globalPosition().toPoint()
@@ -1123,14 +1300,17 @@ class RecordingFrameWindow(QWidget):
             return
 
         pos = event.position().toPoint()
-        head_h = HEADER_HEIGHT + (30 if getattr(self, "draw_bar_visible", False) else 0)
         if not self.is_locked:
             h = self._hit_test_handle(pos)
-            if h in (1, 5): self.setCursor(Qt.CursorShape.SizeFDiagCursor)
-            elif h in (3, 7): self.setCursor(Qt.CursorShape.SizeBDiagCursor)
-            elif h in (2, 6): self.setCursor(Qt.CursorShape.SizeVerCursor)
-            elif h in (4, 8): self.setCursor(Qt.CursorShape.SizeHorCursor)
-            elif pos.y() <= head_h or self.header_frame.geometry().contains(pos): self.setCursor(Qt.CursorShape.SizeAllCursor)
+            if h > 0:
+                self._raise_for_pointer()
+                if h in (1, 5): self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+                elif h in (3, 7): self.setCursor(Qt.CursorShape.SizeBDiagCursor)
+                elif h in (2, 6): self.setCursor(Qt.CursorShape.SizeVerCursor)
+                else: self.setCursor(Qt.CursorShape.SizeHorCursor)
+            elif self.header_frame.geometry().contains(pos):
+                self._raise_for_pointer()
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
             else: self.setCursor(Qt.CursorShape.ArrowCursor)
 
     def mouseReleaseEvent(self, event):
@@ -1143,9 +1323,8 @@ class RecordingFrameWindow(QWidget):
         self.active_handle = 0
 
     def _hit_test_handle(self, pt: QPoint):
-        head_h = HEADER_HEIGHT + (30 if getattr(self, "draw_bar_visible", False) else 0)
         bx = BORDER_THICKNESS
-        by = head_h + BORDER_THICKNESS
+        by = self._capture_origin_y()
         bw, bh = self.inner_w, self.inner_h
         hs = HANDLE_SIZE + 4
 

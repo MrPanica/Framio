@@ -25,7 +25,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QPointF, QRectF
-from PyQt6.QtGui import QImage, QPainter, QColor
+from PyQt6.QtGui import QImage, QPainter, QColor, QPaintEvent, QPixmap
 
 from models.shapes import PenShape, LineShape, ArrowShape, RectangleShape, CircleShape, TextShape, MosaicShape, CaptureMaskShape
 from models.layers import LayerManager
@@ -74,6 +74,465 @@ def test_capture_masks():
     print("  -> Маска закрывается автоматически, поворачивается и единообразно применяется к кадрам.")
 
 
+def test_capture_mask_edges_are_antialiased_in_video_frames():
+    """Поворот маски должен давать промежуточные пиксели, а не ступеньку."""
+    print("[TEST] Проверка сглаживания наклонного края маски в видеокадре...")
+    from utils.capture_mask import apply_mask_to_bgr, create_mask_image
+
+    mask = CaptureMaskShape(kind="rect", rect=QRectF(18, 18, 44, 24))
+    mask.rotate_by(23)
+    source = np.full((80, 80, 3), 255, dtype=np.uint8)
+
+    qmask = create_mask_image(mask, 80, 80, (0, 0, 80, 80))
+    bits = qmask.constBits()
+    bits.setsize(qmask.bytesPerLine() * qmask.height())
+    alpha = np.frombuffer(bits, dtype=np.uint8).reshape(qmask.height(), qmask.bytesPerLine())[:, :qmask.width()]
+    assert np.any((alpha > 0) & (alpha < 255))
+
+    result = apply_mask_to_bgr(source, mask, (0, 0, 80, 80))
+    assert np.any((result[:, :, 0] > 0) & (result[:, :, 0] < 255))
+    print("  -> Наклонный край сохраняет частично прозрачные пиксели без ступенчатой границы.")
+
+
+def test_recording_frame_marks_capture_mask_separately():
+    """Рамка записи и фактическая маска должны быть различимы на экране."""
+    print("[TEST] Проверка отдельного пунктира маски внутри рамки записи...")
+    from unittest.mock import patch
+    from PyQt6.QtCore import QRect
+    from ui.recording_window import RecordingFrameWindow
+
+    mask = [
+        CaptureMaskShape(kind="circle", rect=QRectF(20, 20, 40, 40)),
+        CaptureMaskShape(kind="rect", rect=QRectF(92, 24, 34, 30)),
+    ]
+    with patch.object(RecordingFrameWindow, "_start_capture"):
+        window = RecordingFrameWindow(
+            mode="video",
+            rect=QRect(0, 0, 80, 80),
+            capture_mask=mask,
+        )
+        try:
+            indicator_region = window._mask_indicator_region(
+                3, 41, window.inner_w, window.inner_h
+            )
+            assert not indicator_region.isEmpty()
+            assert window.mask().intersects(indicator_region)
+
+            window.resize(140, 160)
+            image = QImage(window.size(), QImage.Format.Format_ARGB32)
+            image.fill(QColor("#000000"))
+            window.render(image)
+
+            red_pixels = 0
+            cyan_pixels = 0
+            for y in range(image.height()):
+                for x in range(image.width()):
+                    color = image.pixelColor(x, y)
+                    if color.red() > 210 and color.green() < 110 and color.blue() < 110:
+                        red_pixels += 1
+                    if color.red() < 100 and color.green() > 130 and color.blue() > 180:
+                        cyan_pixels += 1
+
+            assert red_pixels > 0
+            assert cyan_pixels > 0
+        finally:
+            window.close()
+            window.deleteLater()
+            QApplication.processEvents()
+    print("  -> Красная рамка записи и отдельный цветной контур маски видны одновременно.")
+
+
+def test_recording_frame_paint_handles_mass_recording_mask():
+    """Отрисовка рамки массовой записи без маски не должна падать."""
+    print("[TEST] Проверка paint-события рамки массовой записи...")
+    from unittest.mock import patch
+    from PyQt6.QtCore import QRect
+    from ui.recording_window import RecordingFrameWindow
+
+    with patch.object(RecordingFrameWindow, "_start_capture"):
+        window = RecordingFrameWindow(
+            mode="video",
+            rect=QRect(0, 0, 320, 240),
+            region_index=1,
+            region_count=3,
+            capture_mask=[],
+        )
+        try:
+            window.resize(340, 282)
+            RecordingFrameWindow.paintEvent(window, QPaintEvent(window.rect()))
+        finally:
+            window.close()
+            window.deleteLater()
+            QApplication.processEvents()
+    print("  -> Рамка массовой записи с маской отрисовывается без исключения.")
+
+
+def test_recording_mosaic_is_applied_to_video_frame():
+    """Мозаика из панели записи должна менять пиксели самого видеокадра."""
+    print("[TEST] Проверка применения мозаики непосредственно к видеокадру...")
+    from recorder.capture_worker import CaptureWorker
+
+    source = np.zeros((80, 80, 3), dtype=np.uint8)
+    for x in range(source.shape[1]):
+        source[:, x] = (x * 3) % 256
+    shape = __import__("models.shapes", fromlist=["MosaicShape"]).MosaicShape(
+        QRectF(20, 20, 32, 32), pixel_size=4
+    )
+    worker = CaptureWorker(
+        mode="video",
+        output_path="",
+        region_getter=lambda: (0, 0, 80, 80),
+    )
+    result = worker._apply_censor_shapes(source.copy(), [shape], QPointF(0, 0))
+
+    assert np.array_equal(result[:10, :10], source[:10, :10])
+    assert not np.array_equal(result[20:52, 20:52], source[20:52, 20:52])
+    print("  -> Область мозаики меняет кадр до передачи его в MP4/GIF-рекордер.")
+
+
+def test_recording_canvas_renders_live_mosaic_from_background():
+    """Живой холст должен передавать фон в MosaicShape, а не рисовать заливку."""
+    print("[TEST] Проверка живого предпросмотра мозаики на холсте записи...")
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from ui.recording_canvas import RecordingDrawingCanvas
+
+    background = QImage(80, 80, QImage.Format.Format_ARGB32)
+    for y in range(background.height()):
+        for x in range(background.width()):
+            background.setPixelColor(x, y, QColor(x * 3, y * 2, 120))
+
+    canvas = RecordingDrawingCanvas(SimpleNamespace(inner_x=0, inner_y=0))
+    canvas.resize(80, 80)
+    canvas.layer_manager.add_shape(MosaicShape(QRectF(10, 10, 40, 40), pixel_size=4))
+    canvas.show()
+    with patch("ui.recording_canvas.safe_grab_screen_pixmap", return_value=QPixmap.fromImage(background)):
+        canvas._refresh_live_effect_background()
+    assert canvas._live_effect_background is not None
+
+    image = QImage(canvas.size(), QImage.Format.Format_ARGB32)
+    image.fill(QColor(0, 0, 0, 0))
+    canvas.render(image)
+
+    # У мозаики соседние пиксели одного блока совпадают, а центр не пустой.
+    assert image.pixelColor(12, 12) == image.pixelColor(13, 13)
+    assert image.pixelColor(12, 12) != image.pixelColor(25, 25)
+    assert image.pixelColor(25, 25).alpha() > 0
+    canvas.close()
+    canvas.deleteLater()
+    QApplication.processEvents()
+    print("  -> Мозаика видна непосредственно на живом кадре до сохранения файла.")
+
+
+def test_mass_recording_hud_has_stop_all_action():
+    """HUD массовой записи должен показывать число зон и останавливать все записи."""
+    print("[TEST] Проверка панели управления массовой записью...")
+    from ui.widgets import MassRecordingHud
+
+    hud = MassRecordingHud()
+    stopped = []
+    hud.stop_clicked.connect(lambda: stopped.append(True))
+    hud.update_count(3)
+    assert "3" in hud.time_label.text()
+    hud.update_counts(4, 1)
+    assert hud.width() <= 850
+    assert all(mark not in hud.btn_pause_video.text() for mark in ("⏸", "▶", "■"))
+    assert not hud.btn_pause_video.icon().isNull()
+    hud.btn_stop.click()
+    assert stopped == [True]
+    hud.close()
+    hud.deleteLater()
+    QApplication.processEvents()
+    print("  -> Верхняя панель показывает активные зоны и имеет кнопку остановки всех записей.")
+
+
+def test_overlay_shows_mass_recording_hud_for_group():
+    """Групповая запись должна создавать HUD независимо от скрытого overlay."""
+    print("[TEST] Проверка показа HUD после запуска групповой записи...")
+    from unittest.mock import MagicMock
+    from ui.overlay import OverlayWindow
+
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.recording_hud = None
+    overlay.recording_windows = [object(), object(), object()]
+    overlay.stop_recording = MagicMock()
+
+    OverlayWindow._show_mass_recording_hud(overlay)
+    assert overlay.recording_hud.isVisible()
+    assert "3" in overlay.recording_hud.time_label.text()
+    overlay.recording_hud.btn_stop.click()
+    overlay.stop_recording.assert_called_once_with()
+    overlay.recording_hud.close()
+    overlay.recording_hud.deleteLater()
+    QApplication.processEvents()
+    print("  -> HUD групповой записи появляется поверх скрытого overlay и управляет всеми зонами.")
+
+
+def test_mass_recording_hud_separates_video_and_gif_controls():
+    """Видео и GIF должны иметь независимые паузы и остановку."""
+    print("[TEST] Проверка раздельных кнопок паузы и остановки видео/GIF...")
+    from ui.widgets import MassRecordingHud
+
+    hud = MassRecordingHud()
+    events = []
+    hud.pause_video_clicked.connect(lambda: events.append("pause-video"))
+    hud.pause_gif_clicked.connect(lambda: events.append("pause-gif"))
+    hud.stop_video_clicked.connect(lambda: events.append("stop-video"))
+    hud.stop_gif_clicked.connect(lambda: events.append("stop-gif"))
+    hud.update_counts(2, 1)
+
+    hud.btn_pause_video.click()
+    hud.btn_pause_gif.click()
+    hud.btn_stop_video.click()
+    hud.btn_stop_gif.click()
+
+    assert events == ["pause-video", "pause-gif", "stop-video", "stop-gif"]
+    assert hud.btn_pause_video.isEnabled()
+    assert hud.btn_stop_gif.isEnabled()
+    hud.close()
+    hud.deleteLater()
+    QApplication.processEvents()
+    print("  -> Четыре действия работают независимо для видео и GIF.")
+
+
+def test_overlay_mass_pause_targets_only_selected_mode():
+    """Массовая пауза одного формата не должна затрагивать другой формат."""
+    print("[TEST] Проверка массовой паузы только выбранного формата...")
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from ui.overlay import OverlayWindow
+
+    video = SimpleNamespace(mode="video", is_paused=False, set_paused=MagicMock())
+    gif = SimpleNamespace(mode="gif", is_paused=False, set_paused=MagicMock())
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.recording_windows = [video, gif]
+    overlay.recording_hud = None
+
+    OverlayWindow._toggle_mass_pause(overlay, "video")
+    video.set_paused.assert_called_once_with(True)
+    gif.set_paused.assert_not_called()
+
+    print("  -> Пауза видео не меняет состояние GIF-записи.")
+
+
+def test_overlay_mass_stop_targets_only_selected_mode():
+    """Массовая остановка одного формата не должна останавливать другой."""
+    print("[TEST] Проверка массовой остановки только выбранного формата...")
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from ui.overlay import OverlayWindow
+
+    video = SimpleNamespace(mode="video", stop_and_save=MagicMock())
+    gif = SimpleNamespace(mode="gif", stop_and_save=MagicMock())
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.recording_windows = [video, gif]
+
+    OverlayWindow._stop_recording_mode(overlay, "gif")
+    gif.stop_and_save.assert_called_once_with()
+    video.stop_and_save.assert_not_called()
+    print("  -> Остановка GIF не затрагивает видеозаписи.")
+
+
+def test_recording_header_collapses_and_moves_below_top_edge():
+    """Шапка записи должна сворачиваться и не закрывать область у верхнего края."""
+    print("[TEST] Проверка сворачивания шапки записи и положения под верхним краем...")
+    from unittest.mock import patch
+    from PyQt6.QtCore import QRect
+    from ui.recording_window import RecordingFrameWindow
+
+    with patch.object(RecordingFrameWindow, "_start_capture"):
+        window = RecordingFrameWindow(mode="video", rect=QRect(0, 0, 500, 300))
+        try:
+            assert window.header_on_bottom is True
+            assert window.header_frame.geometry().top() >= window.inner_h
+            assert not window.btn_header_toggle.isHidden()
+
+            window._toggle_header_collapsed()
+            assert window.header_collapsed is True
+            assert not window.btn_header_toggle.isHidden()
+            assert window.header_frame.height() < 38
+            assert window.lbl_mode.isHidden()
+
+            window._toggle_header_collapsed()
+            assert window.header_collapsed is False
+            assert not window.lbl_mode.isHidden()
+        finally:
+            window.close()
+            window.deleteLater()
+            QApplication.processEvents()
+    print("  -> Шапка сворачивается в компактную кнопку и возвращается обратно.")
+
+
+def test_recording_frame_keeps_resize_target_when_zones_overlap():
+    """Наведение на маркер должно поднять именно эту рамку перед кликом."""
+    print("[TEST] Проверка выбора рамки при перекрытии зон...")
+    from unittest.mock import MagicMock, patch
+    from PyQt6.QtCore import QPointF
+    from ui.recording_window import RecordingFrameWindow
+
+    class MouseEvent:
+        def position(self):
+            return QPointF(210, 103)
+
+        def globalPosition(self):
+            return QPointF(310, 203)
+
+    with patch.object(RecordingFrameWindow, "_start_capture"):
+        window = RecordingFrameWindow(mode="video", rect=QRectF(100, 100, 300, 200))
+        try:
+            window.raise_ = MagicMock()
+            window.setCursor = MagicMock()
+            window._hit_test_handle = MagicMock(return_value=4)
+            window.mouseMoveEvent(MouseEvent())
+            window.raise_.assert_called_once_with()
+        finally:
+            window.close()
+            window.deleteLater()
+            QApplication.processEvents()
+    print("  -> Рамка с курсором изменения размера становится активной до клика.")
+
+
+def test_mass_recording_hud_is_raised_above_recording_frames():
+    """HUD массовой записи должен возвращаться поверх шапок рамок."""
+    print("[TEST] Проверка приоритета панели массовых действий над рамками...")
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from ui.overlay import OverlayWindow
+
+    hud = SimpleNamespace(isVisible=lambda: True, raise_=MagicMock(), _ensure_topmost=MagicMock())
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.recording_hud = hud
+    OverlayWindow._keep_mass_recording_hud_on_top(overlay)
+    hud.raise_.assert_called_once_with()
+    hud._ensure_topmost.assert_called_once_with()
+    print("  -> Панель массовых действий повторно поднимается поверх шапок записи.")
+
+
+def test_mass_recording_notifications_are_grouped():
+    """Несколько завершившихся зон должны давать одно итоговое уведомление."""
+    print("[TEST] Проверка объединения уведомлений массовой записи...")
+    from unittest.mock import MagicMock
+    from main import FramioApp
+
+    app = FramioApp.__new__(FramioApp)
+    app._mass_saved_pending = [
+        ("video", "Video_1.mp4"),
+        ("video", "Video_2.mp4"),
+        ("gif", "Clip.gif"),
+    ]
+    app.show_notification = MagicMock()
+    FramioApp._flush_mass_saved_notification(app)
+    app.show_notification.assert_called_once()
+    message = app.show_notification.call_args.args[1]
+    assert "2" in message and "1" in message
+    print("  -> Видео и GIF объединяются в одно итоговое уведомление.")
+
+
+def test_config_manager_checks_portable_directory_write_access():
+    """Проверка portable-каталога должна быть явной и не менять ACL пользователя."""
+    print("[TEST] Проверка доступности записи в portable-каталог...")
+    from tempfile import TemporaryDirectory
+    from config import ConfigManager
+
+    with TemporaryDirectory() as tmp:
+        manager = ConfigManager.__new__(ConfigManager)
+        assert manager._is_directory_writable(Path(tmp)) is True
+    print("  -> Проверка права записи выполняется безопасным пробным файлом.")
+
+
+def test_alt_highlight_includes_capture_masks():
+    """Alt должен показывать контуры всех масок, а не только слои-аннотации."""
+    print("[TEST] Проверка подсветки масок при удержании Alt...")
+    from types import SimpleNamespace
+    from ui.overlay import OverlayWindow
+
+    first = CaptureMaskShape(kind="circle", rect=QRectF(20, 20, 36, 36))
+    second = CaptureMaskShape(kind="rect", rect=QRectF(90, 26, 42, 30))
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.layer_manager = SimpleNamespace(shapes=[])
+    overlay.capture_masks = {0: [first, second]}
+
+    image = QImage(180, 120, QImage.Format.Format_ARGB32)
+    image.fill(QColor("#000000"))
+    painter = QPainter(image)
+    OverlayWindow._draw_interactive_objects_highlight(overlay, painter)
+    painter.end()
+
+    highlighted_pixels = 0
+    for y in range(image.height()):
+        for x in range(image.width()):
+            color = image.pixelColor(x, y)
+            if color.red() > 180 and color.green() > 130 and color.blue() < 100:
+                highlighted_pixels += 1
+
+    assert highlighted_pixels > 0
+    print("  -> Обе маски видны в режиме интерактивной подсветки Alt.")
+
+
+def test_quit_app_waits_for_recordings_and_hides_tray():
+    """Выход из трея должен дождаться завершения рабочих потоков записи."""
+    print("[TEST] Проверка полного завершения приложения через трей...")
+    from unittest.mock import MagicMock, patch
+    from main import FramioApp
+
+    recording = MagicMock()
+    app = FramioApp.__new__(FramioApp)
+    app.single_instance_mgr = MagicMock()
+    app.hotkey_mgr = MagicMock()
+    app.overlay = MagicMock()
+    app.tray = MagicMock()
+    app.active_recordings = [recording]
+    app._settings_dlg = None
+
+    with patch("main.QApplication.quit"):
+        FramioApp.quit_app(app)
+
+    recording.cancel_recording.assert_called_once_with()
+    recording.wait_for_shutdown.assert_called_once()
+    app.overlay.close_overlay.assert_called_once_with()
+    app.tray.hide.assert_called_once_with()
+    app.hotkey_mgr.stop.assert_called_once_with()
+    assert app.active_recordings == []
+    print("  -> Записи дожидаются остановки, оверлей и трей закрываются корректно.")
+
+
+def test_capture_cancel_terminates_ffmpeg_child():
+    """Отмена записи должна останавливать FFmpeg, если он сводит файл."""
+    print("[TEST] Проверка остановки дочернего FFmpeg при отмене записи...")
+    from recorder.capture_worker import CaptureWorker
+
+    class FakeProcess:
+        def __init__(self):
+            self.terminated = False
+            self.killed = False
+
+        def poll(self):
+            return None if not self.terminated and not self.killed else 1
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            return 1
+
+    worker = CaptureWorker(
+        mode="video",
+        output_path="",
+        region_getter=lambda: (0, 0, 32, 32),
+    )
+    process = FakeProcess()
+    worker._ffmpeg_process = process
+    worker.cancel()
+
+    assert process.terminated is True
+    assert worker.is_cancelled is True
+    assert worker.running is False
+    print("  -> FFmpeg останавливается вместе с рабочим потоком, временный файл не остаётся.")
+
+
 def test_multiple_capture_masks_and_delete():
     """Несколько масок образуют объединённую область и удаляются по одной."""
     print("[TEST] Проверка нескольких масок области записи и удаления одной маски...")
@@ -116,6 +575,202 @@ def test_multiple_capture_masks_and_delete():
     OverlayWindow._finish_drawing_shape(draft)
     assert draft.capture_masks[0] == [second, first]
     print("  -> Две маски попадают в одну запись как объединённая область, отдельную маску можно удалить.")
+
+
+def test_fit_capture_region_to_all_masks():
+    """Область зоны должна стать общим bounding box всех масок этой зоны."""
+    print("[TEST] Проверка подгонки зоны записи под несколько масок...")
+    from unittest.mock import MagicMock
+    from ui.overlay import OverlayWindow
+    from models.history import HistoryManager
+
+    first = CaptureMaskShape(kind="circle", rect=QRectF(20, 30, 40, 30))
+    second = CaptureMaskShape(kind="rect", rect=QRectF(100, 20, 30, 50))
+    second.rotate_by(25)
+    expected = first.path().boundingRect().united(second.path().boundingRect())
+    original = QRectF(0, 0, 240, 160)
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.regions = [QRectF(original)]
+    overlay.active_region_idx = 0
+    overlay.capture_masks = {0: [first, second]}
+    overlay.is_passthrough = False
+    overlay.history_manager = HistoryManager()
+    overlay._update_toolbar_positions = MagicMock()
+    overlay._sync_close_button_tooltip = MagicMock()
+    overlay._invalidate_layers_cache = MagicMock()
+    overlay.update = MagicMock()
+
+    assert OverlayWindow._fit_region_to_capture_masks(overlay) is True
+    actual = overlay.regions[0]
+    assert abs(actual.left() - expected.left()) < 0.01
+    assert abs(actual.top() - expected.top()) < 0.01
+    assert abs(actual.right() - expected.right()) < 0.01
+    assert abs(actual.bottom() - expected.bottom()) < 0.01
+    overlay._update_toolbar_positions.assert_called_once_with()
+    overlay._invalidate_layers_cache.assert_called_once_with()
+    overlay.update.assert_called_once_with()
+
+    assert overlay.history_manager.undo() is True
+    assert overlay.regions[0] == original
+    assert overlay.history_manager.redo() is True
+    assert overlay.regions[0] == expected
+    print("  -> Рамка зоны совпадает с общей областью всех масок, включая поворот фигуры.")
+
+
+def test_region_transform_history_is_single_command():
+    """Перемещение/ресайз зоны записываются одной командой после отпускания мыши."""
+    print("[TEST] Проверка одной команды истории для всего жеста зоны...")
+    from unittest.mock import MagicMock
+    from ui.overlay import OverlayWindow
+    from models.history import HistoryManager
+
+    old_region = QRectF(10, 20, 100, 80)
+    new_region = QRectF(25, 30, 140, 95)
+    mask = CaptureMaskShape(kind="rect", rect=QRectF(30, 35, 20, 15))
+    old_mask = mask.clone()
+    mask.translate(12, 7)
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.regions = [QRectF(new_region)]
+    overlay.active_region_idx = 0
+    overlay.capture_masks = {0: [mask]}
+    overlay.is_passthrough = False
+    overlay.history_manager = HistoryManager()
+    overlay.region_transform_initial_idx = 0
+    overlay.region_transform_initial_rect = QRectF(old_region)
+    overlay.region_transform_initial_masks = [old_mask]
+    overlay._update_toolbar_positions = MagicMock()
+    overlay._sync_close_button_tooltip = MagicMock()
+    overlay._invalidate_layers_cache = MagicMock()
+    overlay.update = MagicMock()
+
+    assert len(overlay.history_manager.undo_stack) == 0
+    assert OverlayWindow._commit_region_transform_history(overlay) is True
+    assert len(overlay.history_manager.undo_stack) == 1
+
+    assert overlay.history_manager.undo() is True
+    assert overlay.regions[0] == old_region
+    assert overlay.capture_masks[0][0].rect == old_mask.rect
+
+    assert overlay.history_manager.redo() is True
+    assert overlay.regions[0] == new_region
+    assert overlay.capture_masks[0][0].rect == mask.rect
+    print("  -> Весь жест зоны даёт ровно одну запись, Undo/Redo возвращают и рамку, и маску.")
+
+
+def test_capture_mask_add_delete_history():
+    """Добавление и удаление маски должны быть обратимыми действиями."""
+    print("[TEST] Проверка Undo/Redo добавления и удаления маски...")
+    from unittest.mock import MagicMock
+    from ui.overlay import OverlayWindow
+    from models.history import HistoryManager
+
+    mask = CaptureMaskShape(kind="circle", rect=QRectF(30, 30, 40, 40))
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.active_region_idx = 0
+    overlay.capture_masks = {0: []}
+    overlay.temp_shape = mask
+    overlay.shape_origin_pos = QPointF(30, 30)
+    overlay.active_editing_shape = None
+    overlay.last_active_shape = None
+    overlay.transform_box = MagicMock()
+    overlay.history_manager = HistoryManager()
+    overlay._invalidate_layers_cache = MagicMock()
+    overlay.update = MagicMock()
+
+    OverlayWindow._finish_drawing_shape(overlay)
+    assert overlay.capture_masks[0] == [mask]
+    assert len(overlay.history_manager.undo_stack) == 1
+
+    assert overlay.history_manager.undo() is True
+    assert overlay.capture_masks.get(0, []) == []
+    assert overlay.history_manager.redo() is True
+    assert overlay.capture_masks[0] == [mask]
+
+    overlay.transform_box.shape = mask
+    overlay.active_editing_shape = mask
+    overlay.last_active_shape = mask
+    OverlayWindow._delete_capture_mask(overlay, mask)
+    assert overlay.capture_masks == {}
+    assert len(overlay.history_manager.undo_stack) == 2
+
+    assert overlay.history_manager.undo() is True
+    assert overlay.capture_masks[0] == [mask]
+    assert overlay.history_manager.redo() is True
+    assert overlay.capture_masks == {}
+    print("  -> Добавление и удаление маски корректно отменяются и повторяются.")
+
+
+def test_region_add_history():
+    """Добавление новой зоны должно быть одной обратимой командой."""
+    print("[TEST] Проверка Undo/Redo добавления зоны записи...")
+    from unittest.mock import MagicMock
+    from ui.overlay import OverlayWindow
+    from models.history import HistoryManager
+
+    first = QRectF(10, 20, 100, 80)
+    second = QRectF(150, 40, 120, 90)
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.regions = [QRectF(first), QRectF(second)]
+    overlay.capture_masks = {}
+    overlay.active_region_idx = 1
+    overlay.history_manager = HistoryManager()
+    overlay.transform_box = MagicMock()
+    overlay._update_toolbar_positions = MagicMock()
+    overlay._sync_close_button_tooltip = MagicMock()
+    overlay._invalidate_layers_cache = MagicMock()
+    overlay.update = MagicMock()
+    overlay.region_selection_history_before = {
+        "regions": [QRectF(first)],
+        "capture_masks": {},
+        "active_region_idx": 0,
+    }
+
+    assert OverlayWindow._commit_region_selection_history(overlay) is True
+    assert len(overlay.history_manager.undo_stack) == 1
+    assert len(overlay.regions) == 2
+
+    assert overlay.history_manager.undo() is True
+    assert overlay.regions == [first]
+    assert overlay.history_manager.redo() is True
+    assert overlay.regions == [first, second]
+    print("  -> Добавление зоны отменяется и повторяется без затрагивания первой зоны.")
+
+
+def test_region_delete_history():
+    """Удаление активной зоны должно восстанавливаться целиком."""
+    print("[TEST] Проверка Undo/Redo удаления зоны записи...")
+    from unittest.mock import MagicMock
+    from ui.overlay import OverlayWindow
+    from models.history import HistoryManager
+
+    first = QRectF(10, 20, 100, 80)
+    second = QRectF(150, 40, 120, 90)
+    mask = CaptureMaskShape(kind="circle", rect=QRectF(180, 60, 40, 40))
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.regions = [QRectF(first), QRectF(second)]
+    overlay.capture_masks = {1: [mask]}
+    overlay.active_region_idx = 1
+    overlay.recording_region_indices = set()
+    overlay.recording_windows = []
+    overlay.history_manager = HistoryManager()
+    overlay.transform_box = MagicMock()
+    overlay._update_toolbar_positions = MagicMock()
+    overlay._sync_close_button_tooltip = MagicMock()
+    overlay._invalidate_layers_cache = MagicMock()
+    overlay.update = MagicMock()
+
+    OverlayWindow.close_active_region(overlay)
+    assert overlay.regions == [first]
+    assert overlay.capture_masks == {}
+    assert len(overlay.history_manager.undo_stack) == 1
+
+    assert overlay.history_manager.undo() is True
+    assert overlay.regions == [first, second]
+    assert overlay.capture_masks[1] == [mask]
+    assert overlay.history_manager.redo() is True
+    assert overlay.regions == [first]
+    assert overlay.capture_masks == {}
+    print("  -> Удаление зоны возвращает её геометрию и все связанные маски.")
 
 
 def test_constrained_shape_drawing_and_repeated_capture_mask_transform():
@@ -166,6 +821,40 @@ def test_constrained_shape_drawing_and_repeated_capture_mask_transform():
     assert abs(mask.get_bounding_rect().center().x() - actual_center.x()) < 0.01
     assert abs(mask.get_bounding_rect().center().y() - actual_center.y()) < 0.01
     print("  -> Shift даёт ровную геометрию, повторное перемещение маски остаётся синхронным.")
+
+
+def test_mask_history_undo_keeps_transform_geometry_attached():
+    """После Undo маска должна сохранять собственный path при следующем drag."""
+    print("[TEST] Проверка маски после поворота, Undo и повторного перемещения...")
+    from ui.overlay import OverlayWindow
+    from ui.transform_box import HandleType, ShapeTransformBox
+
+    mask = CaptureMaskShape(
+        kind="freeform",
+        points=[QPointF(100, 100), QPointF(180, 100), QPointF(170, 160), QPointF(110, 150)],
+    )
+    transform_box = ShapeTransformBox(mask)
+    transform_box.start_drag(HandleType.ROTATE, QPointF(140, 70))
+    transform_box.drag_to(QPointF(180, 90))
+    old_state, rotated_state = transform_box.finish_drag()
+    assert old_state is not None and rotated_state is not None
+
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    OverlayWindow._apply_shape_geometry(overlay, mask, old_state)
+    assert mask.path.__self__ is mask
+
+    # Это второй drag после Undo — именно здесь раньше рамка отрывалась от контура.
+    start = mask.get_bounding_rect().center()
+    transform_box.set_shape(mask)
+    transform_box.start_drag(HandleType.INSIDE, start)
+    transform_box.drag_to(start + QPointF(35, 20))
+    transform_box.finish_drag()
+
+    contour_center = mask.path().boundingRect().center()
+    frame_center = mask.get_bounding_rect().center()
+    assert abs(contour_center.x() - frame_center.x()) < 0.01
+    assert abs(contour_center.y() - frame_center.y()) < 0.01
+    print("  -> После Undo контур и рамка остаются одним объектом при следующем перемещении.")
 
 
 def test_models_and_history():
@@ -1752,6 +2441,23 @@ def test_single_instance_text_eyedropper_and_inspector():
     print("  -> SingleInstance IPC, TextShape (italic/scale/rotate), пипетка и Alt-инспектор успешно протестированы.")
 
 
+def test_single_instance_mutex_is_atomic():
+    """Два почти одновременных запуска не могут оба стать primary."""
+    print("[TEST] Проверка атомарной блокировки повторного запуска...")
+    from utils.single_instance import SingleInstanceManager
+
+    name = f"Framio_Test_Mutex_{os.getpid()}"
+    first = SingleInstanceManager(server_name=name)
+    second = SingleInstanceManager(server_name=name)
+    try:
+        assert first._acquire_process_mutex() is True
+        assert second._acquire_process_mutex() is False
+    finally:
+        second.cleanup()
+        first.cleanup()
+    print("  -> Только один процесс получает системную блокировку запуска.")
+
+
 def test_mosaic_offset_export_interactive_text_and_flyout_positions():
     print("[TEST] Тестирование экспорта мозаики с оффсетом, интерактивного текста и внешних тулбаров...")
     from models.shapes import RegionalEffectShape, TextShape
@@ -2319,17 +3025,24 @@ def test_recording_start_hides_selection_overlay():
     overlay.setAttribute = MagicMock()
     overlay.clearMask = MagicMock()
     overlay.update = MagicMock()
-    overlay.hide = MagicMock()
+    lifecycle = []
+    overlay.hide = MagicMock(side_effect=lambda: lifecycle.append("overlay-hidden"))
     overlay.show = MagicMock()
-    overlay._hide_toolbars = MagicMock()
+    overlay._hide_toolbars = MagicMock(side_effect=lambda: lifecycle.append("toolbars-hidden"))
     overlay._unclip_timer = MagicMock()
 
-    with patch("ui.overlay.RecordingFrameWindow", return_value=rec_window):
+    def make_recording_window(*_args, **_kwargs):
+        lifecycle.append("recording-window-constructed")
+        return rec_window
+
+    with patch("ui.overlay.RecordingFrameWindow", side_effect=make_recording_window):
         OverlayWindow.start_recording(overlay, mode="video", all_regions=False)
 
     overlay.hide.assert_called_once_with()
     overlay.show.assert_not_called()
     overlay._hide_toolbars.assert_called_once_with()
+    assert lifecycle.index("overlay-hidden") < lifecycle.index("recording-window-constructed")
+    assert lifecycle.index("toolbars-hidden") < lifecycle.index("recording-window-constructed")
     assert overlay.recording_windows == [rec_window]
 
     print("  -> После старта GIF/видео затемнение и интерактивное выделение снимаются сразу.")
@@ -2411,10 +3124,35 @@ if __name__ == "__main__":
         test_dynamic_text_editing_and_filter_history()
         test_mosaic_offset_export_interactive_text_and_flyout_positions()
         test_single_instance_text_eyedropper_and_inspector()
+        test_single_instance_mutex_is_atomic()
         test_models_and_history()
         test_capture_masks()
+        test_capture_mask_edges_are_antialiased_in_video_frames()
+        test_recording_frame_marks_capture_mask_separately()
+        test_recording_frame_paint_handles_mass_recording_mask()
+        test_recording_mosaic_is_applied_to_video_frame()
+        test_recording_canvas_renders_live_mosaic_from_background()
+        test_mass_recording_hud_has_stop_all_action()
+        test_overlay_shows_mass_recording_hud_for_group()
+        test_mass_recording_hud_separates_video_and_gif_controls()
+        test_overlay_mass_pause_targets_only_selected_mode()
+        test_overlay_mass_stop_targets_only_selected_mode()
+        test_recording_header_collapses_and_moves_below_top_edge()
+        test_recording_frame_keeps_resize_target_when_zones_overlap()
+        test_mass_recording_hud_is_raised_above_recording_frames()
+        test_mass_recording_notifications_are_grouped()
+        test_config_manager_checks_portable_directory_write_access()
+        test_alt_highlight_includes_capture_masks()
+        test_quit_app_waits_for_recordings_and_hides_tray()
+        test_capture_cancel_terminates_ffmpeg_child()
         test_multiple_capture_masks_and_delete()
+        test_fit_capture_region_to_all_masks()
+        test_region_transform_history_is_single_command()
+        test_capture_mask_add_delete_history()
+        test_region_add_history()
+        test_region_delete_history()
         test_constrained_shape_drawing_and_repeated_capture_mask_transform()
+        test_mask_history_undo_keeps_transform_geometry_attached()
         test_rotated_regional_effect_stencil_and_i18n()
         test_regional_effect_dynamic_resampling_and_alt_inspector()
         test_regional_effects_and_whole_screen_filter_reset()

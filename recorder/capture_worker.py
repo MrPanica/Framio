@@ -72,6 +72,7 @@ class CaptureWorker(QThread):
         self.audio_recorder = None
         self.temp_video_path = ""
         self.temp_audio_path = ""
+        self._ffmpeg_process = None
 
     def set_target_hwnd(self, hwnd: int | None):
         self.target_hwnd = hwnd
@@ -110,9 +111,118 @@ class CaptureWorker(QThread):
     def cancel(self):
         self.is_cancelled = True
         self.running = False
+        self._terminate_ffmpeg_process()
 
     def stop(self):
         self.running = False
+
+    def _terminate_ffmpeg_process(self):
+        """Останавливает дочерний FFmpeg при отмене записи или выходе приложения."""
+        proc = self._ffmpeg_process
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=2.0)
+        except Exception:
+            try:
+                proc.kill()
+                proc.wait(timeout=2.0)
+            except Exception:
+                pass
+
+    def _cleanup_cancelled_files(self):
+        """Удаляет временные и недописанные файлы после отмены записи."""
+        paths = [
+            self.temp_video_path,
+            self.temp_audio_path,
+            self.output_path,
+            f"{self.output_path}.comp.mp4" if self.output_path else "",
+            f"{self.output_path}.comp.gif" if self.output_path else "",
+        ]
+        for path in paths:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+
+    def _apply_censor_shapes(self, frame_bgr, all_shapes, offset: QPointF):
+        """Применяет мозаичную/размытую аннотацию к текущему видеокадру."""
+        if frame_bgr is None or not all_shapes:
+            return frame_bgr
+
+        fh, fw = frame_bgr.shape[:2]
+        for shape in all_shapes:
+            if shape is None or not getattr(shape, "visible", True):
+                continue
+
+            is_mosaic = getattr(shape, "is_mosaic", False) or shape.__class__.__name__ == "MosaicShape"
+            is_blur = getattr(shape, "is_blur", False) or shape.__class__.__name__ == "BlurShape"
+            if not (is_mosaic or is_blur):
+                continue
+
+            pixel_size = max(1, int(getattr(shape, "pixel_size", 8) or 8))
+            blur_radius = max(1, int(getattr(shape, "blur_radius", 15) or 15))
+            shape_name = shape.__class__.__name__
+
+            if shape_name in ("MosaicShape", "BlurShape", "RectangleShape", "CircleShape"):
+                rect = shape.rect.translated(-offset.x(), -offset.y()).normalized()
+                sx = max(0, min(fw - 1, int(rect.x())))
+                sy = max(0, min(fh - 1, int(rect.y())))
+                sw = max(1, min(fw - sx, int(rect.width())))
+                sh = max(1, min(fh - sy, int(rect.height())))
+                if sw < 4 or sh < 4:
+                    continue
+
+                roi = frame_bgr[sy:sy + sh, sx:sx + sw]
+                if shape_name == "CircleShape":
+                    mask = np.zeros((sh, sw), dtype=np.uint8)
+                    cv2.ellipse(mask, (sw // 2, sh // 2), (sw // 2, sh // 2), 0, 0, 360, 255, -1)
+                    if is_mosaic:
+                        small_w = max(1, sw // pixel_size)
+                        small_h = max(1, sh // pixel_size)
+                        small = cv2.resize(roi, (small_w, small_h), interpolation=cv2.INTER_NEAREST)
+                        processed = cv2.resize(small, (sw, sh), interpolation=cv2.INTER_NEAREST)
+                    else:
+                        kernel = max(3, (blur_radius // 2) * 2 + 1)
+                        processed = cv2.GaussianBlur(roi, (kernel, kernel), 0)
+                    roi[mask > 0] = processed[mask > 0]
+                    frame_bgr[sy:sy + sh, sx:sx + sw] = roi
+                elif is_mosaic:
+                    small_w = max(1, sw // pixel_size)
+                    small_h = max(1, sh // pixel_size)
+                    small = cv2.resize(roi, (small_w, small_h), interpolation=cv2.INTER_NEAREST)
+                    frame_bgr[sy:sy + sh, sx:sx + sw] = cv2.resize(
+                        small, (sw, sh), interpolation=cv2.INTER_NEAREST
+                    )
+                else:
+                    kernel = max(3, (blur_radius // 2) * 2 + 1)
+                    frame_bgr[sy:sy + sh, sx:sx + sw] = cv2.GaussianBlur(roi, (kernel, kernel), 0)
+
+            elif shape_name == "PenShape" and getattr(shape, "points", None) and len(shape.points) >= 2:
+                mask = np.zeros((fh, fw), dtype=np.uint8)
+                points = np.array(
+                    [[int(point.x() - offset.x()), int(point.y() - offset.y())] for point in shape.points],
+                    dtype=np.int32,
+                )
+                pen_width = max(16, int(shape.stroke_width * 2))
+                cv2.polylines(mask, [points], isClosed=False, color=255, thickness=pen_width, lineType=cv2.LINE_AA)
+                if np.any(mask):
+                    if is_mosaic:
+                        small_w = max(1, fw // pixel_size)
+                        small_h = max(1, fh // pixel_size)
+                        small = cv2.resize(frame_bgr, (small_w, small_h), interpolation=cv2.INTER_NEAREST)
+                        processed = cv2.resize(small, (fw, fh), interpolation=cv2.INTER_NEAREST)
+                    else:
+                        kernel = max(3, (blur_radius // 2) * 2 + 1)
+                        processed = cv2.GaussianBlur(frame_bgr, (kernel, kernel), 0)
+                    frame_bgr[mask > 0] = processed[mask > 0]
+
+        return frame_bgr
 
     def run(self):
         self.running = True
@@ -212,63 +322,7 @@ class CaptureWorker(QThread):
                                 fh, fw = frame_bgr.shape[:2]
 
                                 # 1. Наложение эффектов цензуры (мозаика и блюр) прямо на BGR-кадр
-                                for s in all_shapes:
-                                    if s is None or not getattr(s, "visible", True):
-                                        continue
-                                    is_mos = getattr(s, "is_mosaic", False) or s.__class__.__name__ == "MosaicShape"
-                                    is_blr = getattr(s, "is_blur", False) or s.__class__.__name__ == "BlurShape"
-                                    if not (is_mos or is_blr):
-                                        continue
-
-                                    px_size = getattr(s, "pixel_size", 8)
-                                    blur_rad = getattr(s, "blur_radius", 15)
-
-                                    if s.__class__.__name__ in ("MosaicShape", "BlurShape", "RectangleShape", "CircleShape"):
-                                        r = s.rect.translated(-offset.x(), -offset.y()).normalized()
-                                        sx = max(0, min(fw - 1, int(r.x())))
-                                        sy = max(0, min(fh - 1, int(r.y())))
-                                        sw = max(1, min(fw - sx, int(r.width())))
-                                        sh = max(1, min(fh - sy, int(r.height())))
-                                        if sw >= 4 and sh >= 4:
-                                            roi = frame_bgr[sy:sy+sh, sx:sx+sw]
-                                            if s.__class__.__name__ == "CircleShape":
-                                                mask = np.zeros((sh, sw), dtype=np.uint8)
-                                                cv2.ellipse(mask, (sw // 2, sh // 2), (sw // 2, sh // 2), 0, 0, 360, 255, -1)
-                                                if is_mos:
-                                                    bw = max(1, sw // px_size)
-                                                    bh = max(1, sh // px_size)
-                                                    sm = cv2.resize(roi, (bw, bh), interpolation=cv2.INTER_NEAREST)
-                                                    proc_roi = cv2.resize(sm, (sw, sh), interpolation=cv2.INTER_NEAREST)
-                                                else:
-                                                    ksize = max(3, (blur_rad // 2) * 2 + 1)
-                                                    proc_roi = cv2.GaussianBlur(roi, (ksize, ksize), 0)
-                                                roi[mask > 0] = proc_roi[mask > 0]
-                                                frame_bgr[sy:sy+sh, sx:sx+sw] = roi
-                                            else:
-                                                if is_mos:
-                                                    bw = max(1, sw // px_size)
-                                                    bh = max(1, sh // px_size)
-                                                    sm = cv2.resize(roi, (bw, bh), interpolation=cv2.INTER_NEAREST)
-                                                    frame_bgr[sy:sy+sh, sx:sx+sw] = cv2.resize(sm, (sw, sh), interpolation=cv2.INTER_NEAREST)
-                                                else:
-                                                    ksize = max(3, (blur_rad // 2) * 2 + 1)
-                                                    frame_bgr[sy:sy+sh, sx:sx+sw] = cv2.GaussianBlur(roi, (ksize, ksize), 0)
-
-                                    elif s.__class__.__name__ == "PenShape" and getattr(s, "points", None) and len(s.points) >= 2:
-                                        mask = np.zeros((fh, fw), dtype=np.uint8)
-                                        pts = np.array([[int(p.x() - offset.x()), int(p.y() - offset.y())] for p in s.points], dtype=np.int32)
-                                        w_pen = max(16, int(s.stroke_width * 2))
-                                        cv2.polylines(mask, [pts], isClosed=False, color=255, thickness=w_pen, lineType=cv2.LINE_AA)
-                                        if np.any(mask):
-                                            if is_mos:
-                                                bw = max(1, fw // px_size)
-                                                bh = max(1, fh // px_size)
-                                                sm = cv2.resize(frame_bgr, (bw, bh), interpolation=cv2.INTER_NEAREST)
-                                                proc_frame = cv2.resize(sm, (fw, fh), interpolation=cv2.INTER_NEAREST)
-                                            else:
-                                                ksize = max(3, (blur_rad // 2) * 2 + 1)
-                                                proc_frame = cv2.GaussianBlur(frame_bgr, (ksize, ksize), 0)
-                                            frame_bgr[mask > 0] = proc_frame[mask > 0]
+                                frame_bgr = self._apply_censor_shapes(frame_bgr, all_shapes, offset)
 
                                 # 2. Отрисовка векторных фигур (стрелки, карандаш, текст, рамки)
                                 normal_vector_shapes = [
@@ -353,6 +407,7 @@ class CaptureWorker(QThread):
         creation_flags = 0x08000000 if os.name == "nt" else 0
         full_cmd = list(cmd) + ["-progress", "pipe:1", "-stats_period", "0.3"]
         self._emit_progress(base_pct, stage_name)
+        proc = None
         try:
             proc = subprocess.Popen(
                 full_cmd,
@@ -362,8 +417,12 @@ class CaptureWorker(QThread):
                 bufsize=1,
                 creationflags=creation_flags
             )
+            self._ffmpeg_process = proc
             pct_span = max_pct - base_pct
             for line in proc.stdout:
+                if self.is_cancelled:
+                    self._terminate_ffmpeg_process()
+                    break
                 line = line.strip()
                 if line.startswith("frame="):
                     try:
@@ -377,10 +436,13 @@ class CaptureWorker(QThread):
                 elif line == "progress=end":
                     self._emit_progress(max_pct, f"{stage_name}: {max_pct}%")
             proc.wait()
-            return proc.returncode
+            return -2 if self.is_cancelled else proc.returncode
         except Exception as e:
             print(f"[CaptureWorker] Ошибка FFmpeg с прогрессом: {e}")
             return -1
+        finally:
+            if self._ffmpeg_process is proc:
+                self._ffmpeg_process = None
 
     def _finalize_recording(self):
         if getattr(self, "is_cancelled", False):
@@ -394,12 +456,8 @@ class CaptureWorker(QThread):
                     self.audio_recorder.stop()
                 except Exception:
                     pass
-            for p in [self.temp_video_path, self.temp_audio_path]:
-                if p and os.path.exists(p):
-                    try:
-                        os.remove(p)
-                    except Exception:
-                        pass
+            self._terminate_ffmpeg_process()
+            self._cleanup_cancelled_files()
             return
 
         # 1. Останавливаем видео и аудио
@@ -416,6 +474,11 @@ class CaptureWorker(QThread):
 
         if self.audio_recorder:
             self.audio_recorder.stop(target_duration=video_duration)
+
+        if self.is_cancelled:
+            self._terminate_ffmpeg_process()
+            self._cleanup_cancelled_files()
+            return
 
         self._emit_progress(5, "Финализация записи...")
 
@@ -434,6 +497,9 @@ class CaptureWorker(QThread):
                 ]
                 mux_max = 30 if self.compress_video else 95
                 ret = self._run_ffmpeg_with_progress(cmd, total_frames, 5, mux_max, "Сведение звука")
+                if self.is_cancelled:
+                    self._cleanup_cancelled_files()
+                    return
                 if ret == 0 and os.path.exists(self.output_path):
                     print("[CaptureWorker] Видео со звуком успешно собрано!")
                 else:
@@ -463,6 +529,9 @@ class CaptureWorker(QThread):
             ]
             gif_max = 60 if self.compress_gif else 95
             ret = self._run_ffmpeg_with_progress(cmd, total_frames, 10, gif_max, f"Генерация GIF ({self.gif_colors} цветов)")
+            if self.is_cancelled:
+                self._cleanup_cancelled_files()
+                return
             if ret == 0:
                 print(f"[CaptureWorker] Оптимизированный GIF ({self.gif_colors} цветов) успешно сохранён!")
             else:
@@ -515,6 +584,9 @@ class CaptureWorker(QThread):
                     comp_video
                 ]
                 ret_v = self._run_ffmpeg_with_progress(cmd_v, total_frames, 30, 95, "Сжатие H.264")
+                if self.is_cancelled:
+                    self._cleanup_cancelled_files()
+                    return
                 if ret_v == 0 and os.path.exists(comp_video):
                     if os.path.getsize(comp_video) < os.path.getsize(self.output_path):
                         os.replace(comp_video, self.output_path)
@@ -523,6 +595,10 @@ class CaptureWorker(QThread):
                         os.remove(comp_video)
             except Exception as e_v:
                 print(f"[CaptureWorker] Ошибка оптимизации видео: {e_v}")
+
+        if self.is_cancelled:
+            self._cleanup_cancelled_files()
+            return
 
         self._emit_progress(100, "Готово")
         self.recording_finished.emit(self.output_path)

@@ -3,8 +3,7 @@
 Фильтры реального времени для обработки скриншотов и кадров видео/GIF.
 """
 
-import cv2
-import numpy as np
+from __future__ import annotations
 
 class FilterType:
     NONE = "none"
@@ -44,6 +43,9 @@ def apply_filter(frame_bgr: np.ndarray, filter_type: str) -> np.ndarray:
         return frame_bgr
 
     try:
+        import cv2
+        import numpy as np
+
         if filter_type == FilterType.GRAYSCALE:
             gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
             return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)

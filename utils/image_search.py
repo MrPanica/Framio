@@ -12,6 +12,9 @@ import urllib.parse
 import base64
 import requests
 
+
+FREEIMAGE_API_KEY = os.environ.get("FRAMIO_FREEIMAGE_API_KEY", "").strip()
+
 def open_in_browser(url: str) -> bool:
     """Гарантированно открывает URL в браузере по умолчанию в новой вкладке."""
     # 1. Попытка через стандартный webbrowser.open_new_tab
@@ -40,25 +43,27 @@ def open_in_browser(url: str) -> bool:
 
 def upload_image_to_cdn(png_bytes: bytes) -> str | None:
     """Загружает PNG на быстрый анонимный CDN и возвращает прямую ссылку на файл."""
-    # Провайдер 1: FreeImage.host (высокая надежность и глобальный CDN iili.io)
-    try:
-        b64 = base64.b64encode(png_bytes).decode("ascii")
-        r = requests.post(
-            "https://freeimage.host/api/1/upload",
-            data={
-                "key": "6d207e02198a847aa98d0a2a901485a5",
-                "action": "upload",
-                "source": b64,
-                "format": "json"
-            },
-            timeout=5
-        )
-        if r.status_code == 200:
-            url = r.json().get("image", {}).get("url")
-            if url:
-                return url
-    except Exception as e:
-        print(f"[ImageSearch] FreeImage upload failed: {e}")
+    # Провайдер 1: FreeImage.host. Его ключ задаётся только через окружение;
+    # секреты не должны попадать в исходники и публичные сборки.
+    if FREEIMAGE_API_KEY:
+        try:
+            b64 = base64.b64encode(png_bytes).decode("ascii")
+            r = requests.post(
+                "https://freeimage.host/api/1/upload",
+                data={
+                    "key": FREEIMAGE_API_KEY,
+                    "action": "upload",
+                    "source": b64,
+                    "format": "json"
+                },
+                timeout=5
+            )
+            if r.status_code == 200:
+                url = r.json().get("image", {}).get("url")
+                if url:
+                    return url
+        except Exception as e:
+            print(f"[ImageSearch] FreeImage upload failed: {e}")
 
     # Провайдер 2: Uguu.se (прямой CDN URL, без задержек)
     try:
