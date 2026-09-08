@@ -40,7 +40,7 @@ class _KBDLLHOOKSTRUCT(ctypes.Structure):
         ('time', wintypes.DWORD),
         ('dwExtraInfo', ctypes.POINTER(wintypes.ULONG))
     ]
-_HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_longlong, ctypes.c_int, wintypes.WPARAM, ctypes.POINTER(_KBDLLHOOKSTRUCT))
+_HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_longlong, ctypes.c_int, wintypes.WPARAM, ctypes.c_void_p)
 
 
 class HotkeyRecorderButton(QPushButton):
@@ -52,6 +52,9 @@ class HotkeyRecorderButton(QPushButton):
     При отпускании клавиш комбинация фиксируется.
     Поддерживает одиночные клавиши (Print Screen, F1-F12, буквы) и комбинации с модификаторами.
     """
+    _native_print_screen_display = pyqtSignal(str)
+    _native_print_screen_finish = pyqtSignal(str)
+
     def __init__(self, target_line_edit: QLineEdit, parent=None):
         super().__init__(tr("settings_btn_record", "Назначить"), parent)
         self.target_line_edit = target_line_edit
@@ -64,6 +67,8 @@ class HotkeyRecorderButton(QPushButton):
         self._ll_hook_proc = None
         self._global_hotkey_manager = None
         self._global_hotkeys_were_active = False
+        self._native_print_screen_display.connect(self._update_live_display)
+        self._native_print_screen_finish.connect(self._finish_recording)
         self.setToolTip(tr("settings_hk_tooltip", "Нажмите для записи комбинации клавиш (Ctrl, Shift, Alt, F1-F12, буквы, Print Screen)"))
         self.clicked.connect(self._toggle_recording)
         self.setFixedWidth(96)
@@ -115,31 +120,44 @@ class HotkeyRecorderButton(QPushButton):
             try:
                 user32 = ctypes.windll.user32
                 def _ll_proc(nCode, wParam, lParam):
-                    if nCode >= 0 and getattr(self, "is_recording", False):
-                        # 0x0100=WM_KEYDOWN, 0x0101=WM_KEYUP, 0x0104=WM_SYSKEYDOWN, 0x0105=WM_SYSKEYUP
-                        if wParam in (0x0100, 0x0104):
-                            vk = lParam.contents.vkCode
-                            if vk == 0x2C:  # VK_SNAPSHOT (Print Screen)
-                                mods = self._get_win32_modifiers()
-                                combo = "+".join(mods + ["Print Screen"]) if mods else "Print Screen"
-                                self._recorded_key = "Print Screen"
-                                self._active_mods = list(mods)
-                                QTimer.singleShot(0, lambda c=combo: self._update_live_display(c))
-                                return 1  # Подавляем системные «Ножницы» Windows!
-                        elif wParam in (0x0101, 0x0105):
-                            vk = lParam.contents.vkCode
-                            if vk == 0x2C:
-                                mods = self._active_mods
-                                combo = "+".join(mods + ["Print Screen"]) if mods else "Print Screen"
-                                QTimer.singleShot(0, lambda c=combo: self._finish_recording(c))
-                                return 1
+                    if nCode >= 0 and lParam and getattr(self, "is_recording", False):
+                        vk = ctypes.cast(lParam, ctypes.POINTER(_KBDLLHOOKSTRUCT)).contents.vkCode
+                        if self._handle_native_print_screen(wParam, vk):
+                            return 1  # Подавляем системные «Ножницы» Windows!
                     return user32.CallNextHookEx(None, nCode, wParam, lParam)
 
+                user32.SetWindowsHookExW.argtypes = [ctypes.c_int, _HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+                user32.SetWindowsHookExW.restype = wintypes.HHOOK
+                user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, ctypes.c_void_p]
+                user32.CallNextHookEx.restype = ctypes.c_longlong
+                user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+                user32.UnhookWindowsHookEx.restype = wintypes.BOOL
                 self._ll_hook_proc = _HOOKPROC(_ll_proc)
                 self._ll_hook_id = user32.SetWindowsHookExW(13, self._ll_hook_proc, None, 0)
             except Exception:
                 self._ll_hook_id = None
                 self._ll_hook_proc = None
+
+    def _handle_native_print_screen(self, w_param, vk_code, modifiers=None) -> bool:
+        """Обрабатывает VK_SNAPSHOT и безопасно передаёт результат в GUI-поток."""
+        if not self.is_recording or vk_code != 0x2C:
+            return False
+
+        if w_param in (0x0100, 0x0104):  # WM_KEYDOWN / WM_SYSKEYDOWN
+            mods = list(modifiers) if modifiers is not None else self._get_win32_modifiers()
+            combo = "+".join(mods + ["Print Screen"]) if mods else "Print Screen"
+            self._recorded_key = "Print Screen"
+            self._active_mods = mods
+            self._native_print_screen_display.emit(combo)
+            return True
+
+        if w_param in (0x0101, 0x0105):  # WM_KEYUP / WM_SYSKEYUP
+            mods = list(self._active_mods)
+            combo = "+".join(mods + ["Print Screen"]) if mods else "Print Screen"
+            self._native_print_screen_finish.emit(combo)
+            return True
+
+        return False
 
     def _get_win32_modifiers(self) -> list:
         mods = []

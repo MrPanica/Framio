@@ -1360,6 +1360,18 @@ def test_hotkey_recorder_button():
     assert btn.text() == "Назначить"
     assert edit.text() == "Ctrl+F9"
 
+    # Нативный Windows-путь Print Screen: обновление и завершение должны
+    # попасть обратно в GUI-поток, даже если callback hook вызван из другого.
+    btn._start_recording()
+    assert btn._handle_native_print_screen(0x0100, 0x2C, ["Ctrl"]) is True
+    QApplication.processEvents()
+    assert edit.text() == "Ctrl+Print Screen"
+    assert btn.is_recording
+    assert btn._handle_native_print_screen(0x0101, 0x2C) is True
+    QApplication.processEvents()
+    assert not btn.is_recording
+    assert edit.text() == "Ctrl+Print Screen"
+
     # Тест записи одиночной клавиши Print Screen (Key_Print / KeyRelease)
     btn._start_recording()
     assert btn.is_recording
