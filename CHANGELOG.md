@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.7] - 2026-09-08
+
+### English
+
+Fixed conflicting `Print Screen` shortcuts.
+
+- A standalone `Print Screen` shortcut no longer intercepts combinations with `Ctrl`, `Alt`, `Shift`, or `Win`.
+- `Ctrl+Alt+Print Screen` now reaches the configured fullscreen screenshot action.
+
+### Русский
+
+Исправлен конфликт горячих клавиш с `Print Screen`.
+
+- Одиночный `Print Screen` больше не перехватывает сочетания с `Ctrl`, `Alt`, `Shift` или `Win`.
+- `Ctrl+Alt+Print Screen` теперь запускает назначенный скриншот всего экрана.
+
 ## [1.0.6] - 2026-09-08
 
 ### English

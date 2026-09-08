@@ -960,7 +960,12 @@ def test_video_and_gif_recorders(tmp_path):
 def test_hotkey_parsing():
     print("[TEST] Тестирование разбора горячих клавиш...")
     from config import DEFAULT_HOTKEY_SCREENSHOT
-    from utils.hotkey_manager import GlobalHotkeyManager
+    from utils.hotkey_manager import (
+        GlobalHotkeyManager,
+        MOD_ALT,
+        MOD_CONTROL,
+        snapshot_hotkey_matches_modifiers,
+    )
 
     # Print Screen должен делать быстрый снимок всего экрана без оверлея.
     assert DEFAULT_HOTKEY_SCREENSHOT == "Print Screen"
@@ -969,6 +974,13 @@ def test_hotkey_parsing():
     assert vk_default == 0x2C
     manager = GlobalHotkeyManager(hotkey_screenshot=DEFAULT_HOTKEY_SCREENSHOT)
     assert manager.hotkey_screenshot == "Print Screen"
+    assert snapshot_hotkey_matches_modifiers("Print Screen", 0)
+    assert not snapshot_hotkey_matches_modifiers(
+        "Print Screen", MOD_CONTROL | MOD_ALT
+    )
+    assert snapshot_hotkey_matches_modifiers(
+        "Ctrl+Alt+Print Screen", MOD_CONTROL | MOD_ALT
+    )
 
     mods, vk = parse_hotkey_string("Ctrl+Shift+Print Screen")
     assert vk == 0x2C  # VK_SNAPSHOT

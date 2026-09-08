@@ -70,6 +70,12 @@ def parse_hotkey_string(hotkey_str: str):
     return modifiers, vk
 
 
+def snapshot_hotkey_matches_modifiers(hotkey_str: str, active_modifiers: int) -> bool:
+    """Проверяет, совпадает ли Print Screen-хоткей с зажатыми модификаторами."""
+    modifiers, vk = parse_hotkey_string(hotkey_str)
+    return vk == VK_SNAPSHOT and modifiers == active_modifiers
+
+
 class GlobalHotkeyManager(QObject):
     capture_triggered = pyqtSignal()
     quick_fullscreen_triggered = pyqtSignal()
@@ -232,11 +238,26 @@ class GlobalHotkeyManager(QObject):
                         if kb.vkCode == VK_SNAPSHOT:
                             # 0x0100 = WM_KEYDOWN, 0x0104 = WM_SYSKEYDOWN
                             if wParam in (0x0100, 0x0104):
+                                active_modifiers = 0
+                                for modifier_vk, modifier_flag in (
+                                    (0x11, MOD_CONTROL),  # VK_CONTROL
+                                    (0x12, MOD_ALT),      # VK_MENU
+                                    (0x10, MOD_SHIFT),    # VK_SHIFT
+                                    (0x5B, MOD_WIN),      # VK_LWIN
+                                    (0x5C, MOD_WIN),      # VK_RWIN
+                                ):
+                                    if user32.GetAsyncKeyState(modifier_vk) & 0x8000:
+                                        active_modifiers |= modifier_flag
+
+                                matched = False
                                 for s_id, s_str, s_sig in snapshot_configs:
-                                    s_sig.emit()
-                                    if s_id == self.ID_CAPTURE:
-                                        self.hotkey_triggered.emit()
-                                return 1  # Подавляем системные ножницы Windows
+                                    if snapshot_hotkey_matches_modifiers(s_str, active_modifiers):
+                                        s_sig.emit()
+                                        if s_id == self.ID_CAPTURE:
+                                            self.hotkey_triggered.emit()
+                                        matched = True
+                                if matched:
+                                    return 1  # Подавляем системные ножницы Windows
                     return user32.CallNextHookEx(None, nCode, wParam, lParam)
 
                 hook_proc_ref = HOOKPROC(_ll_hook_cb)
