@@ -3288,11 +3288,9 @@ class OverlayWindow(QWidget):
             img.save(path)
             saved_info = f"\nСохранён: {filename}"
 
-        # 2. Копирование в буфер обмена
-        # Google Lens надёжно принимает снимок через официальный интерфейс
-        # вставки. Кладём его в буфер всегда для этого действия, даже если
-        # обычное автоматическое копирование отключено в настройках.
-        if self.cfg.auto_copy_to_clipboard or engine == "google":
+        # 2. Копирование в буфер обмена (если включено в настройках).
+        # Google Lens получает PNG отдельной прямой multipart-загрузкой.
+        if self.cfg.auto_copy_to_clipboard:
             QApplication.clipboard().setImage(img)
 
         # 3. Звук захвата

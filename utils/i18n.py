@@ -83,9 +83,10 @@ TRANSLATIONS = {
         "notif_clipboard_standard": "Изображение скопировано в буфер обмена (готово для вставки Ctrl+V).",
         "notif_clipboard_data_uri_many": "{count} Data URI скопировано в буфер в виде текста.",
         "notif_clipboard_data_uri_one": "Data URI (Base64) скопирован в буфер в виде текста.",
-        "image_search_google_ready": "Открыта страница Google Lens. Изображение вставляется из буфера; если не вставилось автоматически, нажмите Ctrl+V.",
+        "image_search_google_ready": "Выполняется прямая загрузка снимка в Google Lens.",
+        "image_search_google_failed": "Не удалось открыть прямую загрузку Google Lens.",
         "image_search_yandex_fallback": "Снимок скопирован в буфер обмена. Нажмите Ctrl+V в строке поиска Яндекс.Картинок.",
-        "image_search_google_preparing": "Открывается Google Lens. Изображение подготовлено в буфере обмена.",
+        "image_search_google_preparing": "Подготавливается прямая загрузка снимка в Google Lens.",
         "image_search_direct_preparing": "Скриншот отправляется в {engine}. Результаты откроются в браузере.",
 
         # --- Окно записи (RecordingFrameWindow) ---
@@ -797,9 +798,10 @@ TRANSLATIONS = {
         "notif_clipboard_standard": "Image copied to the clipboard (ready to paste with Ctrl+V).",
         "notif_clipboard_data_uri_many": "{count} Data URIs copied to the clipboard as text.",
         "notif_clipboard_data_uri_one": "Data URI (Base64) copied to the clipboard as text.",
-        "image_search_google_ready": "Google Lens is open. The image is being pasted from the clipboard; if it was not pasted automatically, press Ctrl+V.",
+        "image_search_google_ready": "Direct upload to Google Lens has started.",
+        "image_search_google_failed": "Could not open the direct Google Lens upload.",
         "image_search_yandex_fallback": "The screenshot was copied to the clipboard. Press Ctrl+V in Yandex Images.",
-        "image_search_google_preparing": "Opening Google Lens. The image is ready in the clipboard.",
+        "image_search_google_preparing": "Preparing a direct upload to Google Lens.",
         "image_search_direct_preparing": "Sending the screenshot to {engine}. Results will open in the browser.",
 
         # --- Recording Window (RecordingFrameWindow) ---

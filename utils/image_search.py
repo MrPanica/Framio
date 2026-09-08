@@ -3,22 +3,25 @@
 Поиск по изображениям через Google Lens и Яндекс.Картинки.
 
 Изображение никогда не отправляется на промежуточный хостинг. Для Google Lens
-используется его обычная страница поиска с вставкой изображения из буфера: URL
-с ``vsrid``, который Google выдаёт внутреннему загрузчику, привязан к сессии и
-может стать недействительным сразу после открытия в другом контексте браузера.
+приложение открывает одноразовую локальную HTML-форму, которая отправляет PNG
+браузерной multipart-навигацией прямо на официальный upload-адрес Google.
 """
 
 import os
 import subprocess
+import base64
+import html
+import tempfile
 import threading
 import time
 import webbrowser
 import urllib.parse
 import json
+from pathlib import Path
 import requests
-from utils.i18n import tr
+from utils.i18n import get_current_language, tr
 
-GOOGLE_LENS_URL = "https://lens.google.com/"
+GOOGLE_LENS_UPLOAD_URL = "https://lens.google.com/v3/upload"
 YANDEX_IMAGE_SEARCH_URL = "https://yandex.ru/images/search"
 
 def open_in_browser(url: str) -> bool:
@@ -47,72 +50,82 @@ def open_in_browser(url: str) -> bool:
     return False
 
 
-def _foreground_window_is_browser() -> bool:
-    """Проверяет, что активное окно похоже на окно браузера.
-
-    Это защита от случайной вставки в другое приложение, если пользователь
-    успел переключиться во время открытия Google Lens. На других ОС вставка
-    через системные клавиши не используется.
-    """
-    if os.name != "nt":
-        return False
-    try:
-        import ctypes
-
-        user32 = ctypes.windll.user32
-        hwnd = user32.GetForegroundWindow()
-        if not hwnd:
-            return False
-        buffer = ctypes.create_unicode_buffer(512)
-        user32.GetWindowTextW(hwnd, buffer, len(buffer))
-        title = buffer.value.casefold()
-        return any(
-            marker in title
-            for marker in ("google", "lens", "chrome", "edge", "firefox", "opera", "яндекс")
-        )
-    except Exception:
-        return False
-
-
-def _paste_into_browser_after_open(delay: float = 1.2) -> None:
-    """Пытается вставить уже скопированное изображение в открытую вкладку.
-
-    Вызов выполняется только после проверки активного окна. Если браузер не
-    успел получить фокус или система не Windows, пользователь может вставить
-    изображение обычным Ctrl+V из уведомления.
-    """
-    if os.name != "nt":
-        return
-
-    def paste() -> None:
-        time.sleep(delay)
-        if not _foreground_window_is_browser():
-            return
+def _png_dimensions(png_bytes: bytes) -> tuple[int, int]:
+    """Возвращает размеры PNG для параметров официальной формы Lens."""
+    if len(png_bytes) >= 24 and png_bytes[:8] == b"\x89PNG\r\n\x1a\n":
         try:
-            import ctypes
+            return int.from_bytes(png_bytes[16:20], "big"), int.from_bytes(png_bytes[20:24], "big")
+        except (TypeError, ValueError):
+            pass
+    return 0, 0
 
-            user32 = ctypes.windll.user32
-            key_event = user32.keybd_event
-            key_event(0x11, 0, 0, 0)  # Ctrl down
-            key_event(0x56, 0, 0, 0)  # V down
-            key_event(0x56, 0, 2, 0)  # V up
-            key_event(0x11, 0, 2, 0)  # Ctrl up
-        except Exception:
+
+def _create_google_lens_upload_page(png_bytes: bytes) -> str:
+    """Создаёт локальную форму, которая отправляет PNG прямо в Google Lens.
+
+    Google выдаёт временный ``vsrid`` только после браузерной навигации из
+    формы. POST из requests получает похожий redirect, но результат оказывается
+    привязан к другой сессии браузера и становится недействительным. Локальная
+    HTML-форма сохраняет прямую загрузку в Google и даёт браузеру самому
+    сохранить cookies и контекст навигации.
+    """
+    width, height = _png_dimensions(png_bytes)
+    params = {
+        "ep": "cntpubb",
+        "hl": get_current_language(),
+        "st": str(int(time.time() * 1000)),
+        "cd": "",
+        "re": "df",
+        "s": "4",
+        "vph": str(height) if height else "",
+        "vpw": str(width) if width else "",
+    }
+    upload_url = f"{GOOGLE_LENS_UPLOAD_URL}?{urllib.parse.urlencode(params)}"
+    encoded_png = base64.b64encode(png_bytes).decode("ascii")
+    page = f"""<!doctype html>
+<meta charset="utf-8">
+<title>Framio - Google Lens upload</title>
+<form id="framio-google-lens-upload" action="{html.escape(upload_url, quote=True)}" method="post" enctype="multipart/form-data">
+  <input id="framio-google-lens-file" name="encoded_image" type="file">
+</form>
+<script>
+(() => {{
+  const bytes = Uint8Array.from(atob("{encoded_png}"), c => c.charCodeAt(0));
+  const transfer = new DataTransfer();
+  transfer.items.add(new File([bytes], "screenshot.png", {{type: "image/png"}}));
+  document.getElementById("framio-google-lens-file").files = transfer.files;
+  document.getElementById("framio-google-lens-upload").submit();
+}})();
+</script>
+"""
+    descriptor, path = tempfile.mkstemp(prefix="framio-google-lens-", suffix=".html")
+    with os.fdopen(descriptor, "w", encoding="ascii", newline="\n") as stream:
+        stream.write(page)
+    return path
+
+
+def _schedule_upload_page_cleanup(path: str, delay: float = 60.0) -> None:
+    """Удаляет одноразовую локальную форму после отправки."""
+    def cleanup() -> None:
+        time.sleep(delay)
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
             pass
 
-    threading.Thread(target=paste, daemon=True, name="framio-google-lens-paste").start()
+    threading.Thread(target=cleanup, daemon=True, name="framio-google-lens-cleanup").start()
 
 
-def _open_google_lens_from_clipboard(notify_func=None) -> None:
-    """Открывает Google Lens и запускает безопасную вставку из буфера."""
-    opened = open_in_browser(GOOGLE_LENS_URL)
-    if opened:
-        _paste_into_browser_after_open()
+def _open_google_lens_upload(png_bytes: bytes, notify_func=None) -> None:
+    """Открывает браузер с прямой multipart-загрузкой PNG в Google Lens."""
+    upload_page = _create_google_lens_upload_page(png_bytes)
+    _schedule_upload_page_cleanup(upload_page)
+    opened = open_in_browser(Path(upload_page).as_uri())
     if notify_func:
-        notify_func(
-            "Google Lens",
-            tr("image_search_google_ready"),
-        )
+        if opened:
+            notify_func("Google Lens", tr("image_search_google_ready"))
+        else:
+            notify_func("Google Lens", tr("image_search_google_failed"))
 
 
 def _yandex_image_search_url(png_bytes: bytes) -> str | None:
@@ -159,14 +172,13 @@ def search_by_image(engine: str, png_bytes: bytes, notify_func=None):
     Выполняет поиск по картинке в указанном поисковике (Google Lens или Яндекс Картинки).
     Открывает браузер с изображением в новой вкладке.
 
-    Google Lens не использует выданную сервером временную ссылку: такие ссылки
-    Google помечает как недействительные при открытии вне исходной сессии.
-    Вместо этого приложение открывает официальный интерфейс Lens и вставляет
-    PNG из системного буфера.
+    Google получает PNG прямой multipart-загрузкой из локальной формы браузера.
+    Серверный POST из requests здесь намеренно не используется: его временный
+    redirect привязан к другой сессии и Google помечает его недействительным.
     """
     try:
         if engine == "google":
-            _open_google_lens_from_clipboard(notify_func=notify_func)
+            _open_google_lens_upload(png_bytes, notify_func=notify_func)
 
         else:
             # Яндекс Картинки

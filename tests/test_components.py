@@ -3117,8 +3117,8 @@ def test_double_click_selects_window_below_topmost_overlay():
     print("  -> Окно под topmost overlay найдено, hover-контур не используется, двойной клик выбирает его целиком.")
 
 
-def test_image_search_uses_google_clipboard_flow_and_direct_yandex_upload():
-    print("[TEST] Проверка Google Lens через буфер и прямой отправки в Яндекс.Картинки...")
+def test_image_search_uses_direct_google_upload_and_direct_yandex_upload():
+    print("[TEST] Проверка прямой загрузки в Google Lens и Яндекс.Картинки...")
     from unittest.mock import patch
     import utils.image_search as image_search
 
@@ -3152,12 +3152,12 @@ def test_image_search_uses_google_clipboard_flow_and_direct_yandex_upload():
 
     with patch.object(image_search.requests, "post", side_effect=fake_post), \
             patch.object(image_search, "open_in_browser", side_effect=lambda url: opened.append(url) or True), \
-            patch.object(image_search, "_paste_into_browser_after_open"):
+            patch.object(image_search, "_schedule_upload_page_cleanup"):
         image_search.search_by_image("google", b"test-png")
         image_search.search_by_image("yandex", b"test-png")
 
     assert [url for url, _ in calls] == ["https://yandex.ru/images/search"]
-    assert opened[0] == "https://lens.google.com/"
+    assert opened[0].startswith("file:///")
     assert opened[-1].startswith("https://yandex.ru/images/search?rpt=imageview&")
     assert "cbir_id=test-cbir-id" in opened[-1]
     assert "url=https%3A%2F%2Favatars.mds.yandex.net%2Ftest%2Forig" in opened[-1]
@@ -3166,8 +3166,17 @@ def test_image_search_uses_google_clipboard_flow_and_direct_yandex_upload():
     for forbidden_host in ("freeimage.host", "uguu.se", "tmpfiles.org"):
         assert forbidden_host not in source
     assert "FRAMIO_FREEIMAGE_API_KEY" not in source
-    assert "v3/upload" not in source
-    print("  -> Google Lens открывается через буфер, Яндекс получает PNG напрямую; промежуточные хостинги отсутствуют.")
+    assert "v3/upload" in source
+    upload_page_name = image_search.urllib.parse.unquote(image_search.urllib.parse.urlparse(opened[0]).path)
+    if upload_page_name.startswith("/") and len(upload_page_name) > 2 and upload_page_name[2] == ":":
+        upload_page_name = upload_page_name[1:]
+    upload_page = Path(upload_page_name)
+    page_source = upload_page.read_text(encoding="ascii")
+    upload_page.unlink(missing_ok=True)
+    assert "name=\"encoded_image\"" in page_source
+    assert "DataTransfer" in page_source
+    assert "ep=cntpubb" in page_source
+    print("  -> PNG уходит напрямую в Google Lens из локальной multipart-формы; Яндекс также получает PNG напрямую.")
 
 
 if __name__ == "__main__":
@@ -3241,7 +3250,7 @@ if __name__ == "__main__":
         test_single_recording_closes_overlay_when_no_regions_remain()
         test_recording_start_hides_selection_overlay()
         test_double_click_selects_window_below_topmost_overlay()
-        test_image_search_uses_google_clipboard_flow_and_direct_yandex_upload()
+        test_image_search_uses_direct_google_upload_and_direct_yandex_upload()
         import time
         time.sleep(0.5)
         QApplication.processEvents()

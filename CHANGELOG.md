@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.0.4] - 2026-09-08
+
+### English
+
+Google Lens direct-upload fix.
+
+- Replaced the clipboard fallback with a one-use local browser form.
+- The browser now sends the PNG directly to Google Lens as `multipart/form-data` with the current Chromium upload parameters.
+- No image-hosting intermediary is used; the temporary local form is removed automatically.
+
+| Build | FFmpeg | Main difference |
+| --- | --- | --- |
+| Folder portable | Included | Fastest start; move the complete folder, including `_internal`. |
+| Full single-file | Included | One EXE; unpacks private files into `%TEMP%` at startup. |
+| Lite single-file | Not bundled | Smaller EXE; no FFmpeg-dependent audio muxing or post-processing. |
+
+### Русский
+
+Исправлена прямая загрузка в Google Lens.
+
+- Буферный обход заменён одноразовой локальной формой браузера.
+- Теперь браузер отправляет PNG напрямую в Google Lens через `multipart/form-data` с актуальными параметрами загрузки Chromium.
+- Промежуточный хостинг изображений не используется, временная локальная форма удаляется автоматически.
+
+| Сборка | FFmpeg | Главное отличие |
+| --- | --- | --- |
+| Папочная portable | Включён | Быстрее запускается; переносить нужно всю папку, включая `_internal`. |
+| Полная одним файлом | Включён | Один EXE; при запуске распаковывает внутренние файлы в `%TEMP%`. |
+| Lite одним файлом | Не включён | Меньше EXE; нет функций с FFmpeg для сведения звука и постобработки. |
+
 ## [1.0.3] - 2026-09-08
 
 ### English
