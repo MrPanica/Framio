@@ -7,7 +7,7 @@
 и умные popover-окна настроек.
 """
 
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize, QRect
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QMenu,
     QButtonGroup, QFrame, QLabel, QSlider, QColorDialog,
@@ -1866,6 +1866,13 @@ class RightDrawingToolbar(QFrame):
     filter_selected = pyqtSignal(str)
     pipette_requested = pyqtSignal()
 
+    def enterEvent(self, event):
+        """Поднимает боковую панель над нижней при наведении."""
+        parent = self.parentWidget()
+        if parent is not None and hasattr(parent, "_raise_toolbar"):
+            parent._raise_toolbar(self)
+        super().enterEvent(event)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_tool = ToolType.MOVE
@@ -2209,6 +2216,8 @@ class RegionActionHeader(QFrame):
     copy_clicked = pyqtSignal(str)
     record_video_started = pyqtSignal(dict)
     record_gif_started = pyqtSignal(dict)
+    mass_filter_selected = pyqtSignal(str)
+    mass_filter_parameters_changed = pyqtSignal(dict)
     close_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -2278,6 +2287,13 @@ class RegionActionHeader(QFrame):
         self.btn_mass_gif.clicked.connect(self._show_gif_popup)
         layout.addWidget(self.btn_mass_gif)
 
+        self.btn_mass_filter = ModernButton("", tr("action_all_filter", "Эффект для всех зон"))
+        self.btn_mass_filter.setFixedSize(28, 28)
+        self.btn_mass_filter.setIcon(create_themed_icon("filter", self.is_dark, size=15))
+        self.btn_mass_filter.setIconSize(QSize(15, 15))
+        self.btn_mass_filter.clicked.connect(self._show_filter_popup)
+        layout.addWidget(self.btn_mass_filter)
+
         self.popup_formats = ScreenshotFormatPopup(self)
         self.popup_formats.format_selected.connect(self.save_clicked.emit)
         self.popup_copy = CopyFormatPopup(self)
@@ -2286,6 +2302,13 @@ class RegionActionHeader(QFrame):
         self.popup_video.start_video.connect(self.record_video_started.emit)
         self.popup_gif = GifOptionsPopup(self)
         self.popup_gif.start_gif.connect(self.record_gif_started.emit)
+        self.popup_filter = None
+        self.mass_filter = FilterType.NONE
+        # Пункт в списке и реально применённый эффект — разные состояния.
+        # После закрытия всех зон список снова предлагает Negative, но
+        # массовый эффект остаётся неактивным до явного выбора.
+        self.mass_filter_selection = FilterType.INVERT
+        self.mass_filter_params = {"blur_radius": 15, "pixel_size": 12}
 
     def set_region_state(self, add_mode: bool, total_count: int, available_count: int):
         self.btn_add.setChecked(bool(add_mode))
@@ -2298,7 +2321,7 @@ class RegionActionHeader(QFrame):
                 tr("region_header_title_count", "Зоны · массовые действия ({available}/{total})", available=available_count, total=total_count)
             )
         enabled = available_count > 0
-        for button in (self.btn_mass_save, self.btn_mass_copy, self.btn_mass_video, self.btn_mass_gif):
+        for button in (self.btn_mass_save, self.btn_mass_copy, self.btn_mass_video, self.btn_mass_gif, self.btn_mass_filter):
             button.setEnabled(enabled)
         self.setVisible(bool(add_mode or total_count > 1))
 
@@ -2314,6 +2337,161 @@ class RegionActionHeader(QFrame):
     def _show_gif_popup(self):
         show_smart_popup(self.btn_mass_gif, self.popup_gif)
 
+    def _show_filter_popup(self):
+        if self.popup_filter is None:
+            self.popup_filter = WholeAreaFilterPopup(
+                self,
+                title=tr("action_all_filter", "Эффект для всех зон"),
+            )
+            self.popup_filter.filter_selected.connect(self._on_mass_filter_selected)
+            self.popup_filter.parameters_changed.connect(self._on_mass_filter_parameters_changed)
+        self.popup_filter.set_filter(self.mass_filter_selection)
+        self.popup_filter.set_parameters(self.mass_filter_params)
+        show_smart_popup(self.btn_mass_filter, self.popup_filter)
+
+    def _on_mass_filter_selected(self, filter_type: str):
+        self.mass_filter_selection = filter_type
+        self.mass_filter = filter_type
+        if filter_type == FilterType.NONE:
+            self.btn_mass_filter.setStyleSheet("")
+            self.btn_mass_filter.setIcon(create_themed_icon("filter", self.is_dark, size=15))
+        else:
+            self.btn_mass_filter.setStyleSheet("background-color: #2563eb; border: 1px solid #3b82f6; border-radius: 4px;")
+            self.btn_mass_filter.setIcon(create_themed_icon("filter", self.is_dark, size=15, custom_color="#ffffff"))
+        self.mass_filter_selected.emit(filter_type)
+
+    def _on_mass_filter_parameters_changed(self, params: dict):
+        self.mass_filter_params.update(params or {})
+        self.mass_filter_parameters_changed.emit(dict(self.mass_filter_params))
+
+    def reset_mass_filter(self):
+        """Сбрасывает применение эффекта и восстанавливает пункт по умолчанию."""
+        self.mass_filter = FilterType.NONE
+        self.mass_filter_selection = FilterType.INVERT
+        self.mass_filter_params = {"blur_radius": 15, "pixel_size": 12}
+        self.btn_mass_filter.setStyleSheet("")
+        self.btn_mass_filter.setIcon(create_themed_icon("filter", self.is_dark, size=15))
+        if self.popup_filter is not None:
+            self.popup_filter.set_filter(self.mass_filter_selection)
+            self.popup_filter.set_parameters(self.mass_filter_params)
+
+
+class WholeAreaFilterPopup(QFrame):
+    """Компактные настройки фильтра всего захватываемого изображения."""
+
+    filter_selected = pyqtSignal(str)
+    parameters_changed = pyqtSignal(dict)
+
+    def __init__(self, parent=None, title: str | None = None):
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setFixedWidth(260)
+        self.filter_params = {"blur_radius": 15, "pixel_size": 12}
+        self.setStyleSheet("""
+            QFrame {
+                background-color: #18181b;
+                color: #f4f4f5;
+                border: 1px solid #3f3f46;
+                border-radius: 7px;
+            }
+            QLabel {
+                color: #e4e4e7;
+                border: none;
+                font-size: 11px;
+            }
+            QComboBox {
+                background-color: #27272a;
+                color: #f4f4f5;
+                border: 1px solid #52525b;
+                border-radius: 4px;
+                padding: 4px 6px;
+                min-height: 22px;
+            }
+            QSlider::groove:horizontal {
+                height: 4px;
+                background: #3f3f46;
+                border-radius: 2px;
+            }
+            QSlider::handle:horizontal {
+                width: 12px;
+                margin: -4px 0;
+                background: #60a5fa;
+                border-radius: 6px;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 9, 10, 9)
+        layout.setSpacing(5)
+
+        title_label = QLabel(title or tr("whole_filter_title", "Эффект всей области"))
+        title_label.setStyleSheet("color: #38bdf8; font-weight: bold; border: none;")
+        layout.addWidget(title_label)
+
+        self.combo_filter = QComboBox()
+        from utils.image_filters import get_localized_filter_names
+        for filter_type, label in get_localized_filter_names().items():
+            self.combo_filter.addItem(label, filter_type)
+        self.combo_filter.currentIndexChanged.connect(self._on_filter_changed)
+        layout.addWidget(self.combo_filter)
+
+        self.lbl_blur = QLabel()
+        self.slider_blur = QSlider(Qt.Orientation.Horizontal)
+        self.slider_blur.setRange(3, 45)
+        self.slider_blur.valueChanged.connect(self._on_blur_changed)
+        layout.addWidget(self.lbl_blur)
+        layout.addWidget(self.slider_blur)
+
+        self.lbl_pixel = QLabel()
+        self.slider_pixel = QSlider(Qt.Orientation.Horizontal)
+        self.slider_pixel.setRange(3, 40)
+        self.slider_pixel.valueChanged.connect(self._on_pixel_changed)
+        layout.addWidget(self.lbl_pixel)
+        layout.addWidget(self.slider_pixel)
+
+        self._sync_parameter_widgets()
+
+    def set_filter(self, filter_type: str):
+        for index in range(self.combo_filter.count()):
+            if self.combo_filter.itemData(index) == filter_type:
+                self.combo_filter.blockSignals(True)
+                self.combo_filter.setCurrentIndex(index)
+                self.combo_filter.blockSignals(False)
+                break
+        self._sync_parameter_widgets()
+
+    def set_parameters(self, params: dict):
+        self.filter_params.update(params or {})
+        self.slider_blur.blockSignals(True)
+        self.slider_pixel.blockSignals(True)
+        self.slider_blur.setValue(int(self.filter_params.get("blur_radius", 15)))
+        self.slider_pixel.setValue(int(self.filter_params.get("pixel_size", 12)))
+        self.slider_blur.blockSignals(False)
+        self.slider_pixel.blockSignals(False)
+        self._sync_parameter_widgets()
+
+    def _sync_parameter_widgets(self):
+        current = self.combo_filter.currentData()
+        self.lbl_blur.setText(tr("filter_blur_radius", "Сила блюра: {val} px", val=self.filter_params["blur_radius"]))
+        self.lbl_pixel.setText(tr("filter_pixel_size", "Зернистость мозаики: {val} px", val=self.filter_params["pixel_size"]))
+        self.lbl_blur.setVisible(current == FilterType.BLUR)
+        self.slider_blur.setVisible(current == FilterType.BLUR)
+        self.lbl_pixel.setVisible(current == FilterType.PIXELATE)
+        self.slider_pixel.setVisible(current == FilterType.PIXELATE)
+
+    def _on_filter_changed(self, _index: int):
+        self._sync_parameter_widgets()
+        self.filter_selected.emit(self.combo_filter.currentData())
+
+    def _on_blur_changed(self, value: int):
+        self.filter_params["blur_radius"] = int(value)
+        self._sync_parameter_widgets()
+        self.parameters_changed.emit(dict(self.filter_params))
+
+    def _on_pixel_changed(self, value: int):
+        self.filter_params["pixel_size"] = int(value)
+        self._sync_parameter_widgets()
+        self.parameters_changed.emit(dict(self.filter_params))
+
 
 class BottomActionToolbar(QFrame):
     save_clicked = pyqtSignal(str)
@@ -2323,6 +2501,7 @@ class BottomActionToolbar(QFrame):
     record_video_started = pyqtSignal(dict)
     record_gif_started = pyqtSignal(dict)
     filter_selected = pyqtSignal(str)
+    filter_parameters_changed = pyqtSignal(dict)
     lock_toggled = pyqtSignal(bool)
     dynamic_bg_toggled = pyqtSignal(bool)
     passthrough_toggled = pyqtSignal(bool)
@@ -2331,10 +2510,19 @@ class BottomActionToolbar(QFrame):
     all_regions_action = pyqtSignal(str)
     close_clicked = pyqtSignal()
 
+    def enterEvent(self, event):
+        """Поднимает нижнюю панель над боковой при наведении."""
+        parent = self.parentWidget()
+        if parent is not None and hasattr(parent, "_raise_toolbar"):
+            parent._raise_toolbar(self)
+        super().enterEvent(event)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.is_locked = False
         self.current_filter = FilterType.NONE
+        self.filter_params = {"blur_radius": 15, "pixel_size": 12}
+        self.filter_popup = None
 
         theme = get_theme_styles()
         self.is_dark = theme["is_dark"]
@@ -2595,32 +2783,18 @@ class BottomActionToolbar(QFrame):
         self.lock_toggled.emit(self.is_locked)
 
     def _show_filter_menu(self):
-        menu = QMenu(self)
-        theme = get_theme_styles()
-        menu.setStyleSheet(f"""
-            QMenu {{
-                background-color: {'#18181b' if theme['is_dark'] else '#f8f8fa'};
-                border: 1px solid {'#3f3f46' if theme['is_dark'] else '#d1d5db'};
-                border-radius: 6px;
-                color: {theme['text_color']};
-                padding: 4px;
-            }}
-            QMenu::item {{ padding: 6px 20px; }}
-            QMenu::item:selected {{ background-color: {'#27272a' if theme['is_dark'] else '#e5e7eb'}; color: #3b82f6; }}
-        """)
-
-        from utils.image_filters import get_localized_filter_names
-        for f_type, label in get_localized_filter_names().items():
-            action = QAction(label, self)
-            action.setCheckable(True)
-            action.setChecked(self.current_filter == f_type)
-            action.triggered.connect(lambda checked, t=f_type: self._select_filter(t))
-            menu.addAction(action)
-
-        show_smart_popup(self.btn_filter, menu)
+        if self.filter_popup is None:
+            self.filter_popup = WholeAreaFilterPopup(self)
+            self.filter_popup.filter_selected.connect(self._select_filter)
+            self.filter_popup.parameters_changed.connect(self._on_filter_parameters_changed)
+        self.filter_popup.set_filter(self.current_filter)
+        self.filter_popup.set_parameters(self.filter_params)
+        show_smart_popup(self.btn_filter, self.filter_popup)
 
     def _select_filter(self, f_type):
         self.current_filter = f_type
+        if self.filter_popup is not None:
+            self.filter_popup.set_filter(f_type)
         if f_type == FilterType.NONE:
             self.btn_filter.setStyleSheet("")
             self.btn_filter.setIcon(create_themed_icon("filter", self.is_dark, size=16))
@@ -2629,8 +2803,22 @@ class BottomActionToolbar(QFrame):
             self.btn_filter.setIcon(create_themed_icon("filter", self.is_dark, size=16, custom_color="#ffffff"))
         self.filter_selected.emit(f_type)
 
+    def _on_filter_parameters_changed(self, params: dict):
+        self.filter_params.update(params or {})
+        self.filter_parameters_changed.emit(dict(self.filter_params))
+
+    def _on_blur_radius_changed(self, value: int):
+        """Слот для тестов и внешних интеграций, меняющий радиус блюра."""
+        self._on_filter_parameters_changed({"blur_radius": int(value)})
+
+    def _on_pixel_size_changed(self, value: int):
+        """Слот для тестов и внешних интеграций, меняющий зернистость мозаики."""
+        self._on_filter_parameters_changed({"pixel_size": int(value)})
+
     def sync_filter(self, f_type: str):
         self.current_filter = f_type
+        if self.filter_popup is not None:
+            self.filter_popup.set_filter(f_type)
         if f_type == FilterType.NONE:
             self.btn_filter.setStyleSheet("")
             self.btn_filter.setIcon(create_themed_icon("filter", self.is_dark, size=16))
@@ -2638,5 +2826,14 @@ class BottomActionToolbar(QFrame):
             self.btn_filter.setStyleSheet("background-color: #2563eb; border: 1px solid #3b82f6; border-radius: 4px;")
             self.btn_filter.setIcon(create_themed_icon("filter", self.is_dark, size=16, custom_color="#ffffff"))
 
+    def sync_filter_params(self, params: dict):
+        """Синхронизирует ползунки эффекта с параметрами активной зоны."""
+        self.filter_params.update(params or {})
+        if self.filter_popup is not None:
+            self.filter_popup.set_parameters(self.filter_params)
+
     def reset_filter(self):
+        self.filter_params = {"blur_radius": 15, "pixel_size": 12}
+        if self.filter_popup is not None:
+            self.filter_popup.set_parameters(self.filter_params)
         self.sync_filter(FilterType.NONE)

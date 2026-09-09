@@ -43,7 +43,9 @@ class CaptureWorker(QThread):
                  record_mic: bool = True, record_system: bool = True,
                  compress_gif: bool = True, compress_video: bool = True,
                  gif_colors: int = 64, gif_dither: str = "none",
-                 target_hwnd: int | None = None, capture_mask=None, mask_getter=None, parent=None):
+                 target_hwnd: int | None = None, capture_mask=None, mask_getter=None,
+                 filter_type: str = FilterType.NONE, filter_params: dict | None = None,
+                 parent=None):
         super().__init__(parent)
         self.mode = mode  # "video" or "gif"
         self.output_path = output_path
@@ -61,7 +63,8 @@ class CaptureWorker(QThread):
         self.target_hwnd = target_hwnd
         self.capture_mask = capture_mask
         self.mask_getter = mask_getter
-        self.filter_type = FilterType.NONE
+        self.filter_type = filter_type or FilterType.NONE
+        self.filter_params = dict(filter_params or {})
 
         self.running = False
         self.is_cancelled = False
@@ -77,8 +80,10 @@ class CaptureWorker(QThread):
     def set_target_hwnd(self, hwnd: int | None):
         self.target_hwnd = hwnd
 
-    def set_filter(self, filter_type: str):
-        self.filter_type = filter_type
+    def set_filter(self, filter_type: str, filter_params: dict | None = None):
+        self.filter_type = filter_type or FilterType.NONE
+        if filter_params is not None:
+            self.filter_params = dict(filter_params)
 
     def set_mic_muted(self, muted: bool):
         self.record_mic = not muted
@@ -349,7 +354,11 @@ class CaptureWorker(QThread):
                             print(f"[CaptureWorker] Предупреждение при наложении фигур: {draw_err}")
 
                         if self.filter_type != FilterType.NONE:
-                            frame_bgr = apply_filter(frame_bgr, self.filter_type)
+                            frame_bgr = apply_filter(
+                                frame_bgr,
+                                self.filter_type,
+                                **self.filter_params,
+                            )
 
                         # Синхронизация реального времени (Wall-clock CFR):
                         # Считаем точное количество кадров, которое должно быть в видео к этому моменту

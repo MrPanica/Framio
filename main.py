@@ -11,13 +11,17 @@ import sys
 import os
 import ctypes
 import subprocess
+import threading
 import time
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-from PyQt6.QtCore import Qt, QObject, pyqtSignal, pyqtSlot, QTimer, QPointF, QRectF, QMimeData, QUrl
+from PyQt6.QtCore import (
+    Qt, QObject, pyqtSignal, pyqtSlot, QTimer, QPointF, QRectF,
+    QMimeData, QUrl, QBuffer, QIODevice, QPoint, QSize,
+)
 from PyQt6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QWidgetAction,
     QWidget, QFrame, QLabel, QPushButton, QScrollArea,
@@ -34,7 +38,11 @@ from ui.settings_dialog import SettingsDialog
 from utils.hotkey_manager import GlobalHotkeyManager
 from utils.screen_lock import safe_grab_screen_pixmap
 from utils.sound import play_capture_sound
+from utils.capture_temp_cleanup import cleanup_stale_capture_temp_files
+from utils.pyinstaller_temp_cleanup import cleanup_stale_pyinstaller_temp_dirs
 from utils.i18n import tr
+from utils.image_search import search_by_image
+from ui.icons import create_themed_icon
 
 def make_app_icon(is_recording: bool = False):
     """Генерирует аккуратную векторную иконку приложения Framio (видоискатель с линзой фокуса)."""
@@ -97,6 +105,7 @@ def make_app_icon(is_recording: bool = False):
 
 class MediaPreviewLabel(QLabel):
     clicked = pyqtSignal()
+    context_menu_requested = pyqtSignal(QPoint)
 
     def __init__(self, item=None, image=None, parent=None):
         super().__init__(parent)
@@ -146,6 +155,10 @@ class MediaPreviewLabel(QLabel):
             self._drag_start = None
             self._drag_started = False
         super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event):
+        self.context_menu_requested.emit(event.globalPosition().toPoint())
+        event.accept()
 
 
 class RecentMediaPanel(QWidget):
@@ -285,7 +298,8 @@ class RecentMediaPanel(QWidget):
     def _make_card(self, item: dict) -> QFrame:
         card = QFrame()
         card.setObjectName("recentMediaCard")
-        card.setFixedHeight(244)
+        # Все действия находятся в одной компактной строке под превью.
+        card.setFixedHeight(260)
         column = QVBoxLayout(card)
         column.setContentsMargins(6, 6, 6, 6)
         column.setSpacing(5)
@@ -315,21 +329,56 @@ class RecentMediaPanel(QWidget):
         else:
             preview.setText(tr("recent_preview_unavailable", "Нет превью"))
         preview.clicked.connect(lambda entry=item: self.owner._view_recent_media(entry))
+        preview.context_menu_requested.connect(
+            lambda global_pos, entry=item: self.owner._show_recent_media_context_menu(entry, global_pos)
+        )
         column.addWidget(preview)
 
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(4)
-        for method, key, fallback in (
-            ("_copy_recent_media", "recent_action_copy", "Копировать"),
-            ("_view_recent_media", "recent_action_view", "Просмотр"),
+        for method, icon_name, key, fallback, tip_key, tip_fallback, args in (
+            (
+                "_copy_recent_media", "copy", "recent_action_copy", "Копировать",
+                "recent_action_copy_tip", "Копировать материал", (),
+            ),
+            (
+                "_view_recent_media", "eye", "recent_action_view", "Просмотр",
+                "recent_action_view_tip", "Открыть материал для просмотра", (),
+            ),
+            (
+                "_search_recent_media", "search", "recent_action_google", "Google",
+                "recent_action_google_tip", "Искать эту картинку в Google Lens", ("google",),
+            ),
+            (
+                "_search_recent_media", "search", "recent_action_yandex", "Yandex",
+                "recent_action_yandex_tip", "Искать эту картинку в Яндекс.Картинках", ("yandex",),
+            ),
         ):
-            button = QPushButton(tr(key, fallback))
+            button = QPushButton()
+            button.setObjectName("recentMediaActionButton")
+            button.setFixedSize(28, 26)
+            button.setIcon(create_themed_icon(icon_name, is_dark=True, size=16))
+            button.setIconSize(QSize(16, 16))
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-            button.setContentsMargins(0, 0, 0, 0)
-            button.clicked.connect(lambda checked=False, entry=item, name=method: getattr(self.owner, name)(entry))
+            button.setToolTip(tr(tip_key, tip_fallback))
+            button.setAccessibleName(tr(key, fallback))
+            button.clicked.connect(
+                lambda checked=False, entry=item, name=method, call_args=args:
+                getattr(self.owner, name)(entry, *call_args)
+            )
             actions.addWidget(button)
+
+        # Текстовую кнопку оставляем последней: она понятнее иконки для
+        # системного действия Windows «Открыть с помощью…».
+        open_with = QPushButton(tr("recent_action_open_with", "Открыть с помощью..."))
+        open_with.setObjectName("recentMediaOpenWithButton")
+        open_with.setCursor(Qt.CursorShape.PointingHandCursor)
+        open_with.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        open_with.setToolTip(tr("recent_action_open_with_tip", "Выбрать приложение для открытия файла"))
+        open_with.clicked.connect(lambda checked=False, entry=item: self.owner._open_recent_media_with(entry))
+        actions.addWidget(open_with)
         actions.addStretch(1)
         column.addLayout(actions)
         return card
@@ -352,6 +401,13 @@ class FramioApp(QObject):
         self._mass_saved_notification_timer = QTimer(self)
         self._mass_saved_notification_timer.setSingleShot(True)
         self._mass_saved_notification_timer.timeout.connect(self._flush_mass_saved_notification)
+        # Старые недописанные промежуточные MP4/WAV не должны накапливаться
+        # в TEMP после аварийного завершения или принудительного закрытия.
+        cleanup_stale_capture_temp_files()
+        # One-file сборки PyInstaller оставляют _MEI* только после аварийных
+        # завершений. Чистим старые каталоги при запуске, не затрагивая
+        # текущий распакованный каталог и занятые файлы.
+        cleanup_stale_pyinstaller_temp_dirs()
         self._load_recent_media()
 
         # Системный трей
@@ -465,6 +521,63 @@ class FramioApp(QObject):
             mime.setUrls([QUrl.fromLocalFile(path)])
             QApplication.clipboard().setMimeData(mime)
 
+    @staticmethod
+    def _recent_media_png_bytes(item: dict) -> bytes | None:
+        """Возвращает PNG текущего материала для прямого image-search."""
+        image = RecentMediaPanel._load_preview(item)
+        if image is None or image.isNull():
+            return None
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        if not image.save(buffer, "PNG"):
+            buffer.close()
+            return None
+        payload = bytes(buffer.data())
+        buffer.close()
+        return payload or None
+
+    def _search_recent_media(self, item: dict, engine: str):
+        """Отправляет материал напрямую в Google Lens или Яндекс.Картинки."""
+        png_bytes = self._recent_media_png_bytes(item)
+        if not png_bytes:
+            return
+        engine_name = "Google Lens" if engine == "google" else "Яндекс.Картинки"
+        self.show_notification(
+            tr("recent_search_title", "Поиск по изображению"),
+            tr("recent_search_started", "Отправка материала в {engine}...", engine=engine_name),
+            QSystemTrayIcon.MessageIcon.Information,
+            2500,
+        )
+        threading.Thread(
+            target=lambda: search_by_image(
+                engine,
+                png_bytes,
+                notify_func=lambda title, message: self.show_notification(title, message),
+            ),
+            daemon=True,
+            name=f"framio-recent-search-{engine}",
+        ).start()
+
+    def _recent_media_path(self, item: dict) -> Path | None:
+        """Гарантирует локальный путь материала для открытия и Open With."""
+        path = Path(item.get("path", "")) if item.get("path") else None
+        if path is not None and path.exists():
+            return path
+        image = item.get("image")
+        if image is None or image.isNull():
+            return None
+        cfg = getattr(self, "cfg", None)
+        save_dir = getattr(cfg, "save_dir_screenshots", "")
+        if not save_dir:
+            return None
+        cache_dir = Path(save_dir) / ".recent"
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            path = cache_dir / f"Framio_Recent_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
+            return path if image.save(str(path), "PNG") else None
+        except OSError:
+            return None
+
     def _close_tray_menus(self):
         for widget in QApplication.topLevelWidgets():
             if isinstance(widget, QMenu):
@@ -472,16 +585,9 @@ class FramioApp(QObject):
 
     def _view_recent_media(self, item: dict):
         """Открывает файл стандартным приложением Windows."""
-        path = Path(item.get("path", "")) if item.get("path") else None
-        if path is None or not path.exists():
-            image = item.get("image")
-            if image is None or image.isNull():
-                return
-            cache_dir = Path(self.cfg.save_dir_screenshots) / ".recent"
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            path = cache_dir / f"Framio_Recent_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
-            if not image.save(str(path), "PNG"):
-                return
+        path = self._recent_media_path(item)
+        if path is None:
+            return
         self._close_tray_menus()
         try:
             os.startfile(str(path))
@@ -489,6 +595,44 @@ class FramioApp(QObject):
             subprocess.Popen([str(path)])
         except Exception as exc:
             print(f"[Framio] Ошибка открытия материала: {exc}")
+
+    def _open_recent_media_with(self, item: dict):
+        """Открывает системный диалог Windows «Открыть с помощью»."""
+        path = self._recent_media_path(item)
+        if path is None:
+            return
+        self._close_tray_menus()
+        if sys.platform == "win32":
+            try:
+                subprocess.Popen([
+                    "rundll32.exe",
+                    "shell32.dll,OpenAs_RunDLL",
+                    str(path),
+                ])
+            except Exception as exc:
+                print(f"[Framio] Ошибка запуска «Открыть с помощью»: {exc}")
+        else:
+            self._view_recent_media({**item, "path": str(path)})
+
+    def _show_recent_media_context_menu(self, item: dict, global_pos: QPoint):
+        """Показывает меню карточки с системным диалогом Open With Windows."""
+        path = self._recent_media_path(item)
+        if path is None:
+            return
+        context_menu = QMenu()
+        open_action = context_menu.addAction(tr("recent_context_open", "Открыть"))
+        open_with_action = context_menu.addAction(
+            tr("recent_context_open_with", "Открыть с помощью...")
+        )
+        context_menu.addSeparator()
+        copy_action = context_menu.addAction(tr("recent_context_copy_path", "Копировать путь"))
+        chosen = context_menu.exec(global_pos)
+        if chosen == open_action:
+            self._view_recent_media({**item, "path": str(path)})
+        elif chosen == open_with_action:
+            self._open_recent_media_with({**item, "path": str(path)})
+        elif chosen == copy_action:
+            QApplication.clipboard().setText(str(path))
 
     def _recent_media_menu(self, menu: QMenu):
         recent_menu = menu.addMenu(tr("tray_menu_recent_media", "Последние материалы Framio"))

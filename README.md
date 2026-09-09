@@ -65,6 +65,7 @@ Right-click a mask and choose **Set capture area to mask bounds** to resize the 
 Open **Framio — Recent Media** from the tray menu. The panel contains filters for all items, screenshots, GIFs, and videos. It shows image and video previews, the file name above each preview, and the full name and path in the tooltip.
 
 Use **Copy** to place an image or file in the Windows clipboard. Use **View** or click the preview to open the file with the default Windows application. A preview can also be dragged into a chat, editor, or another application.
+Use **Open with...** on a card to choose another Windows application for the file.
 
 ### Reverse image search
 
@@ -182,6 +183,7 @@ python main.py
 Откройте **Последние материалы Framio** в меню трея. В панели есть фильтры «Все», «Скриншоты», «GIF» и «Видео». Для изображений и видео показываются превью, имя файла находится над превью, а полное имя и путь доступны в подсказке.
 
 Кнопка **Копировать** помещает изображение или файл в буфер обмена Windows. Кнопка **Просмотр** и клик по превью открывают файл стандартным приложением Windows. Превью также можно перетащить в чат, редактор или другую программу.
+Кнопка **Открыть с помощью...** позволяет выбрать другое приложение Windows для этого файла.
 
 ### Поиск по картинке
 

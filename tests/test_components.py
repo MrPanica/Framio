@@ -922,6 +922,58 @@ def test_filters():
     print("  -> Фильтры обработаны без ошибок.")
 
 
+def test_whole_area_filter_controls_and_strength():
+    """Общий фильтр должен включать мозаику и передавать настраиваемую силу."""
+    print("[TEST] Проверка настроек общих эффектов блюра и мозаики...")
+    from utils.image_filters import get_localized_filter_names
+    from ui.toolbars import BottomActionToolbar
+
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    frame[25:75, 25:75] = [255, 128, 64]
+    names = get_localized_filter_names()
+    assert FilterType.PIXELATE in names
+
+    toolbar = BottomActionToolbar()
+    assert hasattr(toolbar, "filter_params")
+    assert toolbar.filter_params["blur_radius"] == 15
+    assert toolbar.filter_params["pixel_size"] == 12
+
+    selected = []
+    changed = []
+    toolbar.filter_selected.connect(selected.append)
+    toolbar.filter_parameters_changed.connect(changed.append)
+    toolbar._select_filter(FilterType.PIXELATE)
+    toolbar._on_pixel_size_changed(24)
+    toolbar._select_filter(FilterType.BLUR)
+    toolbar._on_blur_radius_changed(31)
+
+    assert selected == [FilterType.PIXELATE, FilterType.BLUR]
+    assert toolbar.filter_params == {"blur_radius": 31, "pixel_size": 24}
+    assert changed[-1] == toolbar.filter_params
+
+    soft_blur = apply_filter(frame, FilterType.BLUR, blur_radius=3)
+    strong_blur = apply_filter(frame, FilterType.BLUR, blur_radius=31)
+    fine_mosaic = apply_filter(frame, FilterType.PIXELATE, pixel_size=4)
+    coarse_mosaic = apply_filter(frame, FilterType.PIXELATE, pixel_size=24)
+    assert not np.array_equal(soft_blur, strong_blur)
+    assert not np.array_equal(fine_mosaic, coarse_mosaic)
+
+    from recorder.capture_worker import CaptureWorker
+    worker = CaptureWorker(
+        "video", "", lambda: (0, 0, 32, 32),
+        filter_type=FilterType.PIXELATE,
+        filter_params={"pixel_size": 24},
+    )
+    assert worker.filter_type == FilterType.PIXELATE
+    assert worker.filter_params["pixel_size"] == 24
+    worker.set_filter(FilterType.BLUR, {"blur_radius": 31})
+    assert worker.filter_type == FilterType.BLUR
+    assert worker.filter_params["blur_radius"] == 31
+    worker.deleteLater()
+    toolbar.deleteLater()
+    print("  -> Общая мозаика/блюр имеют отдельные ползунки зернистости и радиуса.")
+
+
 def test_video_and_gif_recorders(tmp_path):
     print("[TEST] Тестирование видео и GIF рекордеров...")
     vid_path = str(tmp_path / "test_video.mp4")
@@ -2179,7 +2231,7 @@ def test_shape_transform_box_and_flyouts():
 def test_regional_effects_and_whole_screen_filter_reset():
     print("[TEST] Тестирование региональных эффектов цензуры и сброса фильтра экрана...")
     from models.shapes import RegionalEffectShape, MosaicShape, BlurShape, get_filtered_pixmap
-    from utils.image_filters import FilterType
+    from utils.image_filters import FilterType, get_localized_filter_names
     from ui.toolbars import BottomActionToolbar
     from PyQt6.QtGui import QPixmap, QColor, QPainter
 
@@ -2671,6 +2723,61 @@ def test_dynamic_text_editing_and_filter_history():
     print("  -> Динамическое изменение текста (шрифт, цвет, кегль) и Undo/Redo для фильтров работают корректно.")
 
 
+def test_region_filters_are_isolated_mass_filter_and_escape_closes_all():
+    """Проверяет фильтры по зонам, массовый фильтр и Escape для всего набора."""
+    print("[TEST] Проверка изоляции фильтров зон, массового эффекта и Escape...")
+    from PyQt6.QtCore import QEvent, Qt
+    from PyQt6.QtGui import QKeyEvent
+    from ui.overlay import OverlayWindow
+    from ui.toolbars import RegionActionHeader
+    from utils.image_filters import FilterType, get_localized_filter_names
+
+    ov = OverlayWindow()
+    ov.regions = [QRectF(20, 20, 120, 80), QRectF(220, 20, 120, 80)]
+    ov.active_region_idx = 0
+
+    ov._on_filter_changed(FilterType.GRAYSCALE)
+    assert ov._filter_state_for_region(0)[0] == FilterType.GRAYSCALE
+
+    ov.set_active_region(1)
+    assert ov.current_filter == FilterType.NONE
+    assert ov._filter_state_for_region(1)[0] == FilterType.NONE
+
+    ov._on_filter_changed(FilterType.INVERT)
+    assert ov._filter_state_for_region(0)[0] == FilterType.GRAYSCALE
+    assert ov._filter_state_for_region(1)[0] == FilterType.INVERT
+
+    ov._on_mass_filter_changed(FilterType.BLUR)
+    assert all(
+        ov._filter_state_for_region(index)[0] == FilterType.BLUR
+        for index in (0, 1)
+    )
+
+    header = RegionActionHeader()
+    header.set_region_state(False, total_count=2, available_count=2)
+    assert hasattr(header, "btn_mass_filter")
+    assert header.btn_mass_filter.isEnabled()
+    assert FilterType.INVERT in get_localized_filter_names()
+    assert header.mass_filter == FilterType.NONE
+    assert header.mass_filter_selection == FilterType.INVERT
+    header._on_mass_filter_selected(FilterType.INVERT)
+    assert header.mass_filter == FilterType.INVERT
+    header.reset_mass_filter()
+    assert header.mass_filter == FilterType.NONE
+    assert header.mass_filter_selection == FilterType.INVERT
+
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_Escape,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    ov.keyPressEvent(event)
+    assert ov.regions == []
+    assert ov.capture_masks == {}
+
+    print("  -> Нижний эффект изолирован по активной зоне, верхний массовый эффект применяет фильтр ко всем зонам, Escape закрывает набор целиком.")
+
+
 def test_multi_region_selection_and_export():
     """Тест мульти-выделения: добавление зон, активная зона и раздельный экспорт."""
     print("[TEST] Тестирование мульти-выделения (multi-region)...")
@@ -2950,6 +3057,9 @@ def test_recent_media_history():
     assert RecentMediaPanel.media_kind({"path": "capture.png"}) == "screenshots"
     app._view_recent_media = MagicMock()
     app._copy_recent_media = MagicMock()
+    app._search_recent_media = MagicMock()
+    app._open_recent_media_with = MagicMock()
+    app._show_recent_media_context_menu = MagicMock()
     card = panel._make_card({
         "label": "A very long screenshot name that must be elided in the card title",
         "path": "capture.png",
@@ -2965,12 +3075,29 @@ def test_recent_media_history():
     assert preview.height() == RecentMediaPanel.PREVIEW_HEIGHT
     assert preview.width() * 9 == preview.height() * 16
     buttons = card.findChildren(QPushButton)
-    assert len(buttons) == 2
+    assert len(buttons) == 5
     assert all(button.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Fixed for button in buttons)
+    assert all(not button.icon().isNull() for button in buttons[:4])
+    assert all(button.width() == 28 and button.height() == 26 for button in buttons[:4])
+    assert buttons[4].objectName() == "recentMediaOpenWithButton"
+    assert buttons[4].text() in {"Открыть с помощью...", "Open with..."}
+    assert all(button.text() == "" for button in buttons[:4])
+    card.show()
+    QApplication.processEvents()
+    assert len({button.geometry().y() for button in buttons}) == 1
+    assert max(button.geometry().right() for button in buttons) <= card.width() - 6
     preview.clicked.emit()
     app._view_recent_media.assert_called_once()
+    preview.context_menu_requested.emit(QPointF(10, 10).toPoint())
+    app._show_recent_media_context_menu.assert_called_once()
+    buttons[2].click()
+    buttons[3].click()
+    buttons[4].click()
+    assert app._search_recent_media.call_count == 2
+    assert {call.args[1] for call in app._search_recent_media.call_args_list} == {"google", "yandex"}
+    app._open_recent_media_with.assert_called_once()
     assert isinstance(card.layout(), QVBoxLayout)
-    assert len(card.findChildren(QPushButton)) == 2
+    assert len(card.findChildren(QPushButton)) == 5
     assert all(button.text() not in {"Вставить", "Paste"} for button in card.findChildren(QPushButton))
     card.deleteLater()
     import cv2
@@ -3026,6 +3153,116 @@ def test_mass_recording_closes_selection_overlay():
     assert overlay._mass_recording is False
 
     print("  -> После завершения последнего массового видео/GIF интерактивный overlay закрывается.")
+
+
+def test_mass_recording_hud_hides_when_all_recordings_are_saving():
+    """HUD скрывается после остановки захвата, не ожидая кодирования GIF."""
+    print("[TEST] Проверка скрытия панели массовой записи до завершения кодирования...")
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from ui.overlay import OverlayWindow
+
+    hud = MagicMock()
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.recording_hud = hud
+    overlay.recording_windows = [
+        SimpleNamespace(mode="gif", is_saving=True, is_finished=False),
+        SimpleNamespace(mode="video", is_saving=False, is_finished=False),
+    ]
+
+    assert overlay._mass_recording_counts() == (1, 0)
+    overlay.recording_windows[1].is_saving = True
+    overlay._update_mass_recording_hud_state()
+
+    hud.update_counts.assert_called_with(0, 0)
+    hud.hide.assert_called_once_with()
+    print("  -> После Stop панель исчезает сразу, пока файлы спокойно дописываются в фоне.")
+
+
+def test_overlay_delete_selected_interactive_object_with_delete():
+    """Delete удаляет объект, выбранный рамкой трансформации, даже без last_active_shape."""
+    print("[TEST] Проверка удаления выделенного интерактивного объекта клавишей Delete...")
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QKeyEvent
+    from ui.overlay import OverlayWindow
+
+    overlay = OverlayWindow()
+    shape = RectangleShape(QRectF(20, 20, 120, 80))
+    overlay.layer_manager.add_shape(shape)
+    overlay.transform_box.set_shape(shape)
+    overlay.last_active_shape = None
+    overlay.active_editing_shape = shape
+
+    event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Delete, Qt.KeyboardModifier.NoModifier)
+    overlay.keyPressEvent(event)
+
+    assert shape not in overlay.layer_manager.shapes
+    assert overlay.transform_box.shape is None
+    assert overlay.active_editing_shape is None
+    overlay.deleteLater()
+    print("  -> Delete удаляет активную фигуру и снимает её рамку трансформации.")
+
+
+def test_overlay_close_clears_interactive_selection_state():
+    """После закрытия захвата старые фигуры и рамка не должны проявляться в новом overlay."""
+    print("[TEST] Проверка очистки фантомного выделения между захватами...")
+    from ui.overlay import OverlayWindow
+
+    overlay = OverlayWindow()
+    shape = RectangleShape(QRectF(30, 30, 90, 60))
+    overlay.layer_manager.add_shape(shape)
+    overlay.transform_box.set_shape(shape)
+    overlay.last_active_shape = shape
+    overlay.active_editing_shape = shape
+    overlay.right_clicked_shape = shape
+    overlay.close_overlay()
+
+    assert overlay.transform_box.shape is None
+    assert overlay.last_active_shape is None
+    assert overlay.active_editing_shape is None
+    assert overlay.right_clicked_shape is None
+    assert not overlay.layer_manager.shapes
+    overlay.deleteLater()
+    print("  -> Закрытый захват полностью сбрасывает интерактивные объекты и рамку.")
+
+
+def test_interactive_badge_includes_pixel_dimensions():
+    """Плашка выбранной фигуры должна показывать её фактический размер в пикселях."""
+    print("[TEST] Проверка размеров интерактивной фигуры в плашке...")
+    from ui.overlay import OverlayWindow
+
+    overlay = OverlayWindow()
+    shape = RectangleShape(QRectF(30, 40, 123.4, 56.7))
+    text = overlay._interactive_shape_badge_text(shape, 2)
+
+    assert "Прямоугольник" in text
+    assert "123 × 57 px" in text
+    overlay.deleteLater()
+    print("  -> Название и размеры объекта отображаются в пикселях.")
+
+
+def test_interactive_object_expand_button_and_history():
+    """Кнопка плашки растягивает объект на зону и поддерживает Undo/Redo."""
+    print("[TEST] Проверка разворота интерактивного объекта на зону...")
+    from ui.overlay import OverlayWindow
+
+    overlay = OverlayWindow()
+    target = QRectF(40, 30, 420, 260)
+    shape = RectangleShape(QRectF(80, 70, 100, 60))
+    overlay.selection_rect = QRectF(target)
+    overlay.layer_manager.add_shape(shape)
+    overlay.transform_box.set_shape(shape)
+    overlay.active_editing_shape = shape
+
+    assert overlay._expand_active_interactive_object_to_region() is True
+    assert shape.rect == target
+    assert overlay.history_manager.can_undo()
+    assert overlay.history_manager.undo() is True
+    assert shape.rect == QRectF(80, 70, 100, 60)
+    assert overlay.history_manager.redo() is True
+    assert shape.rect == target
+    overlay.deleteLater()
+    print("  -> Объект разворачивается на активную зону, а Undo/Redo возвращает геометрию.")
 
 
 def test_single_recording_closes_overlay_when_no_regions_remain():
@@ -3114,6 +3351,253 @@ def test_recording_start_hides_selection_overlay():
     assert overlay.recording_windows == [rec_window]
 
     print("  -> После старта GIF/видео затемнение и интерактивное выделение снимаются сразу.")
+
+
+def test_single_recording_keeps_other_selected_regions_visible():
+    """Запись одной зоны не должна скрывать остальные зоны выделения."""
+    print("[TEST] Проверка сохранения остальных зон при одиночной записи...")
+    from unittest.mock import MagicMock, patch
+    from types import SimpleNamespace
+    from PyQt6.QtCore import QRect, QRectF
+    from ui.overlay import OverlayWindow
+
+    class DummySignal:
+        def connect(self, _callback):
+            return None
+
+    rec_window = MagicMock()
+    rec_window.recording_closed = DummySignal()
+    regions = [
+        QRectF(20, 30, 320, 200),
+        QRectF(380, 60, 280, 180),
+        QRectF(80, 300, 260, 160),
+    ]
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.cfg = SimpleNamespace(
+        record_mic=True,
+        record_system=True,
+        video_codec="libx264",
+        record_countdown_enabled=False,
+        record_countdown_seconds=3,
+    )
+    overlay.config_mgr = MagicMock()
+    overlay.target_hwnd = None
+    overlay.recording_windows = []
+    overlay.recording_region_indices = set()
+    overlay.is_recording = False
+    overlay._mass_recording = False
+    overlay.is_adding_region = False
+    overlay.regions = regions
+    overlay.active_region_idx = 1
+    overlay.rect = lambda: QRect(0, 0, 800, 600)
+    overlay.get_valid_region_items = lambda: list(enumerate(regions))
+
+    def action_regions(all_regions=False):
+        if all_regions:
+            return [(idx, region) for idx, region in enumerate(regions) if idx not in overlay.recording_region_indices]
+        return [(1, regions[1])]
+
+    overlay.get_action_region_items = action_regions
+    overlay._is_fullscreen_region = lambda _region: False
+    overlay._set_add_region_mode = MagicMock()
+    overlay.badge = MagicMock()
+    overlay.text_editor = MagicMock()
+    overlay.region_header = MagicMock()
+    overlay.setAttribute = MagicMock()
+    overlay.clearMask = MagicMock()
+    overlay.setMask = MagicMock()
+    overlay.update = MagicMock()
+    overlay.hide = MagicMock()
+    overlay.show = MagicMock()
+    overlay.raise_ = MagicMock()
+    overlay._hide_toolbars = MagicMock()
+    overlay._unclip_timer = MagicMock()
+
+    with patch("ui.overlay.RecordingFrameWindow", return_value=rec_window):
+        OverlayWindow.start_recording(overlay, mode="video", all_regions=False)
+
+    overlay.hide.assert_not_called()
+    overlay.show.assert_called_once_with()
+    # Маска обновляется до создания окна записи и ещё раз после его показа,
+    # чтобы вырезать фактическую шапку с кнопками Stop/Draw.
+    assert overlay.setMask.call_count >= 2
+    overlay.region_header.show.assert_called_once_with()
+    assert overlay.recording_windows == [rec_window]
+    assert overlay.recording_region_indices == {1}
+    assert action_regions(all_regions=True) == [(0, regions[0]), (2, regions[2])]
+
+    print("  -> При записи одной зоны остальные выбранные области остаются на экране.")
+
+
+def test_toolbar_hover_raises_overlapping_panel():
+    """Наведённая панель должна подниматься над второй при пересечении."""
+    print("[TEST] Проверка z-порядка пересекающихся панелей...")
+    from unittest.mock import MagicMock
+    from ui.overlay import OverlayWindow
+
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    right_toolbar = MagicMock()
+    bottom_toolbar = MagicMock()
+    overlay.right_toolbar = right_toolbar
+    overlay.bottom_toolbar = bottom_toolbar
+
+    OverlayWindow._raise_toolbar(overlay, right_toolbar)
+    right_toolbar.raise_.assert_called_once_with()
+    bottom_toolbar.raise_.assert_not_called()
+
+    right_toolbar.reset_mock()
+    OverlayWindow._raise_toolbar(overlay, bottom_toolbar)
+    bottom_toolbar.raise_.assert_called_once_with()
+    right_toolbar.raise_.assert_not_called()
+
+    print("  -> Каждая панель поднимается поверх соседней только при наведении на неё.")
+
+
+def test_copy_free_region_preserves_single_recording_overlay():
+    """Копирование свободной зоны не закрывает остальные зоны во время записи."""
+    print("[TEST] Проверка копирования зоны во время одиночной записи...")
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from PyQt6.QtGui import QImage
+    from ui.overlay import OverlayWindow
+
+    overlay = OverlayWindow.__new__(OverlayWindow)
+    overlay.is_recording = True
+    overlay._mass_recording = False
+    overlay.cfg = SimpleNamespace(play_sound=False)
+    overlay.get_cropped_images = MagicMock(return_value=[QImage(4, 4, QImage.Format.Format_RGB32)])
+    overlay._set_images_on_clipboard = MagicMock()
+    overlay._notify = MagicMock()
+    overlay._restore_single_recording_overlay_after_action = MagicMock()
+    overlay.close_overlay = MagicMock()
+    overlay.hide = MagicMock()
+
+    OverlayWindow.copy_screenshot(overlay, fmt="png")
+
+    overlay.hide.assert_not_called()
+    overlay._set_images_on_clipboard.assert_called_once()
+    overlay._restore_single_recording_overlay_after_action.assert_called_once_with()
+    overlay.close_overlay.assert_not_called()
+
+    print("  -> Clipboard-действие сохраняет активную запись и остальные зоны.")
+
+
+def test_static_single_region_actions_preserve_selection():
+    """Статический PNG одной зоны не закрывает остальные выбранные зоны."""
+    print("[TEST] Проверка сохранения выделения после статического снимка...")
+    from tempfile import TemporaryDirectory
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock, patch
+    from PyQt6.QtCore import QRectF
+    from PyQt6.QtGui import QImage
+    from ui.overlay import OverlayWindow
+
+    regions = [QRectF(10, 10, 80, 60), QRectF(140, 20, 90, 70)]
+
+    def make_overlay():
+        overlay = OverlayWindow.__new__(OverlayWindow)
+        overlay.is_recording = False
+        overlay._mass_recording = False
+        overlay.regions = regions
+        overlay.active_region_idx = 0
+        overlay.get_valid_region_items = lambda: list(enumerate(regions))
+        overlay.cfg = SimpleNamespace(
+            save_dir_screenshots="",
+            auto_copy_to_clipboard=False,
+            play_sound=False,
+        )
+        overlay.get_cropped_images = MagicMock(
+            return_value=[QImage(8, 8, QImage.Format.Format_RGB32)]
+        )
+        overlay._set_images_on_clipboard = MagicMock()
+        overlay._notify = MagicMock()
+        overlay._restore_single_recording_overlay_after_action = MagicMock()
+        overlay.close_overlay = MagicMock()
+        overlay.hide = MagicMock()
+        overlay.show = MagicMock()
+        overlay.raise_ = MagicMock()
+        overlay.activateWindow = MagicMock()
+        return overlay
+
+    copy_overlay = make_overlay()
+    OverlayWindow.copy_screenshot(copy_overlay, fmt="png")
+    copy_overlay.hide.assert_not_called()
+    copy_overlay._restore_single_recording_overlay_after_action.assert_called_once_with()
+    copy_overlay.close_overlay.assert_not_called()
+
+    with TemporaryDirectory() as tmp_dir:
+        save_overlay = make_overlay()
+        save_overlay.cfg.save_dir_screenshots = tmp_dir
+        save_path = Path(tmp_dir) / "single-zone.png"
+        with patch(
+            "ui.overlay.QFileDialog.getSaveFileName",
+            return_value=(str(save_path), "PNG Image (*.png)"),
+        ):
+            OverlayWindow.save_screenshot(save_overlay, fmt="png", all_regions=False)
+        assert save_path.exists()
+        save_overlay._restore_single_recording_overlay_after_action.assert_called_once_with()
+        save_overlay.close_overlay.assert_not_called()
+
+    print("  -> После копирования и сохранения одной зоны набор выделений и затемнение остаются.")
+
+
+def test_stale_capture_temp_files_are_cleaned_safely():
+    """Уборка TEMP удаляет только известные старые хвосты Framio."""
+    print("[TEST] Проверка безопасной уборки временных файлов записи...")
+    from tempfile import TemporaryDirectory
+    from unittest.mock import patch
+    from utils.capture_temp_cleanup import cleanup_stale_capture_temp_files
+
+    with TemporaryDirectory() as tmp_dir:
+        temp_dir = Path(tmp_dir) / "framio"
+        temp_dir.mkdir()
+        stale_time = time.time() - 48 * 60 * 60
+        stale_files = [
+            temp_dir / "temp_vid_old.mp4",
+            temp_dir / "temp_aud_old.wav",
+        ]
+        for path in stale_files:
+            path.write_bytes(b"stale")
+            os.utime(path, (stale_time, stale_time))
+        fresh = temp_dir / "temp_vid_fresh.mp4"
+        fresh.write_bytes(b"fresh")
+        unrelated = temp_dir / "user_file.mp4"
+        unrelated.write_bytes(b"keep")
+
+        with patch("utils.capture_temp_cleanup.tempfile.gettempdir", return_value=tmp_dir):
+            assert cleanup_stale_capture_temp_files() == 2
+
+        assert not stale_files[0].exists() and not stale_files[1].exists()
+        assert fresh.exists() and unrelated.exists()
+
+    print("  -> Удаляются только старые temp_vid/temp_aud/temp_gif, чужие и свежие файлы сохраняются.")
+
+
+def test_stale_pyinstaller_temp_dirs_are_cleaned_safely():
+    """Старые аварийные каталоги one-file удаляются, текущий не трогается."""
+    print("[TEST] Проверка уборки старых каталогов PyInstaller в TEMP...")
+    from tempfile import TemporaryDirectory
+    from unittest.mock import patch
+    from utils.pyinstaller_temp_cleanup import cleanup_stale_pyinstaller_temp_dirs
+
+    with TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        stale = root / "_MEI_stale_framio"
+        fresh = root / "_MEI_fresh_other"
+        current = root / "_MEI_current_framio"
+        for directory in (stale, fresh, current):
+            directory.mkdir()
+            (directory / "payload.bin").write_bytes(b"test")
+        old_time = time.time() - 48 * 60 * 60
+        os.utime(stale, (old_time, old_time))
+
+        with patch("utils.pyinstaller_temp_cleanup.tempfile.gettempdir", return_value=tmp_dir), \
+             patch("utils.pyinstaller_temp_cleanup.sys._MEIPASS", str(current), create=True):
+            assert cleanup_stale_pyinstaller_temp_dirs() == 1
+
+        assert not stale.exists()
+        assert fresh.exists() and current.exists()
+    print("  -> Удаляется только старый _MEI-хвост, свежий и текущий каталоги сохраняются.")
 
 
 def test_double_click_selects_window_below_topmost_overlay():
@@ -3252,6 +3736,7 @@ if __name__ == "__main__":
     with TemporaryDirectory() as tmp_dir:
         tmp_p = Path(tmp_dir)
         test_dynamic_text_editing_and_filter_history()
+        test_region_filters_are_isolated_mass_filter_and_escape_closes_all()
         test_mosaic_offset_export_interactive_text_and_flyout_positions()
         test_single_instance_text_eyedropper_and_inspector()
         test_single_instance_mutex_is_atomic()
@@ -3304,6 +3789,7 @@ if __name__ == "__main__":
         test_freeze_prevention_and_phantom_flash()
         test_blur_censor_palette_and_outside_click()
         test_filters()
+        test_whole_area_filter_controls_and_strength()
         test_video_and_gif_recorders(tmp_p)
         test_audio_recorder(tmp_p)
         test_screen_capture_1to1()
@@ -3315,8 +3801,19 @@ if __name__ == "__main__":
         test_progress_signals()
         test_multi_region_selection_and_export()
         test_mass_recording_closes_selection_overlay()
+        test_mass_recording_hud_hides_when_all_recordings_are_saving()
+        test_overlay_delete_selected_interactive_object_with_delete()
+        test_overlay_close_clears_interactive_selection_state()
+        test_interactive_badge_includes_pixel_dimensions()
+        test_interactive_object_expand_button_and_history()
         test_single_recording_closes_overlay_when_no_regions_remain()
         test_recording_start_hides_selection_overlay()
+        test_single_recording_keeps_other_selected_regions_visible()
+        test_toolbar_hover_raises_overlapping_panel()
+        test_copy_free_region_preserves_single_recording_overlay()
+        test_static_single_region_actions_preserve_selection()
+        test_stale_capture_temp_files_are_cleaned_safely()
+        test_stale_pyinstaller_temp_dirs_are_cleaned_safely()
         test_double_click_selects_window_below_topmost_overlay()
         test_image_search_uses_direct_google_upload_and_direct_yandex_upload()
         import time

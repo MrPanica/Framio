@@ -20,6 +20,7 @@ def get_localized_filter_names() -> dict:
         FilterType.NONE: tr("filter_none", "Без фильтра"),
         FilterType.GRAYSCALE: tr("filter_grayscale", "Оттенки серого (Чёрно-белый)"),
         FilterType.BLUR: tr("filter_blur", "Мягкое размытие (Блюр)"),
+        FilterType.PIXELATE: tr("filter_pixelate", "Мозаика (Зернистость)"),
         FilterType.INVERT: tr("filter_invert", "Инверсия цветов (Негатив)"),
         FilterType.VIBRANT: tr("filter_vibrant", "Повышенная контрастность"),
         FilterType.SEPIA: tr("filter_sepia", "Тёплая сепия (Винтаж)")
@@ -35,7 +36,13 @@ FILTER_NAMES = {
     FilterType.SEPIA: "Тёплая сепия (Винтаж)"
 }
 
-def apply_filter(frame_bgr: np.ndarray, filter_type: str) -> np.ndarray:
+def apply_filter(
+    frame_bgr: np.ndarray,
+    filter_type: str,
+    *,
+    blur_radius: int = 15,
+    pixel_size: int = 12,
+) -> np.ndarray:
     """
     Применяет выбранный фильтр к кадру в формате BGR (uint8 numpy array).
     """
@@ -54,13 +61,16 @@ def apply_filter(frame_bgr: np.ndarray, filter_type: str) -> np.ndarray:
             return cv2.bitwise_not(frame_bgr)
 
         elif filter_type == FilterType.BLUR:
-            # Быстрый гауссов блюр
-            return cv2.GaussianBlur(frame_bgr, (21, 21), 0)
+            # Размер ядра должен быть нечетным. Параметр меняется из UI
+            # и применяется одинаково к предпросмотру и к записи.
+            radius = max(1, min(99, int(blur_radius)))
+            kernel = radius * 2 + 1
+            return cv2.GaussianBlur(frame_bgr, (kernel, kernel), 0)
 
         elif filter_type == FilterType.PIXELATE:
             h, w = frame_bgr.shape[:2]
-            pixel_size = max(8, min(h, w) // 30)
-            small = cv2.resize(frame_bgr, (max(1, w // pixel_size), max(1, h // pixel_size)), interpolation=cv2.INTER_LINEAR)
+            block = max(2, min(64, int(pixel_size)))
+            small = cv2.resize(frame_bgr, (max(1, w // block), max(1, h // block)), interpolation=cv2.INTER_LINEAR)
             return cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
 
         elif filter_type == FilterType.VIBRANT:

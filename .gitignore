@@ -8,10 +8,12 @@ env/
 build/
 build-ci*/
 build-onefile/
+build-local*/
 develop-eggs/
 dist/
 dist-onefile/
 dist-lite/
+dist-local*/
 dist-optimized/
 dist-optimized-folder/
 build-lite/

@@ -233,9 +233,10 @@ class RecordingSettingsPopup(QFrame):
 
 class RecordingFrameWindow(QWidget):
     recording_closed = pyqtSignal(str)
+    geometry_changed = pyqtSignal()
     save_progress = pyqtSignal(str, int, str)  # (filename, percent_0_to_100, stage_desc)
 
-    def __init__(self, mode="video", rect=None, regions=None, region_index=None, region_count=1, record_mic=None, record_system=None, codec=None, target_hwnd=None, capture_mask=None, mask_getter=None, is_fullscreen=False, countdown=None, countdown_seconds=None, parent=None):
+    def __init__(self, mode="video", rect=None, regions=None, region_index=None, region_count=1, record_mic=None, record_system=None, codec=None, target_hwnd=None, capture_mask=None, mask_getter=None, is_fullscreen=False, countdown=None, countdown_seconds=None, filter_type=None, filter_params=None, parent=None):
         super().__init__(parent)
         self.regions = [QRect(int(r.x()), int(r.y()), int(r.width()), int(r.height())) for r in regions] if regions else []
         self.region_index = region_index
@@ -261,6 +262,8 @@ class RecordingFrameWindow(QWidget):
         self.target_hwnd = target_hwnd
         self.capture_mask = capture_mask
         self.mask_getter = mask_getter
+        self.filter_type = filter_type or "none"
+        self.filter_params = dict(filter_params or {})
         self.accent_color = QColor("#ef4444") if mode == "video" else QColor("#a855f7")
 
         self.countdown_enabled = countdown if countdown is not None else getattr(self.cfg, "record_countdown_enabled", False)
@@ -364,6 +367,7 @@ class RecordingFrameWindow(QWidget):
             user32.SetWindowDisplayAffinity(int(self.winId()), 0x00000011)
         except Exception:
             pass
+        self.geometry_changed.emit()
 
     def nativeEvent(self, eventType, message):
         """
@@ -818,6 +822,7 @@ class RecordingFrameWindow(QWidget):
 
         self.lbl_size.setText(f"{self.inner_w}×{self.inner_h}")
         self.update()
+        self.geometry_changed.emit()
 
     def _mask_indicator_region(self, bx: int, by: int, bw: int, bh: int) -> QRegion:
         """Возвращает узкую видимую область для контура одной или нескольких масок."""
@@ -884,6 +889,8 @@ class RecordingFrameWindow(QWidget):
             target_hwnd=self.target_hwnd,
             capture_mask=self.capture_mask,
             mask_getter=self.mask_getter,
+            filter_type=self.filter_type,
+            filter_params=self.filter_params,
             parent=self
         )
         self.capture_worker.tick.connect(self._on_tick)
