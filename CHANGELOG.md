@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.0.8] - 2026-09-09
+
+### English
+
+Improved multi-zone capture, recording controls, and recent media actions.
+
+- Saving or copying one selected zone no longer hides the other selected zones or causes a visible dimming flicker.
+- Recording one zone keeps the other selected zones and their controls available.
+- Added safer multi-zone recording controls, independent effects, capture masks, and Undo/Redo coverage.
+- Added direct image search actions for recent materials and a Windows “Open with...” action.
+- Recent-material actions now use compact icons and remain on one line.
+- Added cleanup for stale recording files and old PyInstaller temporary folders.
+- Improved window capture selection, toolbar overlap handling, and live blur/mosaic controls.
+
+### Русский
+
+Улучшены многозонный захват, управление записью и последние материалы.
+
+- Сохранение или копирование одной выбранной зоны больше не скрывает остальные зоны и не вызывает мигание затемнения.
+- При записи одной зоны остальные выбранные зоны и их элементы управления остаются доступными.
+- Улучшено управление многозонной записью, независимыми эффектами, масками захвата и историей Undo/Redo.
+- Для последних материалов добавлены прямой поиск по картинке и действие Windows «Открыть с помощью...».
+- Действия последних материалов переведены на компактные иконки и размещаются в одну строку.
+- Добавлена безопасная очистка старых временных файлов записи и каталогов PyInstaller.
+- Улучшены выбор окон для захвата, перекрытие панелей и настройка блюра/мозаики в реальном времени.
+
 ## [1.0.7] - 2026-09-08
 
 ### English
