@@ -980,7 +980,7 @@ class RecordingFrameWindow(QWidget):
         ToolType.TEXT:        "text",
         ToolType.MOSAIC:      "mosaic",
         ToolType.MOVE:        "cursor",
-        ToolType.SELECT:      "cursor",
+        ToolType.SELECT:      "select",
     }
 
     def _on_rec_tool_changed(self, tool_type: str):

@@ -461,161 +461,251 @@ class CaptureWorker(QThread):
             if self._ffmpeg_process is proc:
                 self._ffmpeg_process = None
 
+    def _safe_replace(self, src: str, dst: str, retries: int = 15, delay: float = 0.05) -> bool:
+        """
+        Безопасное перемещение файла на Windows с повторными попытками при временной блокировке дескриптора
+        другими процессами (WinError 32) и резервным копированием через shutil.
+        """
+        if not src or not os.path.exists(src):
+            return False
+        if os.path.abspath(src) == os.path.abspath(dst):
+            return True
+
+        import shutil
+        for _ in range(retries):
+            try:
+                if os.path.exists(dst):
+                    try:
+                        os.remove(dst)
+                    except Exception:
+                        pass
+                os.replace(src, dst)
+                return True
+            except (PermissionError, OSError):
+                time.sleep(delay)
+            except Exception as e:
+                print(f"[CaptureWorker] _safe_replace ошибка: {e}")
+                time.sleep(delay)
+
+        # Резервный вариант: копирование с последующим удалением исходного файла
+        try:
+            shutil.copy2(src, dst)
+            try:
+                os.remove(src)
+            except Exception:
+                pass
+            return True
+        except Exception as e:
+            print(f"[CaptureWorker] _safe_replace fallback ошибка: {e}")
+            return False
+
     def _finalize_recording(self):
-        if getattr(self, "is_cancelled", False):
+        try:
+            if getattr(self, "is_cancelled", False):
+                if self.video_recorder:
+                    try:
+                        self.video_recorder.stop()
+                    except Exception:
+                        pass
+                if self.audio_recorder:
+                    try:
+                        self.audio_recorder.stop()
+                    except Exception:
+                        pass
+                self._terminate_ffmpeg_process()
+                self._cleanup_cancelled_files()
+                return
+
+            # 1. Останавливаем видео и аудио
             if self.video_recorder:
                 try:
                     self.video_recorder.stop()
-                except Exception:
-                    pass
+                except Exception as e_v:
+                    print(f"[CaptureWorker] Ошибка остановки video_recorder: {e_v}")
+
+            total_frames = getattr(self.video_recorder, "frame_count", 0)
+            if total_frames <= 0:
+                total_frames = len(getattr(self.video_recorder, "frames", []))
+            if total_frames <= 0:
+                total_frames = 30  # fallback
+
+            video_duration = (total_frames / float(self.fps)) if self.fps > 0 else 0.0
+
             if self.audio_recorder:
                 try:
-                    self.audio_recorder.stop()
-                except Exception:
-                    pass
-            self._terminate_ffmpeg_process()
-            self._cleanup_cancelled_files()
-            return
+                    self.audio_recorder.stop(target_duration=video_duration)
+                except Exception as e_a:
+                    print(f"[CaptureWorker] Ошибка остановки audio_recorder: {e_a}")
 
-        # 1. Останавливаем видео и аудио
-        if self.video_recorder:
-            self.video_recorder.stop()
+            if self.is_cancelled:
+                self._terminate_ffmpeg_process()
+                self._cleanup_cancelled_files()
+                return
 
-        total_frames = getattr(self.video_recorder, "frame_count", 0)
-        if total_frames <= 0:
-            total_frames = len(getattr(self.video_recorder, "frames", []))
-        if total_frames <= 0:
-            total_frames = 30  # fallback
+            self._emit_progress(5, "Финализация записи...")
 
-        video_duration = (total_frames / float(self.fps)) if self.fps > 0 else 0.0
+            # 2. Режим ВИДЕО (со звуком или без звука)
+            if self.mode == "video":
+                has_audio = (
+                    (self.record_mic or self.record_system)
+                    and os.path.exists(self.temp_audio_path)
+                    and os.path.getsize(self.temp_audio_path) > 100
+                )
+                if has_audio and FFMPEG_EXE and os.path.exists(self.temp_video_path):
+                    print(f"[CaptureWorker] Объединение видео и звука в: {self.output_path}...")
+                    cmd = [
+                        FFMPEG_EXE, "-y",
+                        "-i", self.temp_video_path,
+                        "-i", self.temp_audio_path,
+                        "-c:v", "copy",
+                        "-c:a", "aac",
+                        "-b:a", "192k",
+                        self.output_path
+                    ]
+                    mux_max = 30 if self.compress_video else 95
+                    ret = self._run_ffmpeg_with_progress(cmd, total_frames, 5, mux_max, "Сведение звука")
+                    if self.is_cancelled:
+                        self._cleanup_cancelled_files()
+                        return
+                    if ret == 0 and os.path.exists(self.output_path):
+                        print("[CaptureWorker] Видео со звуком успешно собрано!")
+                    else:
+                        print(f"[CaptureWorker] FFmpeg вернул код {ret}, перенос видеопотока...")
+                        self._safe_replace(self.temp_video_path, self.output_path)
 
-        if self.audio_recorder:
-            self.audio_recorder.stop(target_duration=video_duration)
+                    # Чистим временные файлы
+                    for p in [self.temp_video_path, self.temp_audio_path]:
+                        if os.path.exists(p):
+                            try:
+                                os.remove(p)
+                            except Exception:
+                                pass
+                elif os.path.exists(self.temp_video_path):
+                    # Видео без звука: переносим временный файл в итоговый
+                    self._safe_replace(self.temp_video_path, self.output_path)
+                    if os.path.exists(self.temp_audio_path):
+                        try:
+                            os.remove(self.temp_audio_path)
+                        except Exception:
+                            pass
 
-        if self.is_cancelled:
-            self._terminate_ffmpeg_process()
-            self._cleanup_cancelled_files()
-            return
+                # Пост-сжатие видео MP4 алгоритмом H.264 при запросе
+                if self.compress_video and FFMPEG_EXE and os.path.exists(self.output_path) and os.path.getsize(self.output_path) > 100:
+                    try:
+                        comp_video = self.output_path + ".comp.mp4"
+                        cmd_v = [
+                            FFMPEG_EXE, "-y",
+                            "-i", self.output_path,
+                            "-c:v", "libx264",
+                            "-crf", "22",
+                            "-preset", "faster",
+                            "-c:a", "copy",
+                            "-movflags", "+faststart",
+                            comp_video
+                        ]
+                        ret_v = self._run_ffmpeg_with_progress(cmd_v, total_frames, 30, 95, "Сжатие H.264")
+                        if self.is_cancelled:
+                            self._cleanup_cancelled_files()
+                            return
+                        if ret_v == 0 and os.path.exists(comp_video) and os.path.getsize(comp_video) > 100:
+                            if os.path.getsize(comp_video) < os.path.getsize(self.output_path):
+                                self._safe_replace(comp_video, self.output_path)
+                                print(f"[CaptureWorker] Видео MP4 оптимизировано!")
+                            else:
+                                try:
+                                    os.remove(comp_video)
+                                except Exception:
+                                    pass
+                        elif os.path.exists(comp_video):
+                            try:
+                                os.remove(comp_video)
+                            except Exception:
+                                pass
+                    except Exception as e_v:
+                        print(f"[CaptureWorker] Ошибка оптимизации видео: {e_v}")
 
-        self._emit_progress(5, "Финализация записи...")
-
-        # 2. Если режим ВИДЕО со звуком — объединяем видео + аудио через FFmpeg
-        if self.mode == "video" and (self.record_mic or self.record_system) and FFMPEG_EXE:
-            if os.path.exists(self.temp_video_path) and os.path.exists(self.temp_audio_path) and os.path.getsize(self.temp_audio_path) > 100:
-                print(f"[CaptureWorker] Объединение видео и звука в: {self.output_path}...")
+            # 3. Режим GIF — генерируем оптимизированный GIF через FFmpeg PaletteGen
+            elif self.mode == "gif" and FFMPEG_EXE and self.temp_video_path and os.path.exists(self.temp_video_path):
+                dither_str = "bayer:bayer_scale=3" if self.gif_dither == "bayer" else "none"
+                print(f"[CaptureWorker] Создание сжатого GIF ({self.gif_colors} цветов, дизеринг {dither_str}): {self.output_path}...")
                 cmd = [
                     FFMPEG_EXE, "-y",
                     "-i", self.temp_video_path,
-                    "-i", self.temp_audio_path,
-                    "-c:v", "copy",
-                    "-c:a", "aac",
-                    "-b:a", "192k",
+                    "-vf", f"fps={self.fps},split[s0][s1];[s0]palettegen=max_colors={self.gif_colors}:reserve_transparent=0[p];[s1][p]paletteuse=dither={dither_str}",
                     self.output_path
                 ]
-                mux_max = 30 if self.compress_video else 95
-                ret = self._run_ffmpeg_with_progress(cmd, total_frames, 5, mux_max, "Сведение звука")
+                gif_max = 60 if self.compress_gif else 95
+                ret = self._run_ffmpeg_with_progress(cmd, total_frames, 10, gif_max, f"Генерация GIF ({self.gif_colors} цветов)")
                 if self.is_cancelled:
                     self._cleanup_cancelled_files()
                     return
-                if ret == 0 and os.path.exists(self.output_path):
-                    print("[CaptureWorker] Видео со звуком успешно собрано!")
+                if ret == 0:
+                    print(f"[CaptureWorker] Оптимизированный GIF ({self.gif_colors} цветов) успешно сохранён!")
                 else:
-                    print(f"[CaptureWorker] FFmpeg вернул код {ret}, перенос видеопотока...")
-                    os.replace(self.temp_video_path, self.output_path)
+                    print(f"[CaptureWorker] Ошибка PaletteGen (код {ret})")
 
-                # Чистим временные файлы
-                for p in [self.temp_video_path, self.temp_audio_path]:
-                    if os.path.exists(p):
-                        try: os.remove(p)
-                        except Exception: pass
-            elif os.path.exists(self.temp_video_path):
-                os.replace(self.temp_video_path, self.output_path)
-                if os.path.exists(self.temp_audio_path):
-                    try: os.remove(self.temp_audio_path)
-                    except Exception: pass
+                if os.path.exists(self.temp_video_path):
+                    try:
+                        os.remove(self.temp_video_path)
+                    except Exception:
+                        pass
 
-        # 3. Если режим GIF — генерируем оптимизированный GIF через FFmpeg PaletteGen
-        elif self.mode == "gif" and FFMPEG_EXE and self.temp_video_path and os.path.exists(self.temp_video_path):
-            dither_str = "bayer:bayer_scale=3" if self.gif_dither == "bayer" else "none"
-            print(f"[CaptureWorker] Создание сжатого GIF ({self.gif_colors} цветов, дизеринг {dither_str}): {self.output_path}...")
-            cmd = [
-                FFMPEG_EXE, "-y",
-                "-i", self.temp_video_path,
-                "-vf", f"fps={self.fps},split[s0][s1];[s0]palettegen=max_colors={self.gif_colors}:reserve_transparent=0[p];[s1][p]paletteuse=dither={dither_str}",
-                self.output_path
-            ]
-            gif_max = 60 if self.compress_gif else 95
-            ret = self._run_ffmpeg_with_progress(cmd, total_frames, 10, gif_max, f"Генерация GIF ({self.gif_colors} цветов)")
-            if self.is_cancelled:
+                # Дополнительное сжатие GIF алгоритмами оптимизации кадров
+                if self.compress_gif and os.path.exists(self.output_path):
+                    try:
+                        from PIL import Image, ImageSequence
+                        print(f"[CaptureWorker] Запуск сжатия GIF (Pillow Optimize)...")
+                        self._emit_progress(65, "Оптимизация кадров GIF...")
+                        with Image.open(self.output_path) as im:
+                            frames = [f.copy() for f in ImageSequence.Iterator(im)]
+                            if frames:
+                                temp_comp = self.output_path + ".comp.gif"
+                                self._emit_progress(80, "Сжатие LZW...")
+                                frames[0].save(
+                                    temp_comp,
+                                    save_all=True,
+                                    append_images=frames[1:],
+                                    optimize=True,
+                                    loop=0,
+                                    duration=int(1000 / self.fps)
+                                )
+                                if os.path.exists(temp_comp):
+                                    if os.path.getsize(temp_comp) < os.path.getsize(self.output_path):
+                                        self._safe_replace(temp_comp, self.output_path)
+                                        print(f"[CaptureWorker] GIF успешно оптимизирован и сжат!")
+                                    else:
+                                        try:
+                                            os.remove(temp_comp)
+                                        except Exception:
+                                            pass
+                    except Exception as comp_err:
+                        print(f"[CaptureWorker] Ошибка сжатия GIF: {comp_err}")
+
+        except Exception as e:
+            print(f"[CaptureWorker] Непредвиденная ошибка в _finalize_recording: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            if getattr(self, "is_cancelled", False):
+                self._terminate_ffmpeg_process()
                 self._cleanup_cancelled_files()
-                return
-            if ret == 0:
-                print(f"[CaptureWorker] Оптимизированный GIF ({self.gif_colors} цветов) успешно сохранён!")
             else:
-                print(f"[CaptureWorker] Ошибка PaletteGen (код {ret})")
+                # Финальная гарантия: если temp_video_path существует, а output_path нет - переносим
+                if (
+                    not os.path.exists(self.output_path)
+                    and getattr(self, "temp_video_path", None)
+                    and os.path.exists(self.temp_video_path)
+                ):
+                    self._safe_replace(self.temp_video_path, self.output_path)
 
-            if os.path.exists(self.temp_video_path):
-                try: os.remove(self.temp_video_path)
-                except Exception: pass
-
-            # Дополнительное сжатие GIF алгоритмами оптимизации кадров
-            if self.compress_gif and os.path.exists(self.output_path):
-                try:
-                    from PIL import Image, ImageSequence
-                    print(f"[CaptureWorker] Запуск сжатия GIF (Pillow Optimize)...")
-                    self._emit_progress(65, "Оптимизация кадров GIF...")
-                    with Image.open(self.output_path) as im:
-                        frames = [f.copy() for f in ImageSequence.Iterator(im)]
-                        if frames:
-                            temp_comp = self.output_path + ".comp.gif"
-                            self._emit_progress(80, "Сжатие LZW...")
-                            frames[0].save(
-                                temp_comp,
-                                save_all=True,
-                                append_images=frames[1:],
-                                optimize=True,
-                                loop=0,
-                                duration=int(1000 / self.fps)
-                            )
-                            if os.path.exists(temp_comp):
-                                if os.path.getsize(temp_comp) < os.path.getsize(self.output_path):
-                                    os.replace(temp_comp, self.output_path)
-                                    print(f"[CaptureWorker] GIF успешно оптимизирован и сжат!")
-                                else:
-                                    os.remove(temp_comp)
-                except Exception as comp_err:
-                    print(f"[CaptureWorker] Ошибка сжатия GIF: {comp_err}")
-
-        # 4. Пост-сжатие видео MP4 алгоритмом H.264 при запросе
-        if self.mode == "video" and self.compress_video and FFMPEG_EXE and os.path.exists(self.output_path):
-            try:
-                comp_video = self.output_path + ".comp.mp4"
-                cmd_v = [
-                    FFMPEG_EXE, "-y",
-                    "-i", self.output_path,
-                    "-c:v", "libx264",
-                    "-crf", "22",
-                    "-preset", "faster",
-                    "-c:a", "copy",
-                    "-movflags", "+faststart",
-                    comp_video
-                ]
-                ret_v = self._run_ffmpeg_with_progress(cmd_v, total_frames, 30, 95, "Сжатие H.264")
-                if self.is_cancelled:
-                    self._cleanup_cancelled_files()
-                    return
-                if ret_v == 0 and os.path.exists(comp_video):
-                    if os.path.getsize(comp_video) < os.path.getsize(self.output_path):
-                        os.replace(comp_video, self.output_path)
-                        print(f"[CaptureWorker] Видео MP4 оптимизировано!")
-                    else:
-                        os.remove(comp_video)
-            except Exception as e_v:
-                print(f"[CaptureWorker] Ошибка оптимизации видео: {e_v}")
-
-        if self.is_cancelled:
-            self._cleanup_cancelled_files()
-            return
-
-        self._emit_progress(100, "Готово")
-        self.recording_finished.emit(self.output_path)
+                self._emit_progress(100, "Готово")
+                final_path = (
+                    self.output_path
+                    if os.path.exists(self.output_path)
+                    else (
+                        self.temp_video_path
+                        if getattr(self, "temp_video_path", None) and os.path.exists(self.temp_video_path)
+                        else ""
+                    )
+                )
+                self.recording_finished.emit(final_path)

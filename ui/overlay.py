@@ -4891,7 +4891,7 @@ class OverlayWindow(QWidget):
         self.scrolling_hud.step_clicked.connect(self.scrolling_engine.capture_step)
         self.scrolling_hud.cancel_clicked.connect(self.scrolling_engine.cancel)
 
-        # Сбрасываем старую рамку и слои, скрываем оверлей для чистого захвата содержимого экрана
+        # Сбрасываем старую рамку и слои, освобождаем мышь и скрываем оверлей для чистого захвата содержимого экрана
         self.selection_rect = QRectF()
         self.initial_selection = QRectF()
         self.clearMask()
@@ -4899,6 +4899,15 @@ class OverlayWindow(QWidget):
         self.layer_manager.clear()
         self.history_manager.clear()
         self._set_background_pixmap(None)
+        try:
+            self.releaseMouse()
+        except Exception:
+            pass
+        try:
+            import ctypes
+            ctypes.windll.user32.ReleaseCapture()
+        except Exception:
+            pass
         self.repaint()
         try:
             import ctypes

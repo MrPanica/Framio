@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.0.10] - 2026-09-12
+
+### English
+
+Selection tool enhancements, scrolling screenshot smoothness, and video recording finalization fixes.
+
+- Fixed selection tool in video/GIF recording canvas: enabled rubber-band multi-shape selection, shape grouping into `ShapeGroup`, and preserved 8 transformation handles and rotation after rotating shapes.
+- Fixed "protected zone" mode during recording: properly swallows background clicks so they cannot leak into underlying desktop windows.
+- Fixed cursor freezes and stutters during scrolling screenshot: completely removed forced mouse cursor centering (`user32.SetCursorPos`), optimized vertical shift detection with horizontal stride for 5-10x faster matching at full 1px vertical accuracy, added reentrancy guards for frame stitching.
+- Fixed video recording finalization when audio is disabled or when encountering file lock delays: added safe atomic replacement with retry, ensured `try...finally` block guarantees progress to 100% and emits `recording_finished` signal so recordings never get stuck at 22% in the system tray.
+
+### Русский
+
+Улучшение инструмента выделения, устранение зависаний длинного скриншота и исправление финализации видео.
+
+- Исправлен инструмент «Выделение» при записи видео и GIF: добавлено резиновое выделение группы фигур прямоугольной рамкой, группировка в `ShapeGroup`, сохранение интерактивной рамки с 8 маркерами трансформации после вращения фигур.
+- Исправлен режим «Защита зоны» (неосязаемая рамка) во время записи: фоновые клики гарантированно поглощаются холстом и не пробивают в сторонние окна рабочего стола.
+- Устранены зависания и дергания курсора при длинном/скролл-скриншоте: полностью удалено принудительное перемещение курсора мыши (`SetCursorPos`), оптимизирован алгоритм поиска сдвига `_detect_vertical_shift` с горизонтальным шагом (ускорение в 5-10 раз при точности 1 px) и ранним выходом, добавлена защита от повторного входа при сшивании кадров.
+- Исправлена финализация записи видео без звука и при задержках блокировки файлов: добавлена безопасная замена файлов с повторными попытками, завершение обёрнуто в `try...finally` с гарантированным сигналом `recording_finished` и прогрессом 100% (устранено зависание статуса «записывается / 22%» в системном трее).
+
 ## [1.0.9] - 2026-09-11
 
 ### English

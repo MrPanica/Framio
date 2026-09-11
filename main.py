@@ -677,9 +677,10 @@ class FramioApp(QObject):
     def _on_recording_saved(self, rec_window: RecordingFrameWindow, path: str):
         if rec_window in self.active_recordings:
             self.active_recordings.remove(rec_window)
+        if getattr(rec_window, "output_path", None):
+            self.processing_tasks.pop(Path(rec_window.output_path).name, None)
         if path:
-            fname = Path(path).name
-            self.processing_tasks.pop(fname, None)
+            self.processing_tasks.pop(Path(path).name, None)
         self._update_tray_state()
 
         if path and Path(path).exists():
