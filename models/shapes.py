@@ -9,6 +9,7 @@
 import math
 import uuid
 import copy
+import threading
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QBrush, QFont, QFontMetrics, QPolygonF,
@@ -16,6 +17,12 @@ from PyQt6.QtGui import (
     QTransform
 )
 from utils.i18n import tr
+
+_EFFECT_CACHE_LOCK = threading.Lock()
+_PIXELATED_CACHE: dict[tuple[int, int], QPixmap] = {}
+_BLURRED_CACHE: dict[tuple[int, int], QPixmap] = {}
+_FILTERED_CACHE: dict[tuple[int, str, int], QPixmap] = {}
+_MAX_EFFECT_CACHE = 8
 
 
 def point_to_segment_distance(p: QPointF, a: QPointF, b: QPointF) -> float:
@@ -33,7 +40,7 @@ def point_to_segment_distance(p: QPointF, a: QPointF, b: QPointF) -> float:
 def get_pixelated_pixmap(source_pixmap: QPixmap, pixel_size: int = 5) -> QPixmap:
     """
     Генерирует аккуратную пикселизированную версию исходного фонового изображения.
-    Размер блока по умолчанию уменьшен в 2.5-3 раза (5 px) для детальной мозаики текста.
+    Результат кэшируется по ключу (cacheKey, pixel_size), устраняя повторные расчеты.
     """
     if source_pixmap is None or source_pixmap.isNull():
         return None
@@ -41,15 +48,28 @@ def get_pixelated_pixmap(source_pixmap: QPixmap, pixel_size: int = 5) -> QPixmap
     if w <= 0 or h <= 0:
         return None
     ps = max(3, min(24, pixel_size))
+    cache_key = (source_pixmap.cacheKey(), ps)
+    with _EFFECT_CACHE_LOCK:
+        cached = _PIXELATED_CACHE.get(cache_key)
+        if cached is not None and not cached.isNull():
+            return cached
+
     block_w = max(1, w // ps)
     block_h = max(1, h // ps)
     small = source_pixmap.scaled(block_w, block_h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
-    return small.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
+    result = small.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
+
+    with _EFFECT_CACHE_LOCK:
+        if len(_PIXELATED_CACHE) >= _MAX_EFFECT_CACHE:
+            _PIXELATED_CACHE.pop(next(iter(_PIXELATED_CACHE)), None)
+        _PIXELATED_CACHE[cache_key] = result
+    return result
 
 
 def get_blurred_pixmap(source_pixmap: QPixmap, blur_radius: int = 15) -> QPixmap:
     """
     Генерирует аккуратно размытую версию исходного фонового изображения (Gaussian/Smooth blur).
+    Результат кэшируется по ключу (cacheKey, blur_radius).
     """
     if source_pixmap is None or source_pixmap.isNull():
         return None
@@ -57,11 +77,23 @@ def get_blurred_pixmap(source_pixmap: QPixmap, blur_radius: int = 15) -> QPixmap
     if w <= 0 or h <= 0:
         return None
     rad = max(2, min(50, blur_radius))
+    cache_key = (source_pixmap.cacheKey(), rad)
+    with _EFFECT_CACHE_LOCK:
+        cached = _BLURRED_CACHE.get(cache_key)
+        if cached is not None and not cached.isNull():
+            return cached
+
     scale_factor = max(2, rad // 2)
     small_w = max(1, w // scale_factor)
     small_h = max(1, h // scale_factor)
     small = source_pixmap.scaled(small_w, small_h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
-    return small.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    result = small.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+
+    with _EFFECT_CACHE_LOCK:
+        if len(_BLURRED_CACHE) >= _MAX_EFFECT_CACHE:
+            _BLURRED_CACHE.pop(next(iter(_BLURRED_CACHE)), None)
+        _BLURRED_CACHE[cache_key] = result
+    return result
 
 
 def get_filtered_pixmap(source_pixmap: QPixmap, filter_type: str, intensity: int = 10) -> QPixmap:
@@ -72,11 +104,19 @@ def get_filtered_pixmap(source_pixmap: QPixmap, filter_type: str, intensity: int
     if source_pixmap is None or source_pixmap.isNull():
         return None
     ft = str(filter_type).lower()
+    if ft == "normal":
+        # "Обычный" эффект — возвращает исходное изображение без изменений.
+        return source_pixmap
     if ft in ("mosaic", "pixelate"):
         return get_pixelated_pixmap(source_pixmap, intensity)
     elif ft == "blur":
         return get_blurred_pixmap(source_pixmap, intensity)
     else:
+        cache_key = (source_pixmap.cacheKey(), ft, intensity)
+        with _EFFECT_CACHE_LOCK:
+            cached = _FILTERED_CACHE.get(cache_key)
+            if cached is not None and not cached.isNull():
+                return cached
         try:
             from utils.image_filters import apply_filter
             import numpy as np
@@ -92,7 +132,12 @@ def get_filtered_pixmap(source_pixmap: QPixmap, filter_type: str, intensity: int
             res_bgra[:, :, :3] = res_bgr
             res_bgra[:, :, 3] = 255
             res_img = QImage(res_bgra.data, w, h, res_bgra.strides[0], QImage.Format.Format_RGB32).copy()
-            return QPixmap.fromImage(res_img)
+            result = QPixmap.fromImage(res_img)
+            with _EFFECT_CACHE_LOCK:
+                if len(_FILTERED_CACHE) >= _MAX_EFFECT_CACHE:
+                    _FILTERED_CACHE.pop(next(iter(_FILTERED_CACHE)), None)
+                _FILTERED_CACHE[cache_key] = result
+            return result
         except Exception:
             return source_pixmap
 

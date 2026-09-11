@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.0.9] - 2026-09-11
+
+### English
+
+Performance optimizations, build cleanup, and recording UI refinements.
+
+- Added LRU caching for mosaic and blur effects, speeding up redraws by over 100x and ensuring smooth 60 FPS rendering.
+- Zero-allocation memory buffer reuse in Win32 screen capture, eliminating high-rate memory allocations during video/GIF recording.
+- Reusable transformation bounding boxes and rotation angle preservation for shapes and groups.
+- Compact 34px sidebar in recording mode with instant tooltips.
+- High-contrast dashed outlines when drawing mosaic and blur regions.
+- Smooth collapse of expanded toolbar sections without vertical gaps.
+- Instant elimination of transparent background breach upon stopping recording.
+- Cleaned PyInstaller build configuration, excluding unused modules and eliminating compiler warnings.
+- Verified dependencies against vulnerability databases with 0 known CVEs.
+
+### Русский
+
+Оптимизация производительности, очистка сборки и доработка интерфейса записи.
+
+- Добавлено LRU-кэширование эффектов мозаики и размытия, ускоряющее перерисовку более чем в 100 раз (плавные 60 FPS).
+- Переиспользование буфера памяти при Win32-захвате экрана с 0 повторных аллокаций во время записи видео и GIF.
+- Сохранение интерактивной рамки трансформации и угла поворота для отдельных фигур и групп.
+- Компактная боковая панель записи GIF (34px) с мгновенными всплывающими подсказками.
+- Контрастный пунктирный контур при рисовании областей мозаики и цензуры.
+- Сворачивание панели инструментов без пустого пространства сверху.
+- Мгновенное закрытие бреши затемнения после остановки записи без мерцания.
+- Очистка конфигурации PyInstaller от неиспользуемых модулей и полное устранение предупреждений сборщика.
+- Проверка всех зависимостей по базам уязвимостей (0 известных CVE).
+
 ## [1.0.8] - 2026-09-09
 
 ### English

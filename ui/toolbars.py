@@ -7,13 +7,13 @@
 и умные popover-окна настроек.
 """
 
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize, QRect
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize, QRect, QRectF
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QMenu,
     QButtonGroup, QFrame, QLabel, QSlider, QColorDialog,
     QCheckBox, QComboBox, QSpinBox, QApplication
 )
-from PyQt6.QtGui import QAction, QColor, QIcon
+from PyQt6.QtGui import QAction, QColor, QIcon, QPixmap, QPainter, QBrush, QPen, QLinearGradient
 
 from .widgets import ModernButton
 from .icons import create_themed_icon, create_style_preview_icon
@@ -27,6 +27,7 @@ from utils.i18n import tr
 
 class ToolType:
     MOVE = "move"
+    SELECT = "select"
     PEN = "pen"
     SHAPES = "shapes"
     LINE = "line"
@@ -630,6 +631,7 @@ class GifOptionsPopup(QFrame):
             }
         """)
 
+        self.setFixedWidth(230)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
@@ -638,20 +640,18 @@ class GifOptionsPopup(QFrame):
         lbl.setStyleSheet("color: #a855f7; font-weight: bold;")
         layout.addWidget(lbl)
 
-        row_q = QHBoxLayout()
-        row_q.addWidget(QLabel(tr("popup_gif_compression", "Сжатие / Цвета:")))
+        layout.addWidget(QLabel(tr("popup_gif_compression", "Сжатие / Цвета:")))
         self.combo_q = QComboBox()
         self.gif_options = [
-            (tr("popup_gif_opt_max", "Максимальное сжатие (64 цвета, малый вес)"), 64, "none"),
-            (tr("popup_gif_opt_high", "Высокое сжатие (64 цвета, bayer)"), 64, "bayer"),
-            (tr("popup_gif_opt_balance", "Баланс (128 цветов, сжатый)"), 128, "bayer"),
-            (tr("popup_gif_opt_quality", "Высокое качество (256 цветов)"), 256, "bayer"),
-            (tr("popup_gif_opt_extreme", "Экстремальное сжатие (32 цвета, микро-размер)"), 32, "none"),
+            (tr("popup_gif_opt_max", "Максимальное (64 цвета)"), 64, "none"),
+            (tr("popup_gif_opt_high", "Высокое (64 цвета, bayer)"), 64, "bayer"),
+            (tr("popup_gif_opt_balance", "Баланс (128 цветов)"), 128, "bayer"),
+            (tr("popup_gif_opt_quality", "Высокое качество (256 цв.)"), 256, "bayer"),
+            (tr("popup_gif_opt_extreme", "Экстремальное (32 цвета)"), 32, "none"),
         ]
         for title, colors, dither in self.gif_options:
             self.combo_q.addItem(title, (colors, dither))
-        row_q.addWidget(self.combo_q)
-        layout.addLayout(row_q)
+        layout.addWidget(self.combo_q)
 
         row_f = QHBoxLayout()
         row_f.addWidget(QLabel(tr("popup_gif_fps", "Частота (FPS):")))
@@ -1828,6 +1828,7 @@ class CensorEffectsFlyoutWidget(QFrame):
         layout.setSpacing(3)
 
         censor_items = [
+            ("normal", "layers", tr("censor_normal", "Обычный — убирает эффекты нижних слоёв в этой области")),
             ("mosaic", "mosaic", tr("censor_mosaic", "Мозаика (Пикселизация области)")),
             ("blur", "blur", tr("censor_blur", "Размытие (Блюр области)")),
             ("grayscale", "grayscale", tr("censor_grayscale", "Чёрно-белый (Grayscale области)")),
@@ -1865,6 +1866,7 @@ class RightDrawingToolbar(QFrame):
     redo_clicked = pyqtSignal()
     filter_selected = pyqtSignal(str)
     pipette_requested = pyqtSignal()
+    passthrough_toggled = pyqtSignal(bool)
 
     def enterEvent(self, event):
         """Поднимает боковую панель над нижней при наведении."""
@@ -1873,12 +1875,14 @@ class RightDrawingToolbar(QFrame):
             parent._raise_toolbar(self)
         super().enterEvent(event)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, show_labels: bool = False):
         super().__init__(parent)
+        self.show_labels = bool(show_labels)
         self.current_tool = ToolType.MOVE
 
         self.tools_config = {
             ToolType.MOVE: {},
+            ToolType.SELECT: {},
             ToolType.PEN: {"color": "#FF2E2E", "size": 4},
             ToolType.SHAPES: {
                 "subshape": "arrow",
@@ -1910,31 +1914,58 @@ class RightDrawingToolbar(QFrame):
         theme = get_theme_styles()
         self.is_dark = theme["is_dark"]
         self.setStyleSheet(theme["panel_frame"] + theme["button_base"])
-        self.setFixedWidth(34)
+        if self.show_labels:
+            self.setFixedWidth(136)
+            self.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+        else:
+            self.setFixedWidth(34)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(3, 3, 3, 3)
-        layout.setSpacing(2)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setContentsMargins(4 if self.show_labels else 3, 4 if self.show_labels else 3, 4 if self.show_labels else 3, 4 if self.show_labels else 3)
+        layout.setSpacing(3 if self.show_labels else 2)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
 
         self.button_group = QButtonGroup(self)
         self.button_group.setExclusive(True)
         self.tool_buttons = {}
 
         # 1. Основные инструменты рисования
+        labels = {
+            ToolType.MOVE: tr("tool_lbl_cursor", "Курсор"),
+            ToolType.SELECT: tr("tool_lbl_select", "Выделение"),
+            ToolType.PEN: tr("tool_lbl_pen", "Карандаш"),
+            ToolType.HIGHLIGHTER: tr("tool_lbl_highlighter", "Маркер"),
+            ToolType.SHAPES: tr("tool_lbl_shapes", "Фигуры"),
+            ToolType.CAPTURE_MASK: tr("tool_lbl_mask", "Маска"),
+            ToolType.TEXT: tr("tool_lbl_text", "Текст"),
+        }
         drawing_tools = [
             (ToolType.MOVE, "move", tr("tool_move", "Перемещение / изменение рамки")),
+            (ToolType.SELECT, "select", tr("tool_select", "Выделение объектов (выбор фигур рамкой или кликом)")),
             (ToolType.PEN, "pen", tr("tool_pen", "Карандаш")),
+            (ToolType.HIGHLIGHTER, "highlighter", tr("tool_highlighter", "Маркер-хайлайтер")),
             (ToolType.SHAPES, "shapes", tr("tool_shapes", "Фигуры (Линия, Стрелка, Прямоугольник, Круг)")),
             (ToolType.CAPTURE_MASK, "mask", tr("tool_capture_mask", "Маска области записи")),
-            (ToolType.HIGHLIGHTER, "highlighter", tr("tool_highlighter", "Маркер-хайлайтер")),
             (ToolType.TEXT, "text", tr("tool_text", "Текст"))
         ]
 
         for t_type, ico_name, tip in drawing_tools:
-            btn = ModernButton("", tip)
+            btn_txt = f"  {labels.get(t_type, '')}" if self.show_labels else ""
+            btn = ModernButton(btn_txt, tip)
             btn.setCheckable(True)
-            btn.setFixedSize(26, 26)
+            if self.show_labels:
+                btn.setFixedSize(126, 26)
+                btn.setStyleSheet("""
+                    QPushButton {
+                        text-align: left;
+                        padding-left: 8px;
+                        font-size: 11px;
+                        font-weight: 500;
+                    }
+                """)
+                btn.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+            else:
+                btn.setFixedSize(26, 26)
             btn.setIcon(create_themed_icon(ico_name, self.is_dark, size=16))
             btn.setIconSize(QSize(16, 16))
             if t_type == ToolType.MOVE:
@@ -1958,67 +1989,118 @@ class RightDrawingToolbar(QFrame):
         # 2. Квадратный индикатор цвета / свойств в стиле Lightshot
         self.btn_color_swatch = QPushButton()
         self.btn_color_swatch.setObjectName("colorSwatchBtn")
-        self.btn_color_swatch.setFixedSize(22, 22)
+        if self.show_labels:
+            self.btn_color_swatch.setFixedSize(126, 26)
+            self.btn_color_swatch.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+        else:
+            self.btn_color_swatch.setFixedSize(22, 22)
         self.btn_color_swatch.setToolTip(tr("action_color_swatch", "Палитра, цвет и свойства инструмента"))
         self.btn_color_swatch.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_color_swatch.clicked.connect(self._toggle_properties_flyout)
         self._update_color_swatch()
         layout.addWidget(self.btn_color_swatch, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        # Защита зоны перенесена в шапку записи, сохраняем скрытый виджет для совместимости
+        self.chk_passthrough = ModernButton("", "")
+        self.chk_passthrough.hide()
+
+        # Дополнительные действия панели скрыты, чтобы маленькие зоны не
+        # перекрывались боковой панелью. Кнопка остаётся компактной (полукнопка)
+        # и раскрывает их по запросу.
+        self._more_tools_expanded = False
+        self._advanced_tool_widgets = []
+        more_txt = f"  {tr('tool_lbl_more', 'Ещё')}" if self.show_labels else ""
+        self.btn_more_tools = ModernButton(more_txt, tr("tool_more", "Дополнительные инструменты"))
+        if self.show_labels:
+            self.btn_more_tools.setFixedSize(126, 20)
+            self.btn_more_tools.setStyleSheet("text-align: center; font-size: 10px; font-weight: 500;")
+            self.btn_more_tools.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+        else:
+            self.btn_more_tools.setFixedSize(26, 14)
+        self.btn_more_tools.setIcon(create_themed_icon("more", self.is_dark, size=14))
+        self.btn_more_tools.setIconSize(QSize(14, 14))
+        self.btn_more_tools.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_more_tools.clicked.connect(self._toggle_more_tools)
+        layout.addWidget(self.btn_more_tools, alignment=Qt.AlignmentFlag.AlignCenter)
+
         # Разделитель 2
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.Shape.HLine)
         sep2.setStyleSheet(f"background-color: {theme['sep_color']}; max-height: 1px;")
         layout.addWidget(sep2)
+        self._advanced_tool_widgets.append(sep2)
 
         # 3. Отмена и повтор
         undo_redo = [
-            ("undo", tr("tool_undo", "Отмена (Ctrl+Z)"), self.undo_clicked.emit),
-            ("redo", tr("tool_redo", "Повтор (Ctrl+Y)"), self.redo_clicked.emit),
+            ("undo", tr("tool_undo", "Отмена (Ctrl+Z)"), tr("tool_lbl_undo", "Отмена"), self.undo_clicked.emit),
+            ("redo", tr("tool_redo", "Повтор (Ctrl+Y)"), tr("tool_lbl_redo", "Повтор"), self.redo_clicked.emit),
         ]
-        for ico_name, tip, handler in undo_redo:
-            btn = ModernButton("", tip)
-            btn.setFixedSize(26, 26)
+        for ico_name, tip, lbl, handler in undo_redo:
+            btn_txt = f"  {lbl}" if self.show_labels else ""
+            btn = ModernButton(btn_txt, tip)
+            if self.show_labels:
+                btn.setFixedSize(126, 26)
+                btn.setStyleSheet("text-align: left; padding-left: 8px; font-size: 11px; font-weight: 500;")
+                btn.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+            else:
+                btn.setFixedSize(26, 26)
             btn.setIcon(create_themed_icon(ico_name, self.is_dark, size=16))
             btn.setIconSize(QSize(16, 16))
             btn.clicked.connect(handler)
             layout.addWidget(btn)
+            self._advanced_tool_widgets.append(btn)
 
         # Разделитель 3
         sep3 = QFrame()
         sep3.setFrameShape(QFrame.Shape.HLine)
         sep3.setStyleSheet(f"background-color: {theme['sep_color']}; max-height: 1px;")
         layout.addWidget(sep3)
+        self._advanced_tool_widgets.append(sep3)
 
         # 4. Инструмент «Цензура и фильтры» (боковой флайаут)
-        btn_mosaic = ModernButton("", tr("action_censor_tip", "Цензура и фильтры (Мозаика / Размытие / Эффекты)"))
+        mosaic_txt = f"  {tr('tool_lbl_censor', 'Цензура')}" if self.show_labels else ""
+        btn_mosaic = ModernButton(mosaic_txt, tr("action_censor_tip", "Цензура и фильтры (Мозаика / Размытие / Эффекты)"))
         btn_mosaic.setCheckable(True)
-        btn_mosaic.setFixedSize(26, 26)
+        if self.show_labels:
+            btn_mosaic.setFixedSize(126, 26)
+            btn_mosaic.setStyleSheet("text-align: left; padding-left: 8px; font-size: 11px; font-weight: 500;")
+            btn_mosaic.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+        else:
+            btn_mosaic.setFixedSize(26, 26)
         btn_mosaic.setIcon(create_themed_icon("mosaic", self.is_dark, size=16))
         btn_mosaic.setIconSize(QSize(16, 16))
         self.button_group.addButton(btn_mosaic)
         self.tool_buttons[ToolType.MOSAIC] = btn_mosaic
         btn_mosaic.clicked.connect(lambda checked: self._toggle_censor_flyout())
         layout.addWidget(btn_mosaic)
+        self._advanced_tool_widgets.append(btn_mosaic)
 
         # Разделитель 4
         sep4 = QFrame()
         sep4.setFrameShape(QFrame.Shape.HLine)
         sep4.setStyleSheet(f"background-color: {theme['sep_color']}; max-height: 1px;")
         layout.addWidget(sep4)
+        self._advanced_tool_widgets.append(sep4)
 
         # 5. Слои и история действий
         layer_history = [
-            ("layers", tr("action_layers", "Управление слоями"), self.layers_clicked.emit),
-            ("history", tr("action_history", "История действий"), self.history_clicked.emit)
+            ("layers", tr("action_layers", "Управление слоями"), tr("action_lbl_layers", "Слои"), self.layers_clicked.emit),
+            ("history", tr("action_history", "История действий"), tr("action_lbl_history", "История"), self.history_clicked.emit)
         ]
-        for ico_name, tip, handler in layer_history:
-            btn = ModernButton("", tip)
-            btn.setFixedSize(26, 26)
+        for ico_name, tip, lbl, handler in layer_history:
+            btn_txt = f"  {lbl}" if self.show_labels else ""
+            btn = ModernButton(btn_txt, tip)
+            if self.show_labels:
+                btn.setFixedSize(126, 26)
+                btn.setStyleSheet("text-align: left; padding-left: 8px; font-size: 11px; font-weight: 500;")
+                btn.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+            else:
+                btn.setFixedSize(26, 26)
             btn.setIcon(create_themed_icon(ico_name, self.is_dark, size=16))
             btn.setIconSize(QSize(16, 16))
             btn.clicked.connect(handler)
             layout.addWidget(btn)
+            self._advanced_tool_widgets.append(btn)
 
         self.properties_flyout = ToolPropertiesFlyout(self)
         self.properties_flyout.settings_updated.connect(self._on_settings_updated)
@@ -2033,6 +2115,29 @@ class RightDrawingToolbar(QFrame):
         self.censor_flyout = CensorEffectsFlyoutWidget(self)
         self.censor_flyout.censor_chosen.connect(self._on_censor_chosen)
         self.censor_flyout.filter_chosen.connect(self._on_filter_chosen)
+        self._set_more_tools_visible(False)
+
+    def _set_more_tools_visible(self, expanded: bool):
+        self._more_tools_expanded = bool(expanded)
+        for widget in getattr(self, "_advanced_tool_widgets", []):
+            widget.setVisible(self._more_tools_expanded)
+        if hasattr(self, "btn_more_tools"):
+            self.btn_more_tools.setIcon(create_themed_icon(
+                "chevron_up" if self._more_tools_expanded else "more",
+                self.is_dark,
+                size=14,
+            ))
+        if self.layout() is not None:
+            self.layout().activate()
+        self.adjustSize()
+
+    def _toggle_more_tools(self):
+        new_expanded = not self._more_tools_expanded
+        self._user_expanded_tools = new_expanded
+        self._set_more_tools_visible(new_expanded)
+        parent = self.parentWidget()
+        if parent is not None and hasattr(parent, "_update_toolbar_positions"):
+            parent._update_toolbar_positions()
 
     @property
     def current_color(self) -> str:
@@ -2051,28 +2156,87 @@ class RightDrawingToolbar(QFrame):
         self.properties_flyout.load_tool(self.current_tool, self.tools_config.get(self.current_tool, {}))
         self.tool_settings_updated.emit()
 
+    def _on_color_chosen(self, color: str):
+        self.set_tool_color(color)
+
     def _update_color_swatch(self):
         cfg = self.tools_config.get(self.current_tool, {})
         col = cfg.get("color", "#FF2E2E")
         border_col = "#ffffff" if self.is_dark else "#52525b"
 
+        is_grad = False
         if self.current_tool == ToolType.SHAPES:
             sub = cfg.get("subshape", "rect")
             if sub in ("rect", "circle") and cfg.get("filled") and cfg.get("is_gradient"):
+                is_grad = True
                 c1 = cfg.get("gradient_color1", "#2ECC71")
                 c2 = cfg.get("gradient_color2", "#00C0FF")
-                self.btn_color_swatch.setIcon(QIcon())
-                self.btn_color_swatch.setStyleSheet(f"""
-                    QPushButton#colorSwatchBtn {{
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {c1}, stop:1 {c2});
-                        border: 1px solid {border_col};
-                        border-radius: 3px;
-                    }}
-                    QPushButton#colorSwatchBtn:hover {{
-                        border: 2px solid #38bdf8;
-                    }}
-                """)
-                return
+
+        if getattr(self, "show_labels", False):
+            # В режиме с подписями создаём миниатюру цвета в иконке и пишем "Свойства"
+            ico = None
+            if is_grad:
+                pm = QPixmap(14, 14)
+                pm.fill(Qt.GlobalColor.transparent)
+                p = QPainter(pm)
+                p.setRenderHint(QPainter.RenderHint.Antialiasing)
+                grad = QLinearGradient(0, 0, 14, 14)
+                grad.setColorAt(0, QColor(c1))
+                grad.setColorAt(1, QColor(c2))
+                p.setBrush(QBrush(grad))
+                p.setPen(QPen(QColor(border_col), 1))
+                p.drawRoundedRect(QRectF(0.5, 0.5, 13, 13), 2, 2)
+                p.end()
+                ico = QIcon(pm)
+            elif str(col).lower() == "blur" or (self.current_tool == ToolType.MOSAIC and cfg.get("censor_mode") == "blur"):
+                ico = create_themed_icon("blur", self.is_dark, size=14)
+            elif str(col).lower() == "mosaic" or self.current_tool == ToolType.MOSAIC:
+                ico = create_themed_icon("mosaic", self.is_dark, size=14)
+            else:
+                pm = QPixmap(14, 14)
+                pm.fill(Qt.GlobalColor.transparent)
+                p = QPainter(pm)
+                p.setRenderHint(QPainter.RenderHint.Antialiasing)
+                p.setBrush(QBrush(QColor(col)))
+                p.setPen(QPen(QColor(border_col), 1))
+                p.drawRoundedRect(QRectF(0.5, 0.5, 13, 13), 2, 2)
+                p.end()
+                ico = QIcon(pm)
+
+            self.btn_color_swatch.setIcon(ico if ico is not None else QIcon())
+            self.btn_color_swatch.setIconSize(QSize(14, 14))
+            self.btn_color_swatch.setText(f"  {tr('tool_lbl_properties', 'Свойства')}")
+            self.btn_color_swatch.setStyleSheet("""
+                QPushButton#colorSwatchBtn {
+                    background-color: #27272a;
+                    border: 1px solid #3f3f46;
+                    border-radius: 4px;
+                    color: #f4f4f5;
+                    font-size: 11px;
+                    font-weight: 500;
+                    text-align: left;
+                    padding-left: 8px;
+                }
+                QPushButton#colorSwatchBtn:hover {
+                    background-color: #3f3f46;
+                    border-color: #38bdf8;
+                }
+            """)
+            return
+
+        if is_grad:
+            self.btn_color_swatch.setIcon(QIcon())
+            self.btn_color_swatch.setStyleSheet(f"""
+                QPushButton#colorSwatchBtn {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {c1}, stop:1 {c2});
+                    border: 1px solid {border_col};
+                    border-radius: 3px;
+                }}
+                QPushButton#colorSwatchBtn:hover {{
+                    border: 2px solid #38bdf8;
+                }}
+            """)
+            return
 
         if str(col).lower() == "blur" or (self.current_tool == ToolType.MOSAIC and cfg.get("censor_mode") == "blur"):
             self.btn_color_swatch.setIcon(create_themed_icon("blur", self.is_dark, size=14))
@@ -2124,9 +2288,9 @@ class RightDrawingToolbar(QFrame):
         self._update_color_swatch()
         self.tool_changed.emit(tool_type)
 
-        # Для инструментов «Фигуры», «Текст» и «Мозаика» открываем панель параметров,
-        # чтобы пользователь сразу видел активные настройки и мог изменить их на лету
-        if tool_type in (ToolType.SHAPES, ToolType.TEXT, ToolType.MOSAIC) or (tool_type != ToolType.MOVE and show_options):
+        # Для инструментов «Текст» и «Мозаика» при явном запросе открываем панель параметров.
+        # Для инструмента «Фигуры» панель параметров автоматически НЕ открывается.
+        if (tool_type in (ToolType.TEXT, ToolType.MOSAIC) and show_options) or (tool_type not in (ToolType.MOVE, ToolType.SELECT, ToolType.SHAPES) and show_options):
             self._show_properties_flyout()
         else:
             self.properties_flyout.hide()
@@ -2179,7 +2343,8 @@ class RightDrawingToolbar(QFrame):
     def _on_shapes_flyout_chosen(self, sid: str, opts: dict):
         cfg = self.tools_config.setdefault(ToolType.SHAPES, {})
         cfg.update(opts)
-        self.select_tool(ToolType.SHAPES, show_options=True)
+        self.select_tool(ToolType.SHAPES, show_options=False)
+        self.properties_flyout.hide()
         self.tool_settings_updated.emit()
 
     def _on_censor_chosen(self, cid: str):
@@ -2304,10 +2469,7 @@ class RegionActionHeader(QFrame):
         self.popup_gif.start_gif.connect(self.record_gif_started.emit)
         self.popup_filter = None
         self.mass_filter = FilterType.NONE
-        # Пункт в списке и реально применённый эффект — разные состояния.
-        # После закрытия всех зон список снова предлагает Negative, но
-        # массовый эффект остаётся неактивным до явного выбора.
-        self.mass_filter_selection = FilterType.INVERT
+        self.mass_filter_selection = FilterType.NONE
         self.mass_filter_params = {"blur_radius": 15, "pixel_size": 12}
 
     def set_region_state(self, add_mode: bool, total_count: int, available_count: int):
@@ -2367,7 +2529,7 @@ class RegionActionHeader(QFrame):
     def reset_mass_filter(self):
         """Сбрасывает применение эффекта и восстанавливает пункт по умолчанию."""
         self.mass_filter = FilterType.NONE
-        self.mass_filter_selection = FilterType.INVERT
+        self.mass_filter_selection = FilterType.NONE
         self.mass_filter_params = {"blur_radius": 15, "pixel_size": 12}
         self.btn_mass_filter.setStyleSheet("")
         self.btn_mass_filter.setIcon(create_themed_icon("filter", self.is_dark, size=15))
@@ -2554,26 +2716,7 @@ class BottomActionToolbar(QFrame):
         self.popup_copy = CopyFormatPopup(self)
         self.popup_copy.format_selected.connect(self.copy_clicked.emit)
 
-        # 2.5. Длинный скриншот (SVG иконка листа со стрелкой вниз)
-        self.btn_scroll = ModernButton("", tr("action_scroll", "Длинный скриншот с автопрокруткой [S]"))
-        self.btn_scroll.setFixedSize(28, 28)
-        self.btn_scroll.setIcon(create_themed_icon("scroll", self.is_dark, size=16))
-        self.btn_scroll.setIconSize(QSize(16, 16))
-        self.btn_scroll.clicked.connect(self.scrolling_screenshot_requested.emit)
-        layout.addWidget(self.btn_scroll)
-
-        # 3. Поиск по картинке (SVG иконка лупы)
-        self.btn_search = ModernButton("", tr("action_search", "Искать в Google Lens или Яндекс Картинках"))
-        self.btn_search.setFixedSize(28, 28)
-        self.btn_search.setIcon(create_themed_icon("search", self.is_dark, size=16))
-        self.btn_search.setIconSize(QSize(16, 16))
-        self.btn_search.clicked.connect(self._show_search_menu)
-        layout.addWidget(self.btn_search)
-
-        self.popup_search = SearchEnginePopup(self)
-        self.popup_search.engine_selected.connect(self.search_image_requested.emit)
-
-        # 4. Видео MP4 (SVG иконка видеокамеры)
+        # 3. Видео MP4 (SVG иконка видеокамеры)
         self.btn_video = ModernButton("", tr("action_video_tip", "Запись видео MP4 (настройки звука и кодека)"))
         self.btn_video.setFixedSize(28, 28)
         self.btn_video.setIcon(create_themed_icon("video", self.is_dark, size=16))
@@ -2584,7 +2727,7 @@ class BottomActionToolbar(QFrame):
         self.popup_video = VideoOptionsPopup(self)
         self.popup_video.start_video.connect(self.record_video_started.emit)
 
-        # 5. GIF (SVG иконка с надписью GIF в рамке)
+        # 4. GIF (SVG иконка с надписью GIF в рамке)
         self.btn_gif = ModernButton("", tr("action_gif_tip", "Запись GIF (настройки качества и FPS)"))
         self.btn_gif.setFixedSize(28, 28)
         self.btn_gif.setIcon(create_themed_icon("gif", self.is_dark, size=18))
@@ -2595,28 +2738,63 @@ class BottomActionToolbar(QFrame):
         self.popup_gif = GifOptionsPopup(self)
         self.popup_gif.start_gif.connect(self.record_gif_started.emit)
 
+        # Кнопка-полукнопка для скрытия/раскрытия дополнительных действий панели
+        self._more_actions_expanded = False
+        self._advanced_action_widgets = []
+        self.btn_more_actions = ModernButton("", tr("action_more", "Дополнительные действия"))
+        self.btn_more_actions.setFixedSize(14, 28)
+        self.btn_more_actions.setIcon(create_themed_icon("more_vertical", self.is_dark, size=14))
+        self.btn_more_actions.setIconSize(QSize(14, 14))
+        self.btn_more_actions.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_more_actions.clicked.connect(self._toggle_more_actions)
+        layout.addWidget(self.btn_more_actions)
+
+        # 5. Длинный скриншот (SVG иконка листа со стрелкой вниз)
+        self.btn_scroll = ModernButton("", tr("action_scroll", "Длинный скриншот с автопрокруткой [S]"))
+        self.btn_scroll.setFixedSize(28, 28)
+        self.btn_scroll.setIcon(create_themed_icon("scroll", self.is_dark, size=16))
+        self.btn_scroll.setIconSize(QSize(16, 16))
+        self.btn_scroll.clicked.connect(self.scrolling_screenshot_requested.emit)
+        layout.addWidget(self.btn_scroll)
+        self._advanced_action_widgets.append(self.btn_scroll)
+
+        # 6. Поиск по картинке (SVG иконка лупы)
+        self.btn_search = ModernButton("", tr("action_search", "Искать в Google Lens или Яндекс Картинках"))
+        self.btn_search.setFixedSize(28, 28)
+        self.btn_search.setIcon(create_themed_icon("search", self.is_dark, size=16))
+        self.btn_search.setIconSize(QSize(16, 16))
+        self.btn_search.clicked.connect(self._show_search_menu)
+        layout.addWidget(self.btn_search)
+        self._advanced_action_widgets.append(self.btn_search)
+
+        self.popup_search = SearchEnginePopup(self)
+        self.popup_search.engine_selected.connect(self.search_image_requested.emit)
+
         sep1 = QFrame()
         sep1.setFrameShape(QFrame.Shape.VLine)
         sep1.setStyleSheet(f"background-color: {theme['sep_color']}; max-width: 1px;")
         layout.addWidget(sep1)
+        self._advanced_action_widgets.append(sep1)
 
-        # 6. Фильтр всего экрана (клик — выбор фильтра: размытие, ч/б, сепия, инверсия и т.д.)
+        # 7. Фильтр всего экрана (клик — выбор фильтра: размытие, ч/б, сепия, инверсия и т.д.)
         self.btn_filter = ModernButton("", tr("action_filters", "Эффекты и цветовые фильтры всего экрана"))
         self.btn_filter.setFixedSize(28, 28)
         self.btn_filter.setIcon(create_themed_icon("filter", self.is_dark, size=16))
         self.btn_filter.setIconSize(QSize(16, 16))
         self.btn_filter.clicked.connect(self._show_filter_menu)
         layout.addWidget(self.btn_filter)
+        self._advanced_action_widgets.append(self.btn_filter)
 
-        # 7. Замок блокировки рамки (SVG иконка замка)
+        # 8. Замок блокировки рамки (SVG иконка замка)
         self.btn_lock = ModernButton("", tr("action_lock", "Зафиксировать рамку от случайных сдвигов"))
         self.btn_lock.setFixedSize(28, 28)
         self.btn_lock.setIcon(create_themed_icon("unlock", self.is_dark, size=16))
         self.btn_lock.setIconSize(QSize(16, 16))
         self.btn_lock.clicked.connect(self._toggle_lock)
         layout.addWidget(self.btn_lock)
+        self._advanced_action_widgets.append(self.btn_lock)
 
-        # 8. Динамический фон (SVG иконка монитора с воспроизведением)
+        # 9. Динамический фон (SVG иконка монитора с воспроизведением)
         self.chk_dynamic_bg = ModernButton("", tr("action_dynamic_bg", "Динамический фон: живой рабочий стол внутри рамки (вкл/выкл)"))
         self.chk_dynamic_bg.setCheckable(True)
         self.chk_dynamic_bg.setFixedSize(28, 28)
@@ -2624,30 +2802,34 @@ class BottomActionToolbar(QFrame):
         self.chk_dynamic_bg.setIconSize(QSize(16, 16))
         self.chk_dynamic_bg.toggled.connect(self.dynamic_bg_toggled.emit)
         layout.addWidget(self.chk_dynamic_bg)
+        self._advanced_action_widgets.append(self.chk_dynamic_bg)
 
-        # 8.1 Неосязаемая рамка (сквозные клики в фоновые окна и программы под выделением)
-        self.chk_passthrough = ModernButton("", tr("action_passthrough", "Неосязаемая рамка: клики сквозь выделение в фоновые окна (вкл/выкл)"))
+        # 9.1 Неосязаемая / защитная зона (клики внутри рамки не взаимодействуют с фоновыми окнами)
+        self.chk_passthrough = ModernButton("", tr("action_passthrough", "Защита зоны: клики внутри рамки не взаимодействуют с фоновыми окнами (вкл/выкл)"))
         self.chk_passthrough.setCheckable(True)
         self.chk_passthrough.setFixedSize(28, 28)
         self.chk_passthrough.setIcon(create_themed_icon("passthrough", self.is_dark, size=16))
         self.chk_passthrough.setIconSize(QSize(16, 16))
         self.chk_passthrough.toggled.connect(self.passthrough_toggled.emit)
         layout.addWidget(self.chk_passthrough)
+        self._advanced_action_widgets.append(self.chk_passthrough)
 
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.Shape.VLine)
         sep2.setStyleSheet(f"background-color: {theme['sep_color']}; max-width: 1px;")
         layout.addWidget(sep2)
+        self._advanced_action_widgets.append(sep2)
 
-        # 9. Настройки (SVG иконка шестеренки)
-        btn_settings = ModernButton("", tr("settings_title", "Настройки Framio"))
-        btn_settings.setFixedSize(28, 28)
-        btn_settings.setIcon(create_themed_icon("settings", self.is_dark, size=16))
-        btn_settings.setIconSize(QSize(16, 16))
-        btn_settings.clicked.connect(self.settings_clicked.emit)
-        layout.addWidget(btn_settings)
+        # 10. Настройки (SVG иконка шестеренки)
+        self.btn_settings = ModernButton("", tr("settings_title", "Настройки Framio"))
+        self.btn_settings.setFixedSize(28, 28)
+        self.btn_settings.setIcon(create_themed_icon("settings", self.is_dark, size=16))
+        self.btn_settings.setIconSize(QSize(16, 16))
+        self.btn_settings.clicked.connect(self.settings_clicked.emit)
+        layout.addWidget(self.btn_settings)
+        self._advanced_action_widgets.append(self.btn_settings)
 
-        # 9.1 Добавить зону выделения (SVG иконка плюсика)
+        # 11. Добавить зону выделения (SVG иконка плюсика)
         self.btn_add_region = ModernButton("", tr("action_add_region", "Добавить зону выделения (+ / Ctrl)"))
         self.btn_add_region.setFixedSize(28, 28)
         self.btn_add_region.setIcon(create_themed_icon("add_region", self.is_dark, size=16, custom_color="#93c5fd"))
@@ -2665,7 +2847,7 @@ class BottomActionToolbar(QFrame):
         self.btn_add_region.clicked.connect(self.add_region_clicked.emit)
         layout.addWidget(self.btn_add_region)
 
-        # 9.2 Общие действия для всех зон (показываются только при multi-selection)
+        # 12. Общие действия для всех зон (показываются только при multi-selection)
         self.btn_all_regions = ModernButton("", tr("action_all_regions", "Действия для всех зон"))
         self.btn_all_regions.setFixedSize(28, 28)
         self.btn_all_regions.setIcon(create_themed_icon("layers", self.is_dark, size=16, custom_color="#c4b5fd"))
@@ -2684,7 +2866,7 @@ class BottomActionToolbar(QFrame):
         self.btn_all_regions.hide()
         layout.addWidget(self.btn_all_regions)
 
-        # 10. Закрыть (SVG иконка крестика)
+        # 13. Закрыть (SVG иконка крестика)
         self.btn_close = ModernButton("", tr("action_close", "Закрыть выделение (Esc)"))
         self.btn_close.setFixedSize(28, 28)
         self.btn_close.setIcon(create_themed_icon("close", self.is_dark, size=16, custom_color="#fca5a5"))
@@ -2701,6 +2883,27 @@ class BottomActionToolbar(QFrame):
         """)
         self.btn_close.clicked.connect(self.close_clicked.emit)
         layout.addWidget(self.btn_close)
+        self._set_more_actions_visible(False)
+
+    def _set_more_actions_visible(self, expanded: bool):
+        self._more_actions_expanded = bool(expanded)
+        for widget in getattr(self, "_advanced_action_widgets", []):
+            widget.setVisible(self._more_actions_expanded)
+        if hasattr(self, "btn_more_actions"):
+            self.btn_more_actions.setIcon(create_themed_icon(
+                "chevron_left" if self._more_actions_expanded else "more_vertical",
+                self.is_dark,
+                size=14,
+            ))
+        self.adjustSize()
+
+    def _toggle_more_actions(self):
+        new_expanded = not self._more_actions_expanded
+        self._user_expanded_actions = new_expanded
+        self._set_more_actions_visible(new_expanded)
+        parent = self.parentWidget()
+        if parent is not None and hasattr(parent, "_update_toolbar_positions"):
+            parent._update_toolbar_positions()
 
     def update_multi_region_state(self, has_multiple: bool):
         """Обновляет подсказку кнопки закрытия в зависимости от наличия нескольких зон."""

@@ -16,6 +16,8 @@ from PyQt6.QtGui import QPixmap, QImage
 from PyQt6.QtWidgets import QApplication
 
 SCREEN_CAPTURE_LOCK = threading.RLock()
+_REUSABLE_CAPTURE_BUF = None
+_REUSABLE_CAPTURE_BUF_SIZE = 0
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -107,6 +109,12 @@ def win32_captureblt_pixmap(rx: int, ry: int, rw: int, rh: int) -> QPixmap | Non
     """
     try:
         try:
+            h_input = user32.OpenInputDesktop(0, False, 0x01FF)
+            if h_input:
+                user32.SetThreadDesktop(h_input)
+        except Exception:
+            pass
+        try:
             dwmapi.DwmFlush()
         except Exception:
             pass
@@ -169,18 +177,27 @@ def win32_captureblt_pixmap(rx: int, ry: int, rw: int, rh: int) -> QPixmap | Non
     return None
 
 
-def win32_captureblt_bgr(rx: int, ry: int, rw: int, rh: int) -> np.ndarray | None:
+def win32_captureblt_bgr(rx: int, ry: int, rw: int, rh: int, flush: bool = False) -> np.ndarray | None:
     """
     Прямой захват физических пикселей экрана 1:1 в массив BGR numpy через GDI BitBlt с CAPTUREBLT.
-    Не интерполирует и не размывает изображение.
+    Не интерполирует и не размывает изображение. Переиспользует буфер памяти для 0 аллокаций в секунду.
     """
     try:
         import numpy as np
+        global _REUSABLE_CAPTURE_BUF, _REUSABLE_CAPTURE_BUF_SIZE
 
         try:
-            dwmapi.DwmFlush()
+            h_input = user32.OpenInputDesktop(0, False, 0x01FF)
+            if h_input:
+                user32.SetThreadDesktop(h_input)
         except Exception:
             pass
+
+        if flush:
+            try:
+                dwmapi.DwmFlush()
+            except Exception:
+                pass
         dpr = get_screen_dpr()
         px = int(round(rx * dpr))
         py = int(round(ry * dpr))
@@ -222,7 +239,12 @@ def win32_captureblt_bgr(rx: int, ry: int, rw: int, rh: int) -> np.ndarray | Non
         bmi.bmiHeader.biBitCount = 32
         bmi.bmiHeader.biCompression = 0  # BI_RGB
 
-        buf = ctypes.create_string_buffer(pw * ph * 4)
+        req_bytes = pw * ph * 4
+        if _REUSABLE_CAPTURE_BUF is None or _REUSABLE_CAPTURE_BUF_SIZE < req_bytes:
+            _REUSABLE_CAPTURE_BUF = ctypes.create_string_buffer(req_bytes)
+            _REUSABLE_CAPTURE_BUF_SIZE = req_bytes
+        buf = _REUSABLE_CAPTURE_BUF
+
         gdi32.GetDIBits(hMemoryDC, hBitmap, 0, ph, buf, ctypes.byref(bmi), 0)
 
         gdi32.SelectObject(hMemoryDC, hOldBitmap)
@@ -231,14 +253,14 @@ def win32_captureblt_bgr(rx: int, ry: int, rw: int, rh: int) -> np.ndarray | Non
         user32.ReleaseDC(0, hScreenDC)
 
         # GDI 32-bit DIB возвращает BGRA (4 байта на пиксель)
-        arr = np.frombuffer(buf, dtype=np.uint8).reshape((ph, pw, 4))
+        arr = np.frombuffer(buf, dtype=np.uint8, count=req_bytes).reshape((ph, pw, 4))
         return np.ascontiguousarray(arr[:, :, :3])
     except Exception as e:
         print(f"[ScreenLock] win32_captureblt_bgr failed: {e}")
         return None
 
 
-def safe_grab_screen_bgr(rx: int, ry: int, rw: int, rh: int, target_hwnd: int | None = None) -> np.ndarray:
+def safe_grab_screen_bgr(rx: int, ry: int, rw: int, rh: int, target_hwnd: int | None = None, flush: bool = False) -> np.ndarray:
     """Безопасно захватывает область экрана напрямую в формат OpenCV BGR 1:1 под глобальным мьютексом."""
     import numpy as np
 
@@ -247,7 +269,7 @@ def safe_grab_screen_bgr(rx: int, ry: int, rw: int, rh: int, target_hwnd: int | 
 
     with SCREEN_CAPTURE_LOCK:
         try:
-            bgr = win32_captureblt_bgr(rx, ry, rw, rh)
+            bgr = win32_captureblt_bgr(rx, ry, rw, rh, flush=flush)
             if bgr is not None and bgr.size > 0:
                 return bgr
         except Exception:

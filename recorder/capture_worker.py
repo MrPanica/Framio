@@ -18,7 +18,7 @@ from PyQt6.QtGui import QImage, QPainter, QPixmap
 
 from .video_recorder import VideoRecorder
 from .audio_recorder import AudioRecorder
-from .gif_recorder import GifRecorder
+from .gif_recorder import GifRecorder, DynamicGifRecorder
 from utils.image_filters import apply_filter, FilterType
 from utils.capture_mask import apply_mask_to_bgr
 from utils.screen_lock import (
@@ -156,7 +156,7 @@ class CaptureWorker(QThread):
                     pass
 
     def _apply_censor_shapes(self, frame_bgr, all_shapes, offset: QPointF):
-        """Применяет мозаичную/размытую аннотацию к текущему видеокадру."""
+        """Применяет эффекты цензуры (мозаика, блюр, ч/б, инверсия, сепия, насыщенность) к текущему видеокадру."""
         if frame_bgr is None or not all_shapes:
             return frame_bgr
 
@@ -165,16 +165,27 @@ class CaptureWorker(QThread):
             if shape is None or not getattr(shape, "visible", True):
                 continue
 
-            is_mosaic = getattr(shape, "is_mosaic", False) or shape.__class__.__name__ == "MosaicShape"
-            is_blur = getattr(shape, "is_blur", False) or shape.__class__.__name__ == "BlurShape"
-            if not (is_mosaic or is_blur):
+            shape_name = shape.__class__.__name__
+            is_mosaic = getattr(shape, "is_mosaic", False) or shape_name == "MosaicShape"
+            is_blur = getattr(shape, "is_blur", False) or shape_name == "BlurShape"
+            is_regional = shape_name == "RegionalEffectShape" or hasattr(shape, "effect_type")
+            if not (is_mosaic or is_blur or is_regional):
                 continue
 
-            pixel_size = max(1, int(getattr(shape, "pixel_size", 8) or 8))
-            blur_radius = max(1, int(getattr(shape, "blur_radius", 15) or 15))
-            shape_name = shape.__class__.__name__
+            pixel_size = max(1, int(getattr(shape, "pixel_size", 8) or getattr(shape, "intensity", 8) or 8))
+            blur_radius = max(1, int(getattr(shape, "blur_radius", 15) or getattr(shape, "intensity", 15) or 15))
+            effect_type = getattr(shape, "effect_type", "")
+            if not effect_type:
+                if is_mosaic:
+                    effect_type = "pixelate"
+                elif is_blur:
+                    effect_type = "blur"
+                else:
+                    effect_type = "pixelate"
+            elif effect_type == "mosaic":
+                effect_type = "pixelate"
 
-            if shape_name in ("MosaicShape", "BlurShape", "RectangleShape", "CircleShape"):
+            if shape_name in ("MosaicShape", "BlurShape", "RectangleShape", "CircleShape", "RegionalEffectShape"):
                 rect = shape.rect.translated(-offset.x(), -offset.y()).normalized()
                 sx = max(0, min(fw - 1, int(rect.x())))
                 sy = max(0, min(fh - 1, int(rect.y())))
@@ -184,29 +195,18 @@ class CaptureWorker(QThread):
                     continue
 
                 roi = frame_bgr[sy:sy + sh, sx:sx + sw]
+                if effect_type != "normal":
+                    processed = apply_filter(roi.copy(), effect_type, blur_radius=blur_radius, pixel_size=pixel_size)
+                else:
+                    processed = roi
+
                 if shape_name == "CircleShape":
                     mask = np.zeros((sh, sw), dtype=np.uint8)
                     cv2.ellipse(mask, (sw // 2, sh // 2), (sw // 2, sh // 2), 0, 0, 360, 255, -1)
-                    if is_mosaic:
-                        small_w = max(1, sw // pixel_size)
-                        small_h = max(1, sh // pixel_size)
-                        small = cv2.resize(roi, (small_w, small_h), interpolation=cv2.INTER_NEAREST)
-                        processed = cv2.resize(small, (sw, sh), interpolation=cv2.INTER_NEAREST)
-                    else:
-                        kernel = max(3, (blur_radius // 2) * 2 + 1)
-                        processed = cv2.GaussianBlur(roi, (kernel, kernel), 0)
                     roi[mask > 0] = processed[mask > 0]
                     frame_bgr[sy:sy + sh, sx:sx + sw] = roi
-                elif is_mosaic:
-                    small_w = max(1, sw // pixel_size)
-                    small_h = max(1, sh // pixel_size)
-                    small = cv2.resize(roi, (small_w, small_h), interpolation=cv2.INTER_NEAREST)
-                    frame_bgr[sy:sy + sh, sx:sx + sw] = cv2.resize(
-                        small, (sw, sh), interpolation=cv2.INTER_NEAREST
-                    )
                 else:
-                    kernel = max(3, (blur_radius // 2) * 2 + 1)
-                    frame_bgr[sy:sy + sh, sx:sx + sw] = cv2.GaussianBlur(roi, (kernel, kernel), 0)
+                    frame_bgr[sy:sy + sh, sx:sx + sw] = processed
 
             elif shape_name == "PenShape" and getattr(shape, "points", None) and len(shape.points) >= 2:
                 mask = np.zeros((fh, fw), dtype=np.uint8)
@@ -217,15 +217,8 @@ class CaptureWorker(QThread):
                 pen_width = max(16, int(shape.stroke_width * 2))
                 cv2.polylines(mask, [points], isClosed=False, color=255, thickness=pen_width, lineType=cv2.LINE_AA)
                 if np.any(mask):
-                    if is_mosaic:
-                        small_w = max(1, fw // pixel_size)
-                        small_h = max(1, fh // pixel_size)
-                        small = cv2.resize(frame_bgr, (small_w, small_h), interpolation=cv2.INTER_NEAREST)
-                        processed = cv2.resize(small, (fw, fh), interpolation=cv2.INTER_NEAREST)
-                    else:
-                        kernel = max(3, (blur_radius // 2) * 2 + 1)
-                        processed = cv2.GaussianBlur(frame_bgr, (kernel, kernel), 0)
-                    frame_bgr[mask > 0] = processed[mask > 0]
+                    filtered = apply_filter(frame_bgr.copy(), effect_type, blur_radius=blur_radius, pixel_size=pixel_size)
+                    frame_bgr[mask > 0] = filtered[mask > 0]
 
         return frame_bgr
 
@@ -268,7 +261,16 @@ class CaptureWorker(QThread):
                 # Для GIF используем промежуточный видеопоток без потерь для последующего PaletteGen
                 if FFMPEG_EXE:
                     self.temp_video_path = str(temp_dir / f"temp_gif_{uid}.mp4")
-                    self.video_recorder = VideoRecorder(self.temp_video_path, fps=self.fps, codec="libx264", width=actual_w, height=actual_h)
+                    # Обычный VideoRecorder фиксирует размер первого кадра.
+                    # DynamicGifRecorder переключает сегмент при расширении
+                    # рамки и затем собирает их в общий поток максимального
+                    # размера, поэтому боковой resize реально попадает в GIF.
+                    self.video_recorder = DynamicGifRecorder(
+                        self.temp_video_path,
+                        fps=self.fps,
+                        width=actual_w,
+                        height=actual_h,
+                    )
                     self.video_recorder.start()
                 else:
                     self.video_recorder = GifRecorder(self.output_path, fps=self.fps, width=actual_w, height=actual_h)
@@ -293,8 +295,13 @@ class CaptureWorker(QThread):
                     # Захватываем живой рабочий стол 1:1 или выбранное окно
                     frame_bgr = capture_window_or_screen_bgr(rx, ry, rw, rh, target_hwnd=self.target_hwnd)
                     if frame_bgr is not None and frame_bgr.size > 0:
-                        # Гарантируем соответствие целевым размерам видео/GIF при динамическом перемещении/изменении рамки
-                        if frame_bgr.shape[0] != actual_h or frame_bgr.shape[1] != actual_w:
+                        # MP4-поток фиксированного размера масштабирует кадр
+                        # обратно к стартовой геометрии. GIF использует
+                        # DynamicGifRecorder и сохраняет фактический размер
+                        # каждого кадра до финального объединения сегментов.
+                        if not isinstance(self.video_recorder, DynamicGifRecorder) and (
+                            frame_bgr.shape[0] != actual_h or frame_bgr.shape[1] != actual_w
+                        ):
                             interp = cv2.INTER_AREA if (frame_bgr.shape[1] > actual_w or frame_bgr.shape[0] > actual_h) else cv2.INTER_LINEAR
                             frame_bgr = cv2.resize(frame_bgr, (actual_w, actual_h), interpolation=interp)
 
@@ -335,7 +342,8 @@ class CaptureWorker(QThread):
                                     if s is not None and getattr(s, "visible", True)
                                     and not getattr(s, "is_mosaic", False)
                                     and not getattr(s, "is_blur", False)
-                                    and s.__class__.__name__ not in ("MosaicShape", "BlurShape")
+                                    and s.__class__.__name__ not in ("MosaicShape", "BlurShape", "RegionalEffectShape")
+                                    and not hasattr(s, "effect_type")
                                 ]
                                 if normal_vector_shapes:
                                     h, w = frame_bgr.shape[:2]

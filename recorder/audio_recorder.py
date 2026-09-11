@@ -14,10 +14,7 @@ import numpy as np
 try:
     import pyaudiowpatch as pyaudio
 except ImportError:
-    try:
-        import pyaudio
-    except ImportError:
-        pyaudio = None
+    pyaudio = None
 
 AUDIO_INIT_LOCK = threading.Lock()
 

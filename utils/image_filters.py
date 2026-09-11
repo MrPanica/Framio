@@ -42,12 +42,15 @@ def apply_filter(
     *,
     blur_radius: int = 15,
     pixel_size: int = 12,
+    **_kwargs,
 ) -> np.ndarray:
     """
     Применяет выбранный фильтр к кадру в формате BGR (uint8 numpy array).
     """
-    if frame_bgr is None or frame_bgr.size == 0 or filter_type == FilterType.NONE:
+    if frame_bgr is None or frame_bgr.size == 0 or filter_type in (FilterType.NONE, "normal"):
         return frame_bgr
+    if filter_type == "mosaic":
+        filter_type = FilterType.PIXELATE
 
     try:
         import cv2

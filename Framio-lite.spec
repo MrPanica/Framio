@@ -17,7 +17,7 @@ a = Analysis(
     datas=[(str(ROOT / "icon.ico"), "."), (str(ROOT / "icon.png"), ".")],
     hiddenimports=[
         "requests", "cv2", "numpy", "PIL", "PyQt6.QtSvg",
-        "pyaudiowpatch", "_portaudiowpatch", "keyboard", "mss"
+        "pyaudiowpatch", "_portaudiowpatch", "keyboard"
     ],
     hookspath=[],
     hooksconfig={},
@@ -25,6 +25,7 @@ a = Analysis(
     # imageio-ffmpeg is deliberately omitted from this artifact. Runtime
     # recorders already fall back to OpenCV/Pillow when FFmpeg is unavailable.
     excludes=[
+        "pyaudio", "setuptools", "distutils", "unittest", "pydoc", "doctest", "test",
         "imageio_ffmpeg", "imageio", "tkinter", "_tkinter",
         "cryptography", "bcrypt", "PIL._avif",
         "PyQt6.QtPdf", "PyQt6.QtPdfWidgets",
@@ -33,7 +34,7 @@ a = Analysis(
         "PyQt6.Qt3DRender", "PyQt6.Qt3DExtras", "PyQt6.Qt3DAnimation",
     ],
     noarchive=False,
-    optimize=0,
+    optimize=1,
 )
 
 a.binaries = [

@@ -9,6 +9,7 @@ import math
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QCursor, QPolygonF
 from models.shapes import BaseShape
+from utils.i18n import tr
 
 
 def rotate_point(pt: QPointF, center: QPointF, angle_deg: float) -> QPointF:
@@ -40,6 +41,79 @@ class HandleType:
     LEFT = 8
     ROTATE = 9
     INSIDE = 10
+
+
+class ShapeGroup(BaseShape):
+    """
+    Виртуальная группа фигур для одновременной трансформации (масштабирование, поворот, перемещение).
+    """
+    def __init__(self, shapes: list[BaseShape] = None, base_rect: QRectF = None, rotation: float = 0.0):
+        super().__init__()
+        self.shapes: list[BaseShape] = list(shapes) if shapes else []
+        self.name = tr("obj_group", "Группа объектов")
+        self.is_capture_mask = False
+        self.visible = True
+        self.rotation = float(rotation)
+        if base_rect is not None and not base_rect.isEmpty():
+            self._base_rect = QRectF(base_rect)
+        else:
+            self._base_rect = self._compute_base_rect()
+
+    def _compute_base_rect(self) -> QRectF:
+        bbox = None
+        for s in self.shapes:
+            if not getattr(s, "visible", True):
+                continue
+            br = s.get_bounding_rect()
+            if not br.isEmpty():
+                bbox = QRectF(br) if bbox is None else bbox.united(br)
+        return bbox if bbox is not None else QRectF()
+
+    def get_bounding_rect(self) -> QRectF:
+        """
+        Возвращает неповёрнутый базовый прямоугольник группы.
+        ShapeTransformBox сам применяет self.rotation к рамке и маркерам!
+        """
+        if hasattr(self, "_base_rect") and not self._base_rect.isEmpty():
+            return QRectF(self._base_rect)
+        return self._compute_base_rect()
+
+    def translate(self, dx: float, dy: float):
+        if hasattr(self, "_base_rect") and not self._base_rect.isEmpty():
+            self._base_rect.translate(dx, dy)
+        for s in self.shapes:
+            s.translate(dx, dy)
+
+    def scale_from_origin(self, sx: float, sy: float, origin: QPointF):
+        if hasattr(self, "_base_rect") and not self._base_rect.isEmpty():
+            r = self._base_rect
+            nl = origin.x() + (r.left() - origin.x()) * sx
+            nt = origin.y() + (r.top() - origin.y()) * sy
+            nr = origin.x() + (r.right() - origin.x()) * sx
+            nb = origin.y() + (r.bottom() - origin.y()) * sy
+            self._base_rect = QRectF(min(nl, nr), min(nt, nb), abs(nr - nl), abs(nb - nt))
+        for s in self.shapes:
+            if hasattr(s, "scale_from_origin"):
+                s.scale_from_origin(sx, sy, origin)
+
+    def rotate_around_center(self, angle_deg: float, center: QPointF):
+        """Поворачивает группу на угол angle_deg вокруг центра center."""
+        angle_delta = angle_deg - self.rotation
+        self.rotation = angle_deg
+        if abs(angle_delta) < 1e-6:
+            return
+        for s in self.shapes:
+            s_br = s.get_bounding_rect()
+            s_c = s_br.center()
+            new_c = rotate_point(s_c, center, angle_delta)
+            s.translate(new_c.x() - s_c.x(), new_c.y() - s_c.y())
+            s.rotate_by(angle_delta)
+
+    def clone(self):
+        cloned_shapes = [s.clone() for s in self.shapes]
+        grp = ShapeGroup(cloned_shapes, base_rect=getattr(self, "_base_rect", None), rotation=self.rotation)
+        grp.name = self.name
+        return grp
 
 
 class ShapeTransformBox:
@@ -201,13 +275,20 @@ class ShapeTransformBox:
             if shift_pressed:
                 # Привязка к 15 градусам при зажатом Shift
                 angle = round(angle / 15.0) * 15.0
-            self.shape.rotation = angle % 360.0
-            if hasattr(self.shape, "cached_pixmap"):
-                self.shape.cached_pixmap = None
-            if hasattr(self.shape, "_cache_key"):
-                self.shape._cache_key = None
-            if hasattr(self.shape, "_cached_needed_rect"):
-                self.shape._cached_needed_rect = None
+            new_angle = angle % 360.0
+            if hasattr(self.shape, "rotate_around_center"):
+                if self.initial_state:
+                    state_copy = self.initial_state.clone()
+                    state_copy.rotate_around_center(new_angle, center)
+                    self._apply_shape_geometry(state_copy)
+            else:
+                self.shape.rotation = new_angle
+                if hasattr(self.shape, "cached_pixmap"):
+                    self.shape.cached_pixmap = None
+                if hasattr(self.shape, "_cache_key"):
+                    self.shape._cache_key = None
+                if hasattr(self.shape, "_cached_needed_rect"):
+                    self.shape._cached_needed_rect = None
 
         # 3. Изменение размера / масштабирование
         else:
@@ -272,6 +353,21 @@ class ShapeTransformBox:
         """Копирует геометрические параметры из src в текущую фигуру."""
         if not self.shape or not src:
             return
+        if hasattr(self.shape, "shapes") and hasattr(src, "shapes"):
+            for orig_shape, new_shape in zip(self.shape.shapes, src.shapes):
+                for attr in ("rect", "p1", "p2", "points", "path", "pos", "font_size", "rotation"):
+                    if hasattr(new_shape, attr):
+                        value = getattr(new_shape, attr)
+                        if callable(value):
+                            continue
+                        setattr(orig_shape, attr, value)
+                for c_attr in ("cached_pixmap", "cached_mosaic", "cached_blur", "_cached_rect", "_cached_needed_rect", "_cache_key"):
+                    if hasattr(orig_shape, c_attr):
+                        setattr(orig_shape, c_attr, None)
+            self.shape.rotation = getattr(src, "rotation", 0.0)
+            if hasattr(src, "_base_rect"):
+                self.shape._base_rect = QRectF(src._base_rect)
+            return
         for attr in ("rect", "p1", "p2", "points", "path", "pos", "font_size", "rotation"):
             if hasattr(src, attr):
                 value = getattr(src, attr)
@@ -282,18 +378,9 @@ class ShapeTransformBox:
                 if callable(value):
                     continue
                 setattr(self.shape, attr, value)
-        if hasattr(self.shape, "cached_pixmap"):
-            self.shape.cached_pixmap = None
-        if hasattr(self.shape, "cached_mosaic"):
-            self.shape.cached_mosaic = None
-        if hasattr(self.shape, "cached_blur"):
-            self.shape.cached_blur = None
-        if hasattr(self.shape, "_cached_rect"):
-            self.shape._cached_rect = None
-        if hasattr(self.shape, "_cached_needed_rect"):
-            self.shape._cached_needed_rect = None
-        if hasattr(self.shape, "_cache_key"):
-            self.shape._cache_key = None
+        for c_attr in ("cached_pixmap", "cached_mosaic", "cached_blur", "_cached_rect", "_cached_needed_rect", "_cache_key"):
+            if hasattr(self.shape, c_attr):
+                setattr(self.shape, c_attr, None)
 
     def finish_drag(self) -> tuple[BaseShape | None, BaseShape | None]:
         """Завершает перетаскивание и возвращает кортеж (исходное состояние, итоговое состояние) для Undo/Redo."""

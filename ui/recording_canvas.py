@@ -9,6 +9,7 @@
 
 import sys
 import ctypes
+from ctypes import wintypes
 import threading
 from PyQt6.QtCore import Qt, QRect, QPoint, QPointF, QRectF, pyqtSignal, QSize, QTimer
 from PyQt6.QtWidgets import (
@@ -21,7 +22,8 @@ from PyQt6.QtGui import (
 
 from models.shapes import (
     BaseShape, PenShape, LineShape, ArrowShape, RectangleShape,
-    CircleShape, TextShape, MosaicShape, BlurShape
+    CircleShape, TextShape, MosaicShape, BlurShape, RegionalEffectShape,
+    get_filtered_pixmap
 )
 from models.layers import LayerManager
 from models.history import HistoryManager, HistoryCommand
@@ -32,9 +34,24 @@ from ui.layers_dialog import LayersDialog
 from ui.widgets import ColorPalettePopup
 from ui.transform_box import ShapeTransformBox, HandleType
 from utils.screen_lock import safe_grab_screen_pixmap
+from utils.image_filters import FilterType
 from utils.i18n import tr
 
 user32 = ctypes.windll.user32
+
+
+class MSG(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", wintypes.HWND),
+        ("message", wintypes.UINT),
+        ("wParam", wintypes.WPARAM),
+        ("lParam", wintypes.LPARAM),
+        ("time", wintypes.DWORD),
+        ("pt", wintypes.POINT)
+    ]
+
+WM_MOUSEACTIVATE = 0x0021
+MA_ACTIVATE = 1
 
 
 class RecordingDrawingCanvas(QWidget):
@@ -73,6 +90,8 @@ class RecordingDrawingCanvas(QWidget):
         self.stroke_width = 4
         self.current_grain = 8
         self.current_blur = 15
+        # Режим регионального эффекта (цензуры): mosaic, blur, grayscale, invert, vibrant, sepia
+        self.current_effect_mode = "mosaic"
         # Живой фон нужен только пока на холсте есть мозаика/блюр. В простое
         # таймер не работает и не запускает дорогостоящий захват экрана.
         self._live_effect_background = None
@@ -118,6 +137,7 @@ class RecordingDrawingCanvas(QWidget):
         self.text_editor.returnPressed.connect(self._commit_text)
         self.text_editor.editingFinished.connect(self._commit_text)
         self.text_pos = QPointF()
+        self.is_protected_zone = False
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -132,10 +152,39 @@ class RecordingDrawingCanvas(QWidget):
         self._live_effect_timer.stop()
         super().hideEvent(event)
 
+    def nativeEvent(self, eventType, message):
+        """
+        Гарантирует надёжный перехват клика мыши поверх любых окон (видео, плееры, браузер, рабочий стол),
+        предотвращая отбрасывание клика в фоновое приложение через WM_MOUSEACTIVATE -> MA_ACTIVATE.
+        """
+        if eventType in (b"windows_generic_MSG", "windows_generic_MSG"):
+            try:
+                msg = MSG.from_address(int(message))
+                if msg.message == WM_MOUSEACTIVATE:
+                    return True, MA_ACTIVATE
+            except Exception:
+                pass
+        return False, 0
+
+    def set_protected_zone(self, enabled: bool):
+        """Устанавливает режим защищённой/осязаемой зоны: клики не проходят в фон."""
+        self.is_protected_zone = bool(enabled)
+        if self.current_tool == "cursor":
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, not self.is_protected_zone)
+        else:
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        if self.is_protected_zone:
+            self.raise_()
+            self.activateWindow()
+        self.update()
+
     def set_tool(self, tool_name: str):
         self.current_tool = tool_name
         if tool_name == "cursor":
-            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            if not getattr(self, "is_protected_zone", False):
+                self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            else:
+                self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
             self.setCursor(Qt.CursorShape.ArrowCursor)
         else:
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
@@ -159,6 +208,11 @@ class RecordingDrawingCanvas(QWidget):
         self.current_blur = max(3, min(45, int(blur_radius)))
         self.update()
 
+    def set_effect_mode(self, mode: str):
+        """Устанавливает режим регионального эффекта: mosaic, blur, grayscale, invert, vibrant, sepia."""
+        self.current_effect_mode = mode
+        self._sync_live_effect_timer()
+
     def _has_live_effects(self) -> bool:
         """Проверяет, нужен ли холсту периодический фон для живого эффекта."""
         shapes = list(self.layer_manager.shapes)
@@ -169,17 +223,22 @@ class RecordingDrawingCanvas(QWidget):
             and (
                 getattr(shape, "is_mosaic", False)
                 or getattr(shape, "is_blur", False)
-                or shape.__class__.__name__ in ("MosaicShape", "BlurShape")
+                or shape.__class__.__name__ in ("MosaicShape", "BlurShape", "RegionalEffectShape")
             )
             for shape in shapes
         )
 
     def _sync_live_effect_timer(self):
-        """Включает обновление живого фона только для активной мозаики/блюра."""
+        """Включает обновление живого фона только для активной мозаики/блюра/эффекта."""
+        rec_filter = getattr(self.rec_win, "filter_type", "none") if hasattr(self, "rec_win") else "none"
         needs_background = self.isVisible() and (
-            self.current_tool in ("mosaic", "blur") or self._has_live_effects()
+            self.current_tool in ("mosaic", "blur")
+            or (rec_filter and rec_filter != "none")
+            or self._has_live_effects()
         )
         if needs_background:
+            if self._live_effect_background is None:
+                self._refresh_live_effect_background()
             if not self._live_effect_timer.isActive():
                 self._live_effect_timer.start()
         else:
@@ -260,11 +319,21 @@ class RecordingDrawingCanvas(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Если выбран инструмент рисования (не курсор) — заливаем холст почти прозрачным цветом (alpha=1).
+        # Если выбран инструмент рисования (не курсор) или активна защита зоны — заливаем холст почти прозрачным цветом (alpha=2).
         # На экране это на 100% невидимо, но Windows DWM перехватывает клики и доставляет их
         # на холст рисования, не пропуская в плеер YouTube или фоновые окна!
-        if self.current_tool != "cursor":
-            painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
+        if self.current_tool != "cursor" or getattr(self, "is_protected_zone", False):
+            painter.fillRect(self.rect(), QColor(0, 0, 0, 2))
+
+        # Если в шапке выбран общий фильтр записи (ч/б, блюр, инверсия, сепия и т.д.) —
+        # отображаем его живой предпросмотр на холсте
+        rec_filter = getattr(self.rec_win, "filter_type", "none") if hasattr(self, "rec_win") else "none"
+        if rec_filter and rec_filter not in ("none", FilterType.NONE) and self._live_effect_background is not None:
+            params = getattr(self.rec_win, "filter_params", {}) if hasattr(self, "rec_win") else {}
+            intensity = int(params.get("blur_radius", 15) if rec_filter == "blur" else params.get("pixel_size", 12))
+            filtered_bg = get_filtered_pixmap(self._live_effect_background, rec_filter, intensity)
+            if filtered_bg is not None and not filtered_bg.isNull():
+                painter.drawPixmap(0, 0, filtered_bg)
 
         # Рисуем все слои
         # Если закреплено (pinned) — координаты фигур хранятся в абсолютных экранных координатах,
@@ -283,6 +352,24 @@ class RecordingDrawingCanvas(QWidget):
                 offset=offset,
                 source_pixmap=self._live_effect_background,
             )
+            if hasattr(self.temp_shape, "rect") and (
+                isinstance(self.temp_shape, (MosaicShape, BlurShape, RegionalEffectShape))
+                or getattr(self.temp_shape, "is_mosaic", False)
+                or getattr(self.temp_shape, "is_blur", False)
+            ):
+                r = self.temp_shape.rect.translated(-offset.x(), -offset.y()).normalized()
+                if not r.isEmpty() and r.width() > 1 and r.height() > 1:
+                    painter.save()
+                    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+                    pen_bg = QPen(QColor(0, 0, 0, 200), 1.5, Qt.PenStyle.SolidLine)
+                    painter.setPen(pen_bg)
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawRect(r)
+                    pen_dash = QPen(QColor(56, 189, 248), 1.5, Qt.PenStyle.DashLine)
+                    pen_dash.setDashPattern([4, 4])
+                    painter.setPen(pen_dash)
+                    painter.drawRect(r)
+                    painter.restore()
 
         self._draw_dragged_shape_indicator(painter, offset=offset)
 
@@ -462,9 +549,13 @@ class RecordingDrawingCanvas(QWidget):
             if self.transform_box.is_active():
                 self.transform_box.set_shape(None)
                 self.update()
+            if getattr(self, "is_protected_zone", False):
+                event.accept()
             return
 
         if event.button() != Qt.MouseButton.LeftButton:
+            if getattr(self, "is_protected_zone", False):
+                event.accept()
             return
 
         if self.text_editor.isVisible() and not self.text_editor.geometry().contains(pos.toPoint()):
@@ -495,6 +586,8 @@ class RecordingDrawingCanvas(QWidget):
             if self.transform_box.is_active():
                 self.transform_box.set_shape(None)
                 self.update()
+            if getattr(self, "is_protected_zone", False):
+                event.accept()
             return
 
         if self.transform_box.is_active():
@@ -536,6 +629,20 @@ class RecordingDrawingCanvas(QWidget):
                 )
                 self.temp_shape.pixel_size = grain
                 self.temp_shape.blur_radius = blur_r
+            elif self.current_tool == "line":
+                self.temp_shape = LineShape(
+                    p1=stored_pos,
+                    p2=stored_pos,
+                    color=self.current_color,
+                    stroke_width=self.stroke_width
+                )
+            elif self.current_tool == "circle":
+                self.temp_shape = CircleShape(
+                    rect=QRectF(stored_pos, stored_pos),
+                    color=self.current_color,
+                    stroke_width=self.stroke_width,
+                    filled=False
+                )
             elif self.current_tool == "rect":
                 self.temp_shape = RectangleShape(
                     rect=QRectF(stored_pos, stored_pos),
@@ -546,10 +653,33 @@ class RecordingDrawingCanvas(QWidget):
                 self.temp_shape.pixel_size = grain
                 self.temp_shape.blur_radius = blur_r
             elif self.current_tool == "mosaic":
-                self.temp_shape = MosaicShape(
-                    rect=QRectF(stored_pos, stored_pos),
-                    pixel_size=grain
-                )
+                # Выбираем нужную фигуру в зависимости от текущего режима эффекта
+                mode = getattr(self, "current_effect_mode", "mosaic")
+                if mode == "blur":
+                    self.temp_shape = BlurShape(
+                        rect=QRectF(stored_pos, stored_pos),
+                        blur_radius=blur_r
+                    )
+                elif mode in ("mosaic", "pixelate"):
+                    self.temp_shape = MosaicShape(
+                        rect=QRectF(stored_pos, stored_pos),
+                        pixel_size=grain
+                    )
+                else:
+                    # grayscale, invert, vibrant, sepia
+                    self.temp_shape = RegionalEffectShape(
+                        QRectF(stored_pos, stored_pos),
+                        effect_type=mode,
+                        intensity=grain
+                    )
+                # Для всех эффектов нужен живой фон — принудительно включаем таймер
+                if self._live_effect_background is None:
+                    self._refresh_live_effect_background()
+                if self.temp_shape is not None and self._live_effect_background is not None:
+                    try:
+                        self.temp_shape.update_effect(self._live_effect_background)
+                    except Exception:
+                        pass
         self.update()
 
     def mouseMoveEvent(self, event):
@@ -596,15 +726,17 @@ class RecordingDrawingCanvas(QWidget):
 
         # 2. Рисование фигуры ЛКМ
         if self.temp_shape is None:
+            if self.current_tool == "cursor" and getattr(self, "is_protected_zone", False):
+                event.accept()
             return
 
         stored_pos = test_pos
         with self.shape_lock:
             if self.current_tool in ("pen", "highlighter"):
                 self.temp_shape.add_point(stored_pos)
-            elif self.current_tool == "arrow":
+            elif self.current_tool in ("arrow", "line"):
                 self.temp_shape.p2 = stored_pos
-            elif self.current_tool in ("rect", "mosaic"):
+            elif self.current_tool in ("rect", "circle", "mosaic"):
                 self.temp_shape.rect = QRectF(self.drag_start, stored_pos).normalized()
 
         self.update()
@@ -678,6 +810,21 @@ class RecordingDrawingCanvas(QWidget):
             )
             self.history_manager.push_already_done(cmd)
             self.update()
+
+        if self.current_tool == "cursor" and getattr(self, "is_protected_zone", False):
+            event.accept()
+
+    def wheelEvent(self, event):
+        if getattr(self, "is_protected_zone", False):
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if getattr(self, "is_protected_zone", False):
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def _on_right_hold_timeout(self):
         """Вызывается по таймеру удержания ПКМ на фигуре (350 мс)."""
@@ -813,6 +960,26 @@ class RecordingDrawingToolbar(QFrame):
     undo_requested = pyqtSignal()
     clear_requested = pyqtSignal()
     pin_toggled = pyqtSignal(bool)
+    effect_mode_changed = pyqtSignal(str)  # mosaic, blur, grayscale, invert, vibrant, sepia
+
+    # Иконки для каждого режима эффекта
+    EFFECT_ICONS = {
+        "mosaic": "mosaic",
+        "blur": "blur",
+        "grayscale": "grayscale",
+        "invert": "invert",
+        "vibrant": "vibrant",
+        "sepia": "sepia",
+    }
+    # Подсказки
+    EFFECT_TIPS = {
+        "mosaic": "Мозаика (Пикселизация области)",
+        "blur": "Размытие (Блюр области)",
+        "grayscale": "Чёрно-белый (Grayscale области)",
+        "invert": "Инверсия цветов (Область)",
+        "vibrant": "Повышенная контрастность (Область)",
+        "sepia": "Тёплая сепия (Область)",
+    }
 
     PRESET_COLORS = ["#ef4444", "#f59e0b", "#22c55e", "#00C0FF", "#a855f7", "#ffffff"]
 
@@ -849,14 +1016,15 @@ class RecordingDrawingToolbar(QFrame):
         layout.setContentsMargins(8, 2, 8, 2)
         layout.setSpacing(4)
 
-        # 1. Инструменты рисования
+        # 1. Инструменты рисования (без мозаики — она добавляется отдельно с выпадающим меню)
         self.tool_buttons = {}
+        self.current_effect_mode = "mosaic"  # текущий режим эффекта цензуры
+        self._effect_flyout = None          # всплывающее меню эффектов
         tools = [
             ("cursor", "move", tr("draw_cursor")),
             ("pen", "pen", tr("draw_pen")),
             ("arrow", "arrow_barbed", tr("draw_arrow")),
             ("rect", "rect", tr("draw_rect")),
-            ("mosaic", "mosaic", tr("draw_mosaic", "Мозаика (Цензура)")),
             ("highlighter", "highlighter", tr("draw_highlighter")),
             ("text", "text", tr("draw_text")),
         ]
@@ -875,8 +1043,23 @@ class RecordingDrawingToolbar(QFrame):
             layout.addWidget(btn)
             self.tool_buttons[t_name] = btn
 
+        # Специальная кнопка «Эффекты/Цензура» с выбором режима через ПКМ-меню
+        self.btn_effect = QPushButton()
+        self.btn_effect.setCheckable(True)
+        self.btn_effect.setFixedSize(32, 24)   # немного шире для размещения стрелки
+        self.btn_effect.setIconSize(QSize(14, 14))
+        self.btn_effect.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._update_effect_btn()
+        self.btn_effect.clicked.connect(self._on_effect_btn_clicked)
+        # ПКМ → открыть меню выбора эффекта
+        self.btn_effect.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.btn_effect.customContextMenuRequested.connect(self._open_effect_flyout)
+        layout.addWidget(self.btn_effect)
+        self.tool_buttons["mosaic"] = self.btn_effect
+
         # Разделитель
         layout.addWidget(self._make_sep())
+
 
         # 2. Выбор цвета (открывает полноценное окно палитры с толщиной и QColorDialog)
         self.current_color = "#ef4444"
@@ -1065,3 +1248,57 @@ class RecordingDrawingToolbar(QFrame):
             self.btn_pin.setIcon(create_themed_icon("pin", is_dark=True, size=14, custom_color="#71717a"))
             self.btn_pin.setToolTip(tr("draw_pin_off"))
             self.btn_pin.setStyleSheet("")
+
+    # ------------------------------------------------------------------ #
+    #   Кнопка «Эффекты / Цензура» с выбором режима через всплывающий QMenu
+    # ------------------------------------------------------------------ #
+
+    def _update_effect_btn(self):
+        """Обновляет иконку и подсказку кнопки эффекта по текущему режиму."""
+        mode = getattr(self, "current_effect_mode", "mosaic")
+        ico_name = self.EFFECT_ICONS.get(mode, "mosaic")
+        tip = self.EFFECT_TIPS.get(mode, "Эффект (Цензура)")
+        self.btn_effect.setIcon(create_themed_icon(ico_name, is_dark=True, size=14))
+        self.btn_effect.setToolTip(f"{tip}\n(ПКМ — сменить режим эффекта)")
+
+    def _on_effect_btn_clicked(self):
+        """ЛКМ: активируем инструмент мозаики/эффекта."""
+        self._on_tool_clicked("mosaic")
+
+    def _open_effect_flyout(self, _pos=None):
+        """ПКМ: показываем меню выбора режима эффекта."""
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #18181b;
+                color: #f4f4f5;
+                border: 1px solid #3f3f46;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 5px 18px 5px 10px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #2563eb;
+            }
+        """)
+        for mode, ico_name in self.EFFECT_ICONS.items():
+            tip = self.EFFECT_TIPS.get(mode, mode)
+            action = QAction(create_themed_icon(ico_name, is_dark=True, size=14), tip, self)
+            if mode == getattr(self, "current_effect_mode", "mosaic"):
+                action.setCheckable(True)
+                action.setChecked(True)
+            action.triggered.connect(lambda checked, m=mode: self._on_effect_mode_selected(m))
+            menu.addAction(action)
+        menu.exec(self.btn_effect.mapToGlobal(QPoint(0, self.btn_effect.height() + 2)))
+
+    def _on_effect_mode_selected(self, mode: str):
+        """Применяет выбранный режим эффекта."""
+        self.current_effect_mode = mode
+        self._update_effect_btn()
+        # Активируем инструмент эффекта
+        self._on_tool_clicked("mosaic")
+        # Уведомляем холст о смене режима
+        self.effect_mode_changed.emit(mode)

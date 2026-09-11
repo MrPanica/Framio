@@ -337,32 +337,35 @@ class RecentMediaPanel(QWidget):
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(4)
-        for method, icon_name, key, fallback, tip_key, tip_fallback, args in (
+        for method, icon_name, icon_color, key, fallback, tip_key, tip_fallback, args in (
             (
-                "_copy_recent_media", "copy", "recent_action_copy", "Копировать",
+                "_copy_recent_media", "copy", None, "recent_action_copy", "Копировать",
                 "recent_action_copy_tip", "Копировать материал", (),
             ),
             (
-                "_view_recent_media", "eye", "recent_action_view", "Просмотр",
+                "_view_recent_media", "eye", None, "recent_action_view", "Просмотр",
                 "recent_action_view_tip", "Открыть материал для просмотра", (),
             ),
             (
-                "_search_recent_media", "search", "recent_action_google", "Google",
+                "_search_recent_media", "google_lens", "#4285f4", "recent_action_google", "Google",
                 "recent_action_google_tip", "Искать эту картинку в Google Lens", ("google",),
             ),
             (
-                "_search_recent_media", "search", "recent_action_yandex", "Yandex",
+                "_search_recent_media", "yandex_images", "#f12713", "recent_action_yandex", "Yandex",
                 "recent_action_yandex_tip", "Искать эту картинку в Яндекс.Картинках", ("yandex",),
             ),
         ):
             button = QPushButton()
             button.setObjectName("recentMediaActionButton")
             button.setFixedSize(28, 26)
-            button.setIcon(create_themed_icon(icon_name, is_dark=True, size=16))
+            button.setIcon(create_themed_icon(icon_name, is_dark=True, size=16, custom_color=icon_color))
             button.setIconSize(QSize(16, 16))
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-            button.setToolTip(tr(tip_key, tip_fallback))
+            button.setToolTip(
+                tr("recent_action_copy_tip", "Копировать в буфер обмена")
+                if method == "_copy_recent_media" else tr(tip_key, tip_fallback)
+            )
             button.setAccessibleName(tr(key, fallback))
             button.clicked.connect(
                 lambda checked=False, entry=item, name=method, call_args=args:

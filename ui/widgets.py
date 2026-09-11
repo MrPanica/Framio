@@ -8,9 +8,9 @@ import ctypes
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QSlider, QColorDialog, QFrame
+    QSlider, QColorDialog, QFrame, QToolTip
 )
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor, QFont, QCursor
 from utils.i18n import tr
 from ui.icons import create_themed_icon
 
@@ -19,6 +19,7 @@ class ModernButton(QPushButton):
         super().__init__(text, parent)
         if tooltip:
             self.setToolTip(tooltip)
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet("""
             QPushButton {
@@ -44,6 +45,16 @@ class ModernButton(QPushButton):
                 color: #ffffff;
             }
         """)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        tip = self.toolTip()
+        if tip:
+            QToolTip.showText(QCursor.pos(), tip, self)
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        QToolTip.hideText()
 
 
 class DimensionBadge(QFrame):

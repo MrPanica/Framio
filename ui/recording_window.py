@@ -28,6 +28,7 @@ from utils.window_icon import get_window_qicon
 from config import ConfigManager
 from ui.icons import create_themed_icon
 from ui.recording_canvas import RecordingDrawingCanvas, RecordingDrawingToolbar
+from ui.toolbars import WholeAreaFilterPopup, show_smart_popup, RightDrawingToolbar, ToolType
 from utils.i18n import tr
 
 
@@ -46,8 +47,46 @@ MA_ACTIVATE = 1
 
 BORDER_THICKNESS = 3
 HEADER_HEIGHT = 38
-COLLAPSED_HEADER_HEIGHT = 30
+# Свёрнутая шапка — компактная полоса на всю ширину рамки, в ~3 раза меньше по высоте.
+COLLAPSED_HEADER_HEIGHT = 14
 HANDLE_SIZE = 8
+RESIZE_HIT_MARGIN = 10
+COLLAPSED_HEADER_WIDTH = 0
+
+
+class RecordingToolbarWindow(QWidget):
+    """Плавающее окно для боковой панели RightDrawingToolbar в режиме записи."""
+    def __init__(self, rec_win):
+        super().__init__(
+            None,
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.WindowDoesNotAcceptFocus,
+        )
+        self.rec_win = rec_win
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+        try:
+            user32.SetWindowDisplayAffinity(int(self.winId()), 0x00000011)
+        except Exception:
+            pass
+
+    @property
+    def transform_box(self):
+        return getattr(self.rec_win.canvas, "transform_box", None) if self.rec_win and self.rec_win.canvas else None
+
+    @property
+    def last_active_shape(self):
+        return getattr(self.rec_win.canvas, "active_editing_shape", None) if self.rec_win and self.rec_win.canvas else None
+
+    def _update_toolbar_positions(self):
+        if self.rec_win:
+            self.rec_win._sync_rec_toolbar_position()
+
+    def _raise_toolbar(self, toolbar):
+        self.raise_()
 
 
 class HeaderDragFilter(QObject):
@@ -65,41 +104,85 @@ class HeaderDragFilter(QObject):
         self.start_inner_x = 0
         self.start_inner_y = 0
 
+    def start_drag(self, global_pos: QPoint):
+        self.rec_win._raise_for_pointer()
+        self.dragging = True
+        self.drag_start = global_pos
+        self.start_inner_x = self.rec_win.inner_x
+        self.start_inner_y = self.rec_win.inner_y
+        QApplication.setOverrideCursor(Qt.CursorShape.ClosedHandCursor)
+
+    def update_drag(self, global_pos: QPoint):
+        dx = global_pos.x() - self.drag_start.x()
+        dy = global_pos.y() - self.drag_start.y()
+        self.rec_win.inner_x = self.start_inner_x + dx
+        min_top = self.rec_win._get_min_top()
+        self.rec_win.inner_y = max(min_top, self.start_inner_y + dy)
+        self.rec_win._sync_position()
+
+    def end_drag(self):
+        self.dragging = False
+        if QApplication.overrideCursor() is not None:
+            QApplication.restoreOverrideCursor()
+        self.rec_win._sync_geometry()
+
     def eventFilter(self, watched, event):
         etype = event.type()
         if etype == QEvent.Type.MouseButtonPress:
             if event.button() == Qt.MouseButton.LeftButton:
-                if isinstance(watched, (QPushButton, QComboBox)):
+                if isinstance(watched, QComboBox) or (
+                    isinstance(watched, QPushButton)
+                    and watched is not getattr(self.rec_win, "btn_header_drag_handle", None)
+                ):
                     return False
-                self.rec_win._raise_for_pointer()
-                self.dragging = True
-                self.drag_start = event.globalPosition().toPoint()
-                self.start_inner_x = self.rec_win.inner_x
-                self.start_inner_y = self.rec_win.inner_y
-                QApplication.setOverrideCursor(Qt.CursorShape.ClosedHandCursor)
+                self.start_drag(event.globalPosition().toPoint())
                 return True
         elif etype == QEvent.Type.MouseMove:
             if self.dragging:
-                gpos = event.globalPosition().toPoint()
-                dx = gpos.x() - self.drag_start.x()
-                dy = gpos.y() - self.drag_start.y()
-                self.rec_win.inner_x = self.start_inner_x + dx
-                min_top = self.rec_win._get_min_top()
-                self.rec_win.inner_y = max(min_top, self.start_inner_y + dy)
-                self.rec_win._sync_position()
+                self.update_drag(event.globalPosition().toPoint())
                 return True
-            elif not isinstance(watched, (QPushButton, QComboBox)):
+            elif watched is getattr(self.rec_win, "btn_header_drag_handle", None) or not isinstance(watched, (QPushButton, QComboBox)):
                 self.rec_win._raise_for_pointer()
                 if QApplication.overrideCursor() is None:
                     watched.setCursor(Qt.CursorShape.SizeAllCursor)
         elif etype == QEvent.Type.MouseButtonRelease:
             if self.dragging and event.button() == Qt.MouseButton.LeftButton:
-                self.dragging = False
-                if QApplication.overrideCursor() is not None:
-                    QApplication.restoreOverrideCursor()
-                self.rec_win._sync_geometry()
+                self.end_drag()
                 return True
         return False
+
+
+class HeaderDragHandleButton(QPushButton):
+    """
+    Специальная кнопка/ручка перетаскивания шапки окна записи.
+    Обрабатывает события нажатия и перетаскивания напрямую, исключая
+    поглощение событий стандартным поведением QPushButton.
+    """
+    def __init__(self, drag_filter: HeaderDragFilter, parent=None):
+        super().__init__(parent)
+        self.drag_filter = drag_filter
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_filter.start_drag(event.globalPosition().toPoint())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.drag_filter.dragging:
+            self.drag_filter.update_drag(event.globalPosition().toPoint())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self.drag_filter.dragging and event.button() == Qt.MouseButton.LeftButton:
+            self.drag_filter.end_drag()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 
 class RecordingSettingsPopup(QFrame):
@@ -236,11 +319,15 @@ class RecordingFrameWindow(QWidget):
     geometry_changed = pyqtSignal()
     save_progress = pyqtSignal(str, int, str)  # (filename, percent_0_to_100, stage_desc)
 
-    def __init__(self, mode="video", rect=None, regions=None, region_index=None, region_count=1, record_mic=None, record_system=None, codec=None, target_hwnd=None, capture_mask=None, mask_getter=None, is_fullscreen=False, countdown=None, countdown_seconds=None, filter_type=None, filter_params=None, parent=None):
+    def __init__(self, mode="video", rect=None, regions=None, region_index=None, region_count=1, record_mic=None, record_system=None, codec=None, target_hwnd=None, capture_mask=None, mask_getter=None, is_fullscreen=False, countdown=None, countdown_seconds=None, filter_type=None, filter_params=None, parent=None, overlay_owner=None):
         super().__init__(parent)
         self.regions = [QRect(int(r.x()), int(r.y()), int(r.width()), int(r.height())) for r in regions] if regions else []
         self.region_index = region_index
         self.region_count = max(1, int(region_count or 1))
+        # Top-level recording windows receive Escape themselves. Keep an
+        # explicit owner reference so Escape can close the selection overlay
+        # immediately, even while a GIF worker is still finalizing its file.
+        self.overlay_owner = overlay_owner
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
@@ -255,6 +342,7 @@ class RecordingFrameWindow(QWidget):
         self.mode = mode
         self.is_fullscreen = is_fullscreen
         self.header_collapsed = False
+        self._collapsed_header_anchor_x = None
         self.header_on_bottom = False
         self.record_mic = record_mic if record_mic is not None else getattr(self.cfg, "record_mic", True)
         self.record_system = record_system if record_system is not None else getattr(self.cfg, "record_system", True)
@@ -322,33 +410,60 @@ class RecordingFrameWindow(QWidget):
         self.btn_mic = None
         self.btn_system = None
         self.btn_draw = None
+        self.btn_passthrough = None
 
         self.capture_worker = None
         self.output_path = ""
 
-        self._init_ui()
-
-        # Создаем холст живого рисования и панель инструментов
-        self.canvas = RecordingDrawingCanvas(self)
-        self.drawing_toolbar = RecordingDrawingToolbar(self)
-        self.drawing_toolbar.hide()
-        self.drawing_toolbar.tool_selected.connect(self._on_tool_selected)
-        self.drawing_toolbar.color_changed.connect(self.canvas.set_color)
-        self.drawing_toolbar.stroke_changed.connect(self.canvas.set_stroke_width)
-        self.drawing_toolbar.grain_changed.connect(self.canvas.set_grain)
-        self.drawing_toolbar.blur_changed.connect(self.canvas.set_blur)
-        self.drawing_toolbar.undo_requested.connect(self.canvas.undo)
-        self.drawing_toolbar.clear_requested.connect(self.canvas.clear_all)
-        self.drawing_toolbar.pin_toggled.connect(self.canvas.set_pinned)
-
         # Устанавливаем фильтр перетаскивания за шапку
         self.drag_filter = HeaderDragFilter(self)
+
+        self._init_ui()
+
+        # Создаём холст живого рисования
+        self.canvas = RecordingDrawingCanvas(self)
+
+        # Боковая панель инструментов — такая же как в обычной зоне overlay (RightDrawingToolbar),
+        # но размещается в отдельном безрамочном окне, т.к. дочерний виджет не может выйти
+        # за пределы RecordingFrameWindow. Синхронизируем положение через _sync_geometry.
+        self._rec_toolbar_win = RecordingToolbarWindow(self)
+        layout_tb = QVBoxLayout(self._rec_toolbar_win)
+        layout_tb.setContentsMargins(0, 0, 0, 0)
+        layout_tb.setSpacing(0)
+        layout_tb.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+
+        self.drawing_toolbar = RightDrawingToolbar(self._rec_toolbar_win, show_labels=False)
+        # В режиме записи скрываем только создание маски (маска задаётся до старта)
+        btn_mask = self.drawing_toolbar.tool_buttons.get(ToolType.CAPTURE_MASK)
+        if btn_mask is not None:
+            btn_mask.hide()
+        layout_tb.addWidget(self.drawing_toolbar)
+        self._rec_toolbar_win.hide()
+
+        # Сигналы: адаптируем RightDrawingToolbar → RecordingDrawingCanvas
+        self.drawing_toolbar.tool_changed.connect(self._on_rec_tool_changed)
+        self.drawing_toolbar.tool_settings_updated.connect(self._on_rec_settings_updated)
+        self.drawing_toolbar.passthrough_toggled.connect(self._on_rec_passthrough_toggled)
+        self.drawing_toolbar.undo_clicked.connect(self.canvas.undo)
+        self.drawing_toolbar.redo_clicked.connect(self.canvas.redo if hasattr(self.canvas, "redo") else lambda: None)
+        self.drawing_toolbar.layers_clicked.connect(self._on_rec_layers)
+        self.drawing_toolbar.history_clicked.connect(self._on_rec_layers)
+        self.drawing_toolbar.filter_selected.connect(self._on_recording_filter_selected)
+        self.drawing_toolbar.pipette_requested.connect(lambda: None)  # не поддерживается в записи
+
+        # Убедимся, что холст изначально в режиме курсора (сквозной клик)
+        self.canvas.set_tool("cursor")
+        self.drawing_toolbar.canvas = self.canvas
+        self.is_protected_zone = False
+
         self.header_frame.installEventFilter(self.drag_filter)
         self.lbl_mode.installEventFilter(self.drag_filter)
         self.lbl_mode_icon.installEventFilter(self.drag_filter)
         self.lbl_target_icon.installEventFilter(self.drag_filter)
         self.lbl_timer.installEventFilter(self.drag_filter)
         self.lbl_size.installEventFilter(self.drag_filter)
+        if hasattr(self, "btn_header_drag_handle"):
+            self.btn_header_drag_handle.installEventFilter(self.drag_filter)
 
         try:
             user32.SetWindowDisplayAffinity(int(self.winId()), 0x00000011)
@@ -481,6 +596,28 @@ class RecordingFrameWindow(QWidget):
         self.btn_draw.clicked.connect(self._toggle_drawing_bar)
         layout.addWidget(self.btn_draw)
 
+        # 4.6 Защита зоны (осязаемая / неосязаемая рамка: блокировка кликов сквозь рамку в фон)
+        self.btn_passthrough = QPushButton()
+        self.btn_passthrough.setCheckable(True)
+        self.btn_passthrough.setIcon(create_themed_icon("passthrough", is_dark=True, size=14, custom_color="#38bdf8"))
+        self.btn_passthrough.setIconSize(QSize(14, 14))
+        self.btn_passthrough.setToolTip(tr("rec_tip_passthrough", "Защита зоны: клики внутри рамки заблокированы от попадания в фоновые окна (вкл/выкл)"))
+        self.btn_passthrough.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_passthrough.setFixedSize(28, 26)
+        self.btn_passthrough.toggled.connect(self._on_rec_passthrough_toggled)
+        layout.addWidget(self.btn_passthrough)
+
+        # Фильтр можно менять уже во время записи: worker принимает новое
+        # состояние между кадрами и применяет его без перезапуска захвата.
+        self.btn_filter = QPushButton()
+        self.btn_filter.setIcon(create_themed_icon("filter", is_dark=True, size=14))
+        self.btn_filter.setIconSize(QSize(14, 14))
+        self.btn_filter.setToolTip(tr("rec_tip_filter", "Эффект записи"))
+        self.btn_filter.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_filter.setFixedSize(28, 26)
+        self.btn_filter.clicked.connect(self._show_filter_popup)
+        layout.addWidget(self.btn_filter)
+
         # 5. Пауза (компактная векторная SVG иконка)
         self.btn_pause = QPushButton()
         self.btn_pause.setIcon(create_themed_icon("pause", is_dark=True, size=14))
@@ -537,6 +674,16 @@ class RecordingFrameWindow(QWidget):
         self.popup_settings.window_selected.connect(self._on_window_changed)
         self.popup_settings.pick_window_clicked.connect(self._start_window_pick_mode)
 
+        self.popup_filter = WholeAreaFilterPopup(
+            self,
+            title=tr("rec_filter_title", "Эффект записи"),
+        )
+        self.popup_filter.filter_selected.connect(self._on_recording_filter_selected)
+        self.popup_filter.parameters_changed.connect(self._on_recording_filter_parameters_changed)
+        self.popup_filter.set_filter(self.filter_type)
+        self.popup_filter.set_parameters(self.filter_params)
+        self._sync_filter_button()
+
         # 9. Отмена (векторная SVG иконка)
         btn_cancel = QPushButton()
         btn_cancel.setIcon(create_themed_icon("close", is_dark=True, size=13, custom_color="#fca5a5"))
@@ -557,8 +704,19 @@ class RecordingFrameWindow(QWidget):
         btn_cancel.clicked.connect(self.cancel_recording)
         layout.addWidget(btn_cancel)
 
-        # Компактное состояние оставляет только эту кнопку, чтобы шапка не
-        # закрывала соседние панели и область записи у края экрана.
+        # Ручка перемещения — видна только в collapsed режиме, стоит СЛЕВА.
+        self.btn_header_drag_handle = HeaderDragHandleButton(self.drag_filter)
+        try:
+            self.btn_header_drag_handle.setIcon(create_themed_icon("move", is_dark=True, size=10))
+            self.btn_header_drag_handle.setIconSize(QSize(10, 10))
+        except Exception:
+            pass
+        self.btn_header_drag_handle.setFixedSize(22, 12)
+        self.btn_header_drag_handle.setCursor(Qt.CursorShape.SizeAllCursor)
+        self.btn_header_drag_handle.setToolTip(tr("rec_header_drag_tip", "Потяните для перемещения рамки записи"))
+        self.btn_header_drag_handle.setVisible(False)  # скрыта в expanded режиме
+        layout.insertWidget(0, self.btn_header_drag_handle)
+
         self.btn_header_toggle = QPushButton()
         self.btn_header_toggle.setIcon(create_themed_icon("chevron_up", is_dark=True, size=14))
         self.btn_header_toggle.setIconSize(QSize(14, 14))
@@ -569,14 +727,48 @@ class RecordingFrameWindow(QWidget):
 
         self._header_content_widgets = [
             self.lbl_mode_icon, self.lbl_mode, self.lbl_target_icon,
-            self.lbl_timer, self.lbl_size, self.btn_draw, self.btn_pause,
-            self.btn_stop, self.btn_lock, self.btn_settings, btn_cancel,
+            self.lbl_timer, self.lbl_size, self.btn_draw, self.btn_passthrough, self.btn_pause,
+            self.btn_filter, self.btn_stop, self.btn_lock, self.btn_settings, btn_cancel,
         ]
         if self.btn_mic is not None:
             self._header_content_widgets.append(self.btn_mic)
         if self.btn_system is not None:
             self._header_content_widgets.append(self.btn_system)
         self._update_header_toggle_ui()
+
+
+    def _sync_filter_button(self):
+        active = bool(self.filter_type and self.filter_type != "none")
+        if active:
+            self.btn_filter.setStyleSheet(
+                "QPushButton { background-color: #2563eb; border: 1px solid #3b82f6; border-radius: 4px; }"
+                "QPushButton:hover { background-color: #1d4ed8; }"
+            )
+            self.btn_filter.setIcon(create_themed_icon("filter", is_dark=True, size=14, custom_color="#ffffff"))
+        else:
+            self.btn_filter.setStyleSheet("")
+            self.btn_filter.setIcon(create_themed_icon("filter", is_dark=True, size=14))
+
+    def _show_filter_popup(self):
+        self.popup_filter.set_filter(self.filter_type or "none")
+        self.popup_filter.set_parameters(self.filter_params)
+        show_smart_popup(self.btn_filter, self.popup_filter)
+
+    def _on_recording_filter_selected(self, filter_type: str):
+        self.filter_type = filter_type or "none"
+        self._sync_filter_button()
+        if self.capture_worker is not None:
+            self.capture_worker.set_filter(self.filter_type, dict(self.filter_params))
+        if self.canvas is not None:
+            self.canvas._sync_live_effect_timer()
+            self.canvas.update()
+
+    def _on_recording_filter_parameters_changed(self, params: dict):
+        self.filter_params.update(params or {})
+        if self.capture_worker is not None:
+            self.capture_worker.set_filter(self.filter_type, dict(self.filter_params))
+        if self.canvas is not None:
+            self.canvas.update()
 
     def _show_settings_popup(self):
         self.popup_settings.populate_windows(self.target_hwnd)
@@ -619,7 +811,10 @@ class RecordingFrameWindow(QWidget):
     def _header_height(self):
         if getattr(self, "header_collapsed", False):
             return COLLAPSED_HEADER_HEIGHT
-        return HEADER_HEIGHT + (30 if getattr(self, "draw_bar_visible", False) else 0)
+        return HEADER_HEIGHT
+
+    def _collapsed_header_x(self, available_width: int = 0) -> int:
+        return 0
 
     def _update_header_placement(self):
         """Выбирает сторону шапки, чтобы она не закрывала верхнюю часть записи."""
@@ -647,13 +842,85 @@ class RecordingFrameWindow(QWidget):
     def _update_header_toggle_ui(self):
         if not hasattr(self, "btn_header_toggle"):
             return
-        icon_name = "chevron_down" if self.header_collapsed else "chevron_up"
-        tip_key = "rec_header_expand_tip" if self.header_collapsed else "rec_header_collapse_tip"
-        self.btn_header_toggle.setIcon(create_themed_icon(icon_name, is_dark=True, size=14))
-        self.btn_header_toggle.setToolTip(tr(tip_key, "Развернуть шапку" if self.header_collapsed else "Свернуть шапку"))
+        layout = self.header_frame.layout()
+        if layout is not None:
+            if self.header_collapsed:
+                layout.setContentsMargins(6, 0, 6, 0)
+                layout.setSpacing(4)
+            else:
+                layout.setContentsMargins(8, 4, 8, 4)
+                layout.setSpacing(6)
+
+        if self.header_collapsed:
+            btn_w, btn_h = 22, 12
+            icon_size = 10
+            icon_name = "chevron_down"
+            tip_key = "rec_header_expand_tip"
+            tip_text = "Развернуть шапку"
+        else:
+            btn_w, btn_h = 26, 26
+            icon_size = 14
+            icon_name = "chevron_up"
+            tip_key = "rec_header_collapse_tip"
+            tip_text = "Свернуть шапку"
+
+        self.btn_header_toggle.setFixedSize(btn_w, btn_h)
+        self.btn_header_toggle.setIconSize(QSize(icon_size, icon_size))
+        self.btn_header_toggle.setIcon(create_themed_icon(icon_name, is_dark=True, size=icon_size))
+        self.btn_header_toggle.setToolTip(tr(tip_key, tip_text))
+
         for widget in getattr(self, "_header_content_widgets", []):
             widget.setVisible(not self.header_collapsed)
         self.btn_header_toggle.setVisible(True)
+
+        if hasattr(self, "btn_header_drag_handle"):
+            self.btn_header_drag_handle.setFixedSize(22, 12)
+            self.btn_header_drag_handle.setIconSize(QSize(10, 10))
+            self.btn_header_drag_handle.setVisible(self.header_collapsed)
+
+        if self.header_collapsed:
+            self.header_frame.setStyleSheet(f"""
+                QFrame {{
+                    background-color: #18181b;
+                    border-bottom: 1px solid {self.accent_color.name()};
+                }}
+                QPushButton {{
+                    background-color: transparent;
+                    border: none;
+                    border-radius: 2px;
+                    padding: 0px;
+                    margin: 0px;
+                }}
+                QPushButton:hover {{
+                    background-color: #3f3f46;
+                }}
+            """)
+        else:
+            self.header_frame.setStyleSheet(f"""
+                QFrame {{
+                    background-color: #18181b;
+                    border-bottom: 2px solid {self.accent_color.name()};
+                }}
+                QLabel {{
+                    color: #f4f4f5;
+                    font-family: 'Segoe UI', sans-serif;
+                    font-size: 12px;
+                    font-weight: bold;
+                }}
+                QPushButton {{
+                    background-color: #27272a;
+                    color: #f4f4f5;
+                    border: 1px solid #3f3f46;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    font-size: 12px;
+                    font-weight: 500;
+                }}
+                QPushButton:hover {{
+                    background-color: #3f3f46;
+                }}
+            """)
+
 
     def _toggle_mic(self):
         self.record_mic = not self.record_mic
@@ -664,6 +931,8 @@ class RecordingFrameWindow(QWidget):
     def _raise_for_pointer(self):
         """Делает рамку под курсором верхней среди перекрывающихся зон."""
         self.raise_()
+        if self.canvas and (getattr(self.canvas, "current_tool", "cursor") != "cursor" or getattr(self, "is_protected_zone", False)):
+            self.canvas.raise_()
 
     def _update_mic_button(self):
         if not self.btn_mic:
@@ -695,6 +964,129 @@ class RecordingFrameWindow(QWidget):
             self.btn_system.setToolTip(tr("rec_tip_sys_off", "Системный звук отключен (кликните для включения)"))
             self.btn_system.setStyleSheet("background-color: #3f1d1d; border: 1px solid #7f1d1d;")
 
+    # -------------------------------------------------------------------
+    # RightDrawingToolbar → RecordingDrawingCanvas адаптеры
+    # -------------------------------------------------------------------
+
+    # Маппинг ToolType (строки из overlay) → имена инструментов RecordingDrawingCanvas
+    _REC_TOOL_MAP = {
+        ToolType.PEN:         "pen",
+        ToolType.SHAPES:      "arrow",
+        ToolType.LINE:        "line",
+        ToolType.ARROW:       "arrow",
+        ToolType.RECT:        "rect",
+        ToolType.CIRCLE:      "circle",
+        ToolType.HIGHLIGHTER: "highlighter",
+        ToolType.TEXT:        "text",
+        ToolType.MOSAIC:      "mosaic",
+        ToolType.MOVE:        "cursor",
+        ToolType.SELECT:      "cursor",
+    }
+
+    def _on_rec_tool_changed(self, tool_type: str):
+        """Транслирует выбор инструмента RightDrawingToolbar в RecordingDrawingCanvas."""
+        if not self.canvas:
+            return
+        canvas_tool = self._REC_TOOL_MAP.get(tool_type, "cursor")
+        # Для SHAPES уточняем выбранную геометрическую фигуру
+        if tool_type == ToolType.SHAPES:
+            cfg = self.drawing_toolbar.get_current_settings()
+            sub = cfg.get("subshape", "arrow")
+            canvas_tool = sub if sub in ("arrow", "line", "rect", "circle") else "arrow"
+        self.canvas.set_tool(canvas_tool)
+        # Синхронизируем настройки
+        self._on_rec_settings_updated()
+        if canvas_tool != "cursor":
+            self.canvas.raise_()
+            self.canvas.activateWindow()
+
+    def _on_rec_passthrough_toggled(self, is_protected: bool):
+        """Включает/выключает защиту зоны от кликов сквозь неё в рабочий стол."""
+        self.is_protected_zone = bool(is_protected)
+        if hasattr(self, "btn_passthrough") and self.btn_passthrough is not None:
+            if self.btn_passthrough.isChecked() != self.is_protected_zone:
+                self.btn_passthrough.blockSignals(True)
+                self.btn_passthrough.setChecked(self.is_protected_zone)
+                self.btn_passthrough.blockSignals(False)
+            if self.is_protected_zone:
+                self.btn_passthrough.setStyleSheet("background-color: #0284c7; border: 1px solid #38bdf8;")
+            else:
+                self.btn_passthrough.setStyleSheet("")
+        if self.canvas:
+            self.canvas.set_protected_zone(self.is_protected_zone)
+            if self.is_protected_zone:
+                self.canvas.raise_()
+                self.canvas.activateWindow()
+
+    def _on_rec_settings_updated(self):
+        """Применяет текущие настройки RightDrawingToolbar к RecordingDrawingCanvas."""
+        if not self.canvas or not self.drawing_toolbar:
+            return
+        cfg = self.drawing_toolbar.get_current_settings()
+        color = self.drawing_toolbar.current_color
+        if color:
+            self.canvas.set_color(color)
+        if "size" in cfg:
+            self.canvas.set_stroke_width(int(cfg["size"]))
+        if "pixel_size" in cfg:
+            self.canvas.set_grain(int(cfg["pixel_size"]))
+        if "blur_radius" in cfg:
+            self.canvas.set_blur(int(cfg["blur_radius"]))
+        # Эффект цензуры
+        censor_mode = cfg.get("censor_mode", "")
+        if censor_mode:
+            self.canvas.set_effect_mode(censor_mode)
+
+    def _on_rec_layers(self):
+        """Показывает диалог управления слоями рисования холста записи."""
+        if not self.canvas or not self.canvas.layer_manager:
+            return
+        try:
+            from ui.toolbars import LayersDialog
+            dlg = LayersDialog(self.canvas.layer_manager, None)
+            dlg.show()
+        except Exception:
+            pass
+
+    def _sync_rec_toolbar_position(self):
+        """Позиционирует плавающую боковую панель инструментов справа от рамки записи."""
+        win = getattr(self, "_rec_toolbar_win", None)
+        if win is None:
+            return
+        if not getattr(self, "draw_bar_visible", False):
+            win.hide()
+            return
+
+        if self.drawing_toolbar.layout() is not None:
+            self.drawing_toolbar.layout().activate()
+        self.drawing_toolbar.adjustSize()
+        hint = self.drawing_toolbar.sizeHint()
+        tb_w = max(34, hint.width())
+        tb_h = hint.height()
+
+        screen = QApplication.screenAt(QPoint(int(self.inner_x), int(self.inner_y))) or QApplication.primaryScreen()
+        screen_geo = screen.availableGeometry() if screen else QRect(0, 0, 1920, 1080)
+
+        # По умолчанию ставим справа от рамки (как в обычном overlay)
+        toolbar_x = self.inner_x + self.inner_w + BORDER_THICKNESS + 6
+        # Если справа места нет, ставим слева от рамки
+        if toolbar_x + tb_w > screen_geo.right() - 4:
+            toolbar_x = self.inner_x - BORDER_THICKNESS - tb_w - 6
+            # Если и слева места нет, размещаем внутри у правого края
+            if toolbar_x < screen_geo.left() + 4:
+                toolbar_x = self.inner_x + self.inner_w - tb_w - 6
+
+        toolbar_y = self.inner_y + max(0, (self.inner_h - tb_h) // 2)
+        toolbar_y = max(screen_geo.top() + 4, min(toolbar_y, screen_geo.bottom() - tb_h - 4))
+
+        win.resize(int(tb_w), int(tb_h))
+        win.setGeometry(int(toolbar_x), int(toolbar_y), int(tb_w), int(tb_h))
+        win.adjustSize()
+        if not win.isVisible():
+            win.show()
+            win.raise_()
+
+    # Старый обработчик оставлен как заглушка для обратной совместимости
     def _on_tool_selected(self, tool_name: str):
         if self.canvas:
             self.canvas.set_tool(tool_name)
@@ -706,25 +1098,38 @@ class RecordingFrameWindow(QWidget):
         self.draw_bar_visible = not self.draw_bar_visible
         if self.draw_bar_visible:
             self.btn_draw.setStyleSheet("background-color: #0c4a6e; border: 1px solid #0284c7;")
-            # При открытии панели рисования автоматически активируем инструмент карандаша,
-            # чтобы пользователь мог немедленно рисовать и клики не улетали на фоновые окна
+            # При открытии панели рисования автоматически активируем карандаш
             if self.drawing_toolbar:
-                self.drawing_toolbar.select_tool("pen")
+                self.drawing_toolbar.show()
+                self.drawing_toolbar.select_tool(ToolType.PEN, show_options=False)
+            self._sync_rec_toolbar_position()
+            if hasattr(self, "_rec_toolbar_win"):
+                self._rec_toolbar_win.show()
+                self._rec_toolbar_win.raise_()
         else:
             self.btn_draw.setStyleSheet("")
-            # При закрытии панели возвращаем режим курсора со сквозным кликом в фон
+            # При закрытии возвращаем сквозной режим
             if self.drawing_toolbar:
-                self.drawing_toolbar.select_tool("cursor")
-            elif self.canvas:
+                self.drawing_toolbar.hide()
+            if self.canvas:
                 self.canvas.set_tool("cursor")
+            if hasattr(self, "_rec_toolbar_win"):
+                self._rec_toolbar_win.hide()
         self._sync_geometry()
 
     def _sync_position(self):
         """
-        Легковесная синхронизация координат при перетаскивании рамки без перестроения масок.
+        Легковесная синхронизация координат при перетаскивании рамки.
         Обеспечивает плавное перемещение со скоростью 60-144 FPS без лагов DWM.
+
+        Во время драга окно записи перемещается отдельно от overlay. Поэтому
+        после каждого шага нужно обновлять его отверстие в маске overlay:
+        иначе старое отверстие остаётся на прежнем месте и выглядит как
+        замороженный второй контур.
         """
+        previous_header_on_bottom = self.header_on_bottom
         self._update_header_placement()
+        header_side_changed = previous_header_on_bottom != self.header_on_bottom
         head_h = self._header_height()
         if getattr(self, "is_fullscreen", False):
             self.move(self.inner_x, self.inner_y)
@@ -735,14 +1140,57 @@ class RecordingFrameWindow(QWidget):
                 win_y -= head_h
             self.move(win_x, win_y)
 
+        # A side change also changes the native mask. Rebuild it immediately
+        # so the old header area cannot remain as a small frozen trail.
+        if header_side_changed:
+            self._sync_geometry()
+            return
+
+        # Moving only the top-level window can leave child controls and the
+        # independent drawing canvas with stale backing-store pixels on some
+        # Windows/DWM combinations. Re-apply their geometry and repaint them
+        # without rebuilding the expensive window mask.
+        self._sync_chrome_geometry()
+
         if self.canvas:
-            self.canvas.move(self.inner_x, self.inner_y)
-            if getattr(self.canvas, "is_pinned", False):
-                self.canvas.update()
+            self.canvas.setGeometry(self.inner_x, self.inner_y, self.inner_w, self.inner_h)
+            self.canvas.update()
+            if getattr(self.canvas, "current_tool", "cursor") != "cursor" or getattr(self, "is_protected_zone", False):
+                self.canvas.raise_()
+
+        self.lbl_size.setText(f"{self.inner_w}×{self.inner_h}")
+        self.header_frame.update()
+        self.update()
+
+        # HeaderDragFilter вызывает _sync_position на каждом MouseMove.
+        # Сигнал синхронизирует маску overlay до отпускания кнопки мыши.
+        self.geometry_changed.emit()
+
+    def _sync_chrome_geometry(self):
+        """Обновляет положение шапки и панели рисования без перестройки маски."""
+        head_h = self._header_height()
+        header_h = COLLAPSED_HEADER_HEIGHT if self.header_collapsed else HEADER_HEIGHT
+
+        if getattr(self, "is_fullscreen", False):
+            header_w = max(1, min(560, self.inner_w - 40))
+            header_x = max(0, (self.inner_w - header_w) // 2)
+            header_y = max(0, self.inner_h - head_h - 6) if self.header_on_bottom else 6
+            self.header_frame.setGeometry(header_x, header_y, header_w, header_h)
+            self._sync_rec_toolbar_position()
+            return
+
+        win_w = self.inner_w + 2 * BORDER_THICKNESS
+        header_w = win_w
+        header_x = 0
+        header_y = self.inner_h + BORDER_THICKNESS if self.header_on_bottom else 0
+        self.header_frame.setGeometry(header_x, header_y, header_w, header_h)
+        self._sync_rec_toolbar_position()
+
 
     def _sync_geometry(self):
         self._update_header_placement()
         head_h = self._header_height()
+        header_h = COLLAPSED_HEADER_HEIGHT if self.header_collapsed else HEADER_HEIGHT
 
         if getattr(self, "is_fullscreen", False):
             win_x = self.inner_x
@@ -754,19 +1202,11 @@ class RecordingFrameWindow(QWidget):
             header_w = min(560, win_w - 40)
             header_x = (win_w - header_w) // 2
             header_y = max(0, self.inner_h - head_h - 6) if self.header_on_bottom else 6
-            self.header_frame.setGeometry(header_x, header_y, header_w, COLLAPSED_HEADER_HEIGHT if self.header_collapsed else HEADER_HEIGHT)
-
-            if self.drawing_toolbar:
-                if self.draw_bar_visible:
-                    toolbar_y = header_y + HEADER_HEIGHT if not self.header_on_bottom else max(0, header_y - 30)
-                    self.drawing_toolbar.setGeometry(header_x, toolbar_y, header_w, 30)
-                    self.drawing_toolbar.show()
-                else:
-                    self.drawing_toolbar.hide()
+            self.header_frame.setGeometry(header_x, header_y, header_w, header_h)
+            self._sync_rec_toolbar_position()
 
             header_region = QRegion(header_x, header_y, header_w, head_h)
-            indicator_region = self._mask_indicator_region(0, 0, self.inner_w, self.inner_h)
-            self.setMask(header_region.united(indicator_region))
+            self.setMask(header_region)
         else:
             win_x = self.inner_x - BORDER_THICKNESS
             win_y = self.inner_y - BORDER_THICKNESS
@@ -777,47 +1217,58 @@ class RecordingFrameWindow(QWidget):
 
             self.setGeometry(win_x, win_y, win_w, win_h)
             header_y = self.inner_h + BORDER_THICKNESS if self.header_on_bottom else 0
-            self.header_frame.setGeometry(0, header_y, win_w, COLLAPSED_HEADER_HEIGHT if self.header_collapsed else HEADER_HEIGHT)
+            header_w = win_w
+            header_x = 0
+            self.header_frame.setGeometry(header_x, header_y, header_w, header_h)
+            self._sync_rec_toolbar_position()
 
-            if self.drawing_toolbar:
-                if self.draw_bar_visible:
-                    toolbar_y = header_y + HEADER_HEIGHT if not self.header_on_bottom else max(BORDER_THICKNESS, header_y - 30)
-                    self.drawing_toolbar.setGeometry(0, toolbar_y, win_w, 30)
-                    self.drawing_toolbar.show()
-                else:
-                    self.drawing_toolbar.hide()
+            header_y = self.inner_h + BORDER_THICKNESS if self.header_on_bottom else 0
+            header_w = win_w
+            header_x = 0
+            mask_region = QRegion(
+                header_x,
+                header_y,
+                max(1, header_w),
+                max(1, head_h),
+            )
 
-            # Вырезаем внутреннюю область, оставляя только шапку и рамку
-            outer_region = QRegion(0, 0, win_w, win_h)
+            def frame_ring(x: int, y: int, width: int, height: int) -> QRegion:
+                outer = QRegion(
+                    x - BORDER_THICKNESS,
+                    y - BORDER_THICKNESS,
+                    max(1, width + 2 * BORDER_THICKNESS),
+                    max(1, height + 2 * BORDER_THICKNESS),
+                )
+                inner = QRegion(x, y, max(1, width), max(1, height))
+                return outer.subtracted(inner)
+
             if getattr(self, "regions", None) and len(self.regions) > 1:
-                mask_region = outer_region
                 for reg in self.regions:
                     rx = int(reg.x() - self.inner_x + BORDER_THICKNESS)
                     ry = int(reg.y() - self.inner_y + self._capture_origin_y())
-                    rw = int(reg.width())
-                    rh = int(reg.height())
-                    mask_region = mask_region.subtracted(QRegion(rx, ry, rw, rh))
+                    mask_region = mask_region.united(
+                        frame_ring(rx, ry, int(reg.width()), int(reg.height()))
+                    )
             else:
-                inner_region = QRegion(BORDER_THICKNESS, self._capture_origin_y(), self.inner_w, self.inner_h)
-                mask_region = outer_region.subtracted(inner_region)
+                mask_region = mask_region.united(
+                    frame_ring(
+                        BORDER_THICKNESS,
+                        self._capture_origin_y(),
+                        self.inner_w,
+                        self.inner_h,
+                    )
+                )
 
-            # Внутренняя область обычно вырезается из окна записи, чтобы
-            # клики проходили в приложение под ним. Для маски добавляем
-            # обратно только узкий штрих её контура: саму запись это не
-            # перекрывает, но пользователь видит точную область захвата.
-            indicator_region = self._mask_indicator_region(
-                BORDER_THICKNESS, self._capture_origin_y(),
-                self.inner_w, self.inner_h,
-            )
-            if not indicator_region.isEmpty():
-                mask_region = mask_region.united(indicator_region)
+            # Do not add the capture-mask contour to the native window mask:
+            # that contour is inside the captured pixels and would be saved
+            # as a small frame in GIF/MP4.
             self.setMask(mask_region)
 
         if self.canvas:
             self.canvas.sync_to_rec_geometry(self.inner_x, self.inner_y, self.inner_w, self.inner_h)
             if not self.canvas.isVisible():
                 self.canvas.show()
-            if getattr(self.canvas, "current_tool", "cursor") != "cursor":
+            if getattr(self.canvas, "current_tool", "cursor") != "cursor" or getattr(self, "is_protected_zone", False):
                 self.canvas.raise_()
 
         self.lbl_size.setText(f"{self.inner_w}×{self.inner_h}")
@@ -1040,11 +1491,66 @@ class RecordingFrameWindow(QWidget):
             return
         self.is_saving = True
 
-        # 1. Мгновенно скрываем рамку записи и холст рисования с экрана!
+        # Скрываем оставшиеся свободные зоны сразу при остановке. GIF ещё
+        # может кодироваться в фоне, но затемнение, контуры и панели выбора
+        # не должны оставаться на экране до сигнала recording_finished.
+        # Исключение: если нет свободных незадействованных зон — dismiss не нужен.
+        owner = getattr(self, "overlay_owner", None)
+        dismiss = getattr(owner, "dismiss_unused_selection", None)
+        if (
+            callable(dismiss)
+            and getattr(owner, "is_recording", False)
+            and not getattr(owner, "_mass_recording", False)
+            and not getattr(owner, "_recording_overlay_closed", False)
+        ):
+            action_items = (
+                owner.get_action_region_items(all_regions=True)
+                if hasattr(owner, "get_action_region_items")
+                else []
+            )
+            valid_items = (
+                owner.get_valid_region_items()
+                if hasattr(owner, "get_valid_region_items")
+                else []
+            )
+            r_idx = (getattr(self, "region_index", 1) or 1) - 1
+            has_other_free = any(idx != r_idx for idx, _ in valid_items)
+            if not has_other_free:
+                dismiss()
+            else:
+                on_stopped = getattr(owner, "_on_recording_stopped_for_region", None)
+                if callable(on_stopped):
+                    on_stopped(self)
+
+        # 1. Мгновенно скрываем рамку записи, боковую панель инструментов и холст рисования с экрана!
+        if hasattr(self, "_rec_toolbar_win") and self._rec_toolbar_win:
+            try:
+                self._rec_toolbar_win.hide()
+                self._rec_toolbar_win.close()
+            except Exception:
+                pass
+        if hasattr(self, "drawing_toolbar") and self.drawing_toolbar:
+            try:
+                self.drawing_toolbar.hide()
+                if hasattr(self.drawing_toolbar, "properties_flyout"):
+                    self.drawing_toolbar.properties_flyout.hide()
+                if hasattr(self.drawing_toolbar, "shapes_flyout"):
+                    self.drawing_toolbar.shapes_flyout.hide()
+                if hasattr(self.drawing_toolbar, "censor_flyout"):
+                    self.drawing_toolbar.censor_flyout.hide()
+            except Exception:
+                pass
         self.hide()
         if self.canvas:
             self.canvas.hide()
             self.canvas.close()
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.dwmapi.DwmFlush()
+            except Exception:
+                pass
+        QApplication.processEvents()
 
         # 2. Для массовой записи итоговое уведомление будет одно на всю
         # группу. Поэтому не засыпаем пользователя одинаковыми сообщениями
@@ -1070,6 +1576,11 @@ class RecordingFrameWindow(QWidget):
             if self.canvas:
                 self.canvas.clear_countdown()
 
+        if hasattr(self, "_rec_toolbar_win") and self._rec_toolbar_win:
+            try:
+                self._rec_toolbar_win.close()
+            except Exception:
+                pass
         self.hide()
         if self.canvas:
             self.canvas.hide()
@@ -1107,6 +1618,11 @@ class RecordingFrameWindow(QWidget):
 
     def _on_finished(self, out_path: str):
         self.is_finished = True
+        if hasattr(self, "_rec_toolbar_win") and self._rec_toolbar_win:
+            try:
+                self._rec_toolbar_win.close()
+            except Exception:
+                pass
         if self.canvas:
             self.canvas.close()
         if self.cfg.play_sound:
@@ -1116,6 +1632,11 @@ class RecordingFrameWindow(QWidget):
         self.close()
 
     def closeEvent(self, event):
+        if hasattr(self, "_rec_toolbar_win") and self._rec_toolbar_win:
+            try:
+                self._rec_toolbar_win.close()
+            except Exception:
+                pass
         if self.canvas:
             self.canvas.close()
         super().closeEvent(event)
@@ -1142,15 +1663,29 @@ class RecordingFrameWindow(QWidget):
             if getattr(self, "is_counting_down", False):
                 self.cancel_recording()
                 return
+            owner = getattr(self, "overlay_owner", None)
+            if owner is not None and getattr(owner, "is_recording", False):
+                dismiss = getattr(owner, "dismiss_unused_selection", None)
+                if callable(dismiss):
+                    dismiss()
+                else:
+                    owner.stop_recording(close_selection=True)
+                return
             self.stop_and_save()
         else:
             super().keyPressEvent(event)
 
     def paintEvent(self, event):
+        capture_active = (
+            getattr(self, "capture_worker", None) is not None
+            and not getattr(self, "is_saving", False)
+            and not getattr(self, "is_finished", False)
+        )
         if getattr(self, "is_fullscreen", False):
             # У полноэкранной записи видна только шапка. Если задана маска,
-            # оставляем её тонкий контур видимым и в этом режиме.
-            if self.capture_mask is not None:
+            # оставляем её тонкий контур видимым до старта захвата. После
+            # старта полноэкранный кадр не должен содержать элементы Framio.
+            if self.capture_mask is not None and not capture_active:
                 painter = QPainter(self)
                 painter.setRenderHint(QPainter.RenderHint.Antialiasing)
                 mask_path = mask_path_for_frame(
@@ -1185,19 +1720,21 @@ class RecordingFrameWindow(QWidget):
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
 
-        # Красная рамка всегда показывает границы зоны записи.
+        # Красная рамка находится снаружи захватываемых пикселей. Это важно
+        # для Windows: антиалиасинг границы на самой границе зоны иначе мог
+        # попасть в первый/последний ряд GIF или MP4.
         painter.drawRect(
-            bx - BORDER_THICKNESS // 2,
-            by - BORDER_THICKNESS // 2,
-            bw + BORDER_THICKNESS,
-            bh + BORDER_THICKNESS,
+            bx - BORDER_THICKNESS,
+            by - BORDER_THICKNESS,
+            bw + 2 * BORDER_THICKNESS,
+            bh + 2 * BORDER_THICKNESS,
         )
 
         # Отдельный тонкий пунктир показывает фактический контур маски,
         # который попадёт в кадр. Он намеренно отличается от красной рамки,
         # чтобы область захвата была понятна во время записи.
         mask_bounds = None
-        if self.capture_mask is not None:
+        if self.capture_mask is not None and not capture_active:
             base_w, base_h = self.capture_mask_region or (bw, bh)
             mask_path = mask_path_for_frame(
                 self.capture_mask,
@@ -1216,7 +1753,7 @@ class RecordingFrameWindow(QWidget):
                 painter.drawPath(mask_path.translated(float(bx), float(by)))
                 mask_bounds = mask_path.boundingRect().translated(float(bx), float(by))
 
-        if getattr(self, "regions", None) and len(self.regions) > 1:
+        if not capture_active and getattr(self, "regions", None) and len(self.regions) > 1:
             pen_sub = QPen(QColor(self.accent_color.red(), self.accent_color.green(), self.accent_color.blue(), 180), 1.5, Qt.PenStyle.DashLine)
             painter.setPen(pen_sub)
             for reg in self.regions:
@@ -1232,7 +1769,10 @@ class RecordingFrameWindow(QWidget):
             painter.setBrush(QBrush(self.accent_color))
             hs = HANDLE_SIZE
 
-            handle_rect = mask_bounds or QRectF(float(bx), float(by), float(bw), float(bh))
+            # Resize handles belong to the actual recording frame. A capture
+            # mask may be circular/rotated, but it must not move the resize
+            # hit targets away from the red frame perimeter.
+            handle_rect = QRectF(float(bx), float(by), float(bw), float(bh))
 
             points = [
                 QPoint(int(handle_rect.left()), int(handle_rect.top())),
@@ -1272,9 +1812,22 @@ class RecordingFrameWindow(QWidget):
                 self.start_inner_y = self.inner_y
                 self.start_inner_w = self.inner_w
                 self.start_inner_h = self.inner_h
+                try:
+                    self.grabMouse()
+                except Exception:
+                    pass
 
     def mouseMoveEvent(self, event):
         gpos = event.globalPosition().toPoint()
+
+        # Changing the native mask while shrinking can make Windows deliver
+        # the release outside the new mask. Never leave resize latched: the
+        # first hover event after the button is released finalizes the drag.
+        event_buttons = getattr(event, "buttons", None)
+        left_is_down = bool(event_buttons() & Qt.MouseButton.LeftButton) if callable(event_buttons) else True
+        if self.is_resizing and not left_is_down:
+            self._finish_resize()
+            return
 
         if self.is_moving:
             dx = gpos.x() - self.drag_start_pos.x()
@@ -1290,7 +1843,10 @@ class RecordingFrameWindow(QWidget):
             dy = gpos.y() - self.drag_start_pos.y()
             min_top = self._get_min_top()
 
-            if self.active_handle in (1, 6, 7):
+            # Левый боковой маркер — 8; 6 является нижним центральным.
+            # Иначе горизонтальное изменение слева меняло только визуальную
+            # рамку, но не фактическую ширину области записи.
+            if self.active_handle in (1, 7, 8):
                 new_w = max(160, self.start_inner_w - dx)
                 self.inner_x = self.start_inner_x + (self.start_inner_w - new_w)
                 self.inner_w = new_w
@@ -1326,21 +1882,42 @@ class RecordingFrameWindow(QWidget):
             if QApplication.overrideCursor() is not None:
                 QApplication.restoreOverrideCursor()
             self._sync_geometry()
+        if self.is_resizing:
+            self._finish_resize()
+
+    def _finish_resize(self):
+        """Release a resize drag even if the native mask swallowed mouse-up."""
         self.is_resizing = False
         self.active_handle = 0
+        try:
+            self.releaseMouse()
+        except Exception:
+            pass
+        self._sync_geometry()
+        self.geometry_changed.emit()
 
     def _hit_test_handle(self, pt: QPoint):
         bx = BORDER_THICKNESS
         by = self._capture_origin_y()
         bw, bh = self.inner_w, self.inner_h
-        hs = HANDLE_SIZE + 4
+        margin = max(RESIZE_HIT_MARGIN, HANDLE_SIZE // 2 + 2)
+        left, right = bx, bx + bw
+        top, bottom = by, by + bh
+        near_left = abs(pt.x() - left) <= margin
+        near_right = abs(pt.x() - right) <= margin
+        near_top = abs(pt.y() - top) <= margin
+        near_bottom = abs(pt.y() - bottom) <= margin
+        inside_x = left - margin <= pt.x() <= right + margin
+        inside_y = top - margin <= pt.y() <= bottom + margin
 
-        if QRect(bx - hs, by - hs, hs*2, hs*2).contains(pt): return 1
-        if QRect(bx + bw//2 - hs, by - hs, hs*2, hs*2).contains(pt): return 2
-        if QRect(bx + bw - hs, by - hs, hs*2, hs*2).contains(pt): return 3
-        if QRect(bx + bw - hs, by + bh//2 - hs, hs*2, hs*2).contains(pt): return 4
-        if QRect(bx + bw - hs, by + bh - hs, hs*2, hs*2).contains(pt): return 5
-        if QRect(bx + bw//2 - hs, by + bh - hs, hs*2, hs*2).contains(pt): return 6
-        if QRect(bx - hs, by + bh - hs, hs*2, hs*2).contains(pt): return 7
-        if QRect(bx - hs, by + bh//2 - hs, hs*2, hs*2).contains(pt): return 8
+        # The whole perimeter is a resize target. Corners win over sides so
+        # the cursor reports the diagonal direction at the corner bands.
+        if near_left and near_top and inside_x and inside_y: return 1
+        if near_right and near_top and inside_x and inside_y: return 3
+        if near_right and near_bottom and inside_x and inside_y: return 5
+        if near_left and near_bottom and inside_x and inside_y: return 7
+        if near_top and inside_x and inside_y: return 2
+        if near_right and inside_x and inside_y: return 4
+        if near_bottom and inside_x and inside_y: return 6
+        if near_left and inside_x and inside_y: return 8
         return 0

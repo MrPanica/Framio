@@ -23,12 +23,13 @@ a = Analysis(
     datas=[(str(ROOT / "icon.ico"), "."), (str(ROOT / "icon.png"), ".")],
     hiddenimports=[
         "requests", "cv2", "numpy", "PIL", "imageio_ffmpeg",
-        "PyQt6.QtSvg", "pyaudiowpatch", "_portaudiowpatch", "keyboard", "mss"
+        "PyQt6.QtSvg", "pyaudiowpatch", "_portaudiowpatch", "keyboard"
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
+        "pyaudio", "setuptools", "distutils", "unittest", "pydoc", "doctest", "test",
         "tkinter", "_tkinter", "imageio", "cryptography", "bcrypt",
         "PIL._avif", "PyQt6.QtPdf", "PyQt6.QtPdfWidgets",
         "PyQt6.QtWebEngineCore", "PyQt6.QtWebEngineWidgets", "PyQt6.QtWebChannel",
@@ -36,7 +37,7 @@ a = Analysis(
         "PyQt6.Qt3DRender", "PyQt6.Qt3DExtras", "PyQt6.Qt3DAnimation",
     ],
     noarchive=False,
-    optimize=0,
+    optimize=1,
 )
 
 # Не допускаем несовместимые ICU DLL в bundle: из-за них QtCore.pyd
