@@ -103,6 +103,7 @@ class OverlayWindow(QWidget):
 
         # Состояния
         self.background_pixmap = None
+        self.dimmed_background_pixmap = None
         self.regions = []
         # У каждой зоны может быть несколько независимых контуров маски.
         self.capture_masks: dict[int, list[CaptureMaskShape]] = {}
@@ -272,6 +273,7 @@ class OverlayWindow(QWidget):
         self.region_header.record_gif_started.connect(lambda p: self.start_recording("gif", p, all_regions=True))
         self.region_header.mass_filter_selected.connect(self._on_mass_filter_changed)
         self.region_header.mass_filter_parameters_changed.connect(self._on_mass_filter_parameters_changed)
+        self.region_header.ui_snapshot_requested.connect(self.capture_ui_snapshot)
 
         # Бейдж размеров (кнопка разворота на весь экран)
         self.badge.fullscreen_clicked.connect(self.select_entire_screen)
@@ -805,6 +807,10 @@ class OverlayWindow(QWidget):
             self.start_recording("video", all_regions=True)
         elif action == "gif":
             self.start_recording("gif", all_regions=True)
+        elif action == "ui_snapshot_save":
+            self.capture_ui_snapshot("save")
+        elif action == "ui_snapshot_copy":
+            self.capture_ui_snapshot("copy")
 
     def _sync_close_button_tooltip(self):
         """Синхронизирует подсказку кнопки закрытия с количеством активных зон."""
@@ -3531,7 +3537,8 @@ class OverlayWindow(QWidget):
             return
 
         # Режим 2: Режим скриншота и аннотаций
-        if self.dimmed_background_pixmap is None and self.background_pixmap is None and not self.dynamic_bg and not getattr(self, "is_passthrough", False):
+        dimmed_bg = getattr(self, "dimmed_background_pixmap", None)
+        if dimmed_bg is None and self.background_pixmap is None and not self.dynamic_bg and not getattr(self, "is_passthrough", False):
             if valid_regions:
                 dim_brush = QBrush(QColor(0, 0, 0, 120))
                 screen_region = QRegion(0, 0, w, h)
@@ -3563,8 +3570,8 @@ class OverlayWindow(QWidget):
             else:
                 painter.fillRect(self.rect(), QColor(0, 0, 0, 70))
         elif not self.dynamic_bg:
-            if self.dimmed_background_pixmap is not None:
-                painter.drawPixmap(0, 0, self.dimmed_background_pixmap)
+            if dimmed_bg is not None:
+                painter.drawPixmap(0, 0, dimmed_bg)
                 if self.background_pixmap is not None:
                     for reg in valid_regions:
                         rx, ry, rw, rh = int(reg.x()), int(reg.y()), int(reg.width()), int(reg.height())
@@ -4808,6 +4815,174 @@ class OverlayWindow(QWidget):
             self._restore_single_recording_overlay_after_action()
         else:
             self.close_overlay()
+
+    def grab_ui_snapshot_image(self) -> QImage:
+        """
+        Захватывает полный снимок экрана с текущим оверлеем программы.
+        Включает фон, затемнение, границы зон, маркеры трансформации, аннотации и панели инструментов.
+        """
+        # Скрываем временные всплывающие меню перед снимком, чтобы они не попали в кадр
+        if hasattr(self, "region_header") and hasattr(self.region_header, "popup_ui_snapshot"):
+            try:
+                self.region_header.popup_ui_snapshot.hide()
+            except Exception:
+                pass
+        for popup_name in ("popup_formats", "popup_copy", "popup_video", "popup_gif", "popup_filter"):
+            p = getattr(getattr(self, "region_header", None), popup_name, None)
+            if p is not None and hasattr(p, "isVisible") and p.isVisible():
+                try:
+                    p.hide()
+                except Exception:
+                    pass
+        QApplication.processEvents()
+
+        # Базовый захват оверлея со всеми дочерними виджетами (тулбарами, бейджами)
+        overlay_pix = self.grab()
+        if overlay_pix.isNull() or overlay_pix.width() <= 0 or overlay_pix.height() <= 0:
+            return QImage()
+
+        # Если включён динамический режим или фоновый кадр отсутствует,
+        # под прозрачный оверлей нужно подложить свежий кадр рабочего стола.
+        if getattr(self, "dynamic_bg", False) or self.background_pixmap is None or self.background_pixmap.isNull():
+            geo = self.geometry()
+            desktop_pix = safe_grab_screen_pixmap(geo.x(), geo.y(), geo.width(), geo.height())
+            if desktop_pix is not None and not desktop_pix.isNull():
+                composed = QPixmap(desktop_pix.size())
+                p = QPainter(composed)
+                p.drawPixmap(0, 0, desktop_pix)
+                if overlay_pix.size() != desktop_pix.size():
+                    p.drawPixmap(0, 0, overlay_pix.scaled(
+                        desktop_pix.size(),
+                        Qt.AspectRatioMode.IgnoreAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    ))
+                else:
+                    p.drawPixmap(0, 0, overlay_pix)
+                p.end()
+                return composed.toImage()
+
+        return overlay_pix.toImage()
+
+    def capture_ui_snapshot(self, action: str = "copy"):
+        """
+        Делает снимок обычного экрана с видимым текущим оверлеем программы.
+        Поддерживает выбор: сохранить в файл ('save') или скопировать в буфер обмена ('copy').
+        После сохранения или копирования интерфейс и зоны НЕ закрываются.
+        """
+        snapshot_image = self.grab_ui_snapshot_image()
+        if snapshot_image.isNull() or snapshot_image.width() <= 0 or snapshot_image.height() <= 0:
+            return
+
+        if action == "copy":
+            from PyQt6.QtCore import QMimeData, QBuffer, QIODevice
+
+            mime = QMimeData()
+            buf = QBuffer()
+            buf.open(QIODevice.OpenModeFlag.WriteOnly)
+            snapshot_image.save(buf, "PNG")
+            mime.setData("image/png", buf.data())
+            mime.setImageData(snapshot_image)
+            buf.close()
+            QApplication.clipboard().setMimeData(mime)
+
+            if getattr(self.cfg, "auto_save_on_copy", False):
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                save_dir = Path(getattr(self.cfg, "save_dir_screenshots", Path.cwd() / "Captures" / "Screenshots"))
+                save_dir.mkdir(parents=True, exist_ok=True)
+                snapshot_image.save(str(save_dir / f"UI_Snapshot_{timestamp}.png"), "PNG")
+
+            if getattr(self.cfg, "play_sound", True):
+                play_capture_sound()
+
+            app_inst = getattr(QApplication.instance(), "app_instance", None)
+            if app_inst and hasattr(app_inst, "add_recent_media"):
+                app_inst.add_recent_media(
+                    image=snapshot_image,
+                    label=tr("region_ui_snapshot_title", "Снимок интерфейса"),
+                    refresh=False,
+                )
+                if hasattr(app_inst, "_setup_tray_menu"):
+                    app_inst._setup_tray_menu()
+
+            self._notify(
+                tr("notif_ui_snapshot_copied_title", "Снимок интерфейса скопирован"),
+                tr("notif_ui_snapshot_copied_body", "Снимок экрана с текущим оверлеем программы помещён в буфер обмена."),
+                QSystemTrayIcon.MessageIcon.Information,
+                3000,
+            )
+
+            # После копирования интерфейс и зоны гарантированно НЕ закрываются
+            self.show()
+            self.raise_()
+            self.activateWindow()
+
+        elif action == "save":
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            ext = getattr(self.cfg, "last_save_format", "png").lower()
+            if ext not in ("png", "jpg", "webp"):
+                ext = "png"
+            filename = f"UI_Snapshot_{timestamp}.{ext}"
+            default_path = str(Path(self.cfg.save_dir_screenshots) / filename)
+            filter_str = f"{ext.upper()} Image (*.{ext})"
+
+            # Скрываем оверлей на время показа диалога выбора файла
+            self.hide()
+            QApplication.processEvents()
+            try:
+                path, _ = QFileDialog.getSaveFileName(
+                    None,
+                    tr("dialog_save_ui_snapshot", "Сохранить снимок интерфейса"),
+                    default_path,
+                    f"{filter_str};;Все файлы (*.*)",
+                    options=QFileDialog.Option.DontUseNativeDialog,
+                )
+            finally:
+                # После диалога интерфейс и зоны гарантированно восстанавливаются и НЕ закрываются
+                self.show()
+                self.raise_()
+                self.activateWindow()
+
+            if path:
+                out_path = Path(path)
+                out_ext = out_path.suffix.lstrip(".").lower() or ext
+                fmt_tag = "JPEG" if out_ext in ("jpg", "jpeg") else ("WEBP" if out_ext == "webp" else "PNG")
+                saved_ok = snapshot_image.save(str(out_path), fmt_tag)
+                if not saved_ok:
+                    self._notify(
+                        tr("notif_screen_save_failed_title", "Не удалось сохранить скриншот"),
+                        tr("notif_screen_save_failed_body", "Не удалось записать снимок интерфейса на диск."),
+                        QSystemTrayIcon.MessageIcon.Warning,
+                        4000,
+                    )
+                    return
+
+                if getattr(self.cfg, "auto_copy_to_clipboard", False):
+                    from PyQt6.QtCore import QMimeData, QBuffer, QIODevice
+                    mime = QMimeData()
+                    buf = QBuffer()
+                    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+                    snapshot_image.save(buf, "PNG")
+                    mime.setData("image/png", buf.data())
+                    mime.setImageData(snapshot_image)
+                    buf.close()
+                    QApplication.clipboard().setMimeData(mime)
+
+                if getattr(self.cfg, "play_sound", True):
+                    play_capture_sound()
+
+                app_inst = getattr(QApplication.instance(), "app_instance", None)
+                if app_inst and hasattr(app_inst, "add_recent_media"):
+                    app_inst.add_recent_media(path=str(out_path), label=out_path.name, refresh=False)
+                    if hasattr(app_inst, "_setup_tray_menu"):
+                        app_inst._setup_tray_menu()
+
+                self._notify(
+                    tr("notif_ui_snapshot_saved_title", "Снимок интерфейса сохранён"),
+                    tr("notif_screen_saved_body", filename=out_path.name, folder=str(out_path.parent)),
+                    QSystemTrayIcon.MessageIcon.Information,
+                    4000,
+                    target_path=str(out_path),
+                )
 
     def search_image(self, engine="google"):
         self.hide()

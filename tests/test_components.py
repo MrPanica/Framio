@@ -4258,6 +4258,65 @@ def test_multi_region_drag_shapes_badge_and_static_background():
     print("  -> Перемещение фигур вместе с зоной, drag за бейдж, ПКМ-drag и статический фон подтверждены.")
 
 
+def test_ui_snapshot_in_mass_actions():
+    """Проверка инструмента «Снимок интерфейса» в панели массовых действий и оверлее."""
+    print("[TEST] Проверка инструмента «Снимок интерфейса» в массовых действиях...")
+    from unittest.mock import patch
+    from ui.overlay import OverlayWindow
+    from ui.toolbars import RegionActionHeader, UiSnapshotPopup, BottomActionToolbar
+
+    header = RegionActionHeader()
+    header.set_region_state(False, total_count=2, available_count=2)
+    assert hasattr(header, "btn_ui_snapshot")
+    assert header.btn_ui_snapshot.isEnabled()
+    assert hasattr(header, "popup_ui_snapshot")
+    assert isinstance(header.popup_ui_snapshot, UiSnapshotPopup)
+
+    actions = []
+    header.ui_snapshot_requested.connect(lambda act: actions.append(act))
+    header.popup_ui_snapshot._on_action("copy")
+    header.popup_ui_snapshot._on_action("save")
+    assert actions == ["copy", "save"]
+
+    bottom = BottomActionToolbar()
+    bottom_actions = []
+    bottom.all_regions_action.connect(lambda act: bottom_actions.append(act))
+    bottom.all_regions_action.emit("ui_snapshot_copy")
+    assert bottom_actions == ["ui_snapshot_copy"]
+
+    ov = OverlayWindow()
+    ov.resize(800, 600)
+    bg = QPixmap(800, 600)
+    bg.fill(QColor(30, 60, 120))
+    ov.background_pixmap = bg
+    ov.regions = [QRectF(30, 30, 150, 100), QRectF(250, 30, 150, 100)]
+    ov.active_region_idx = 0
+    ov.show()
+
+    # Проверка копирования
+    ov.capture_ui_snapshot("copy")
+    clipboard = QApplication.clipboard()
+    copied = clipboard.image()
+    assert not copied.isNull()
+    assert len(ov.regions) == 2
+    assert ov.isVisible()
+
+    # Проверка сохранения
+    temp_path = Path("test_ui_snap_output.png").resolve()
+    if temp_path.exists():
+        temp_path.unlink()
+    with patch("PyQt6.QtWidgets.QFileDialog.getSaveFileName", return_value=(str(temp_path), "PNG Image (*.png)")):
+        ov.capture_ui_snapshot("save")
+
+    assert temp_path.exists()
+    assert temp_path.stat().st_size > 0
+    temp_path.unlink()
+    assert len(ov.regions) == 2
+    assert ov.isVisible()
+    ov.close()
+    print("  -> Снимок интерфейса копирует и сохраняет экран с оверлеем, зоны и интерфейс не закрываются.")
+
+
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
@@ -4354,6 +4413,7 @@ if __name__ == "__main__":
         test_double_click_selects_window_below_topmost_overlay()
         test_image_search_uses_direct_google_upload_and_direct_yandex_upload()
         test_multi_region_drag_shapes_badge_and_static_background()
+        test_ui_snapshot_in_mass_actions()
         import time
         time.sleep(0.5)
         QApplication.processEvents()

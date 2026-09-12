@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.12] - 2026-09-12
+
+### English
+
+UI snapshot in mass actions with file save and clipboard copy, keeping overlay and selected zones active.
+
+- Added "UI Snapshot" tool to the mass actions header and multi-region menu to capture the full screen with the current program overlay (dimming mask, cutout zones, dashed borders, badges, shapes, and toolbars).
+- Integrated dropdown menu with two options: "Save to file..." and "Copy to clipboard".
+- Guaranteed that saving or copying a UI snapshot keeps the interface and all active zones open and functional.
+
+### Русский
+
+Снимок интерфейса в панели массовых действий с сохранением в файл и копированием в буфер без закрытия оверлея и зон.
+
+- В панель массовых действий и меню мульти-выделения добавлен инструмент «Снимок интерфейса», позволяющий захватить экран вместе с текущим оверлеем программы (затемнением, вырезанными зонами, рамками, бейджами, аннотациями и тулбарами).
+- Добавлено выпадающее меню с опциями «Сохранить в файл...» и «Копировать в буфер обмена».
+- Обеспечено сохранение активности оверлея и всех выделенных зон после сохранения снимка или копирования его в буфер.
+
 ## [1.0.11] - 2026-09-12
 
 ### English

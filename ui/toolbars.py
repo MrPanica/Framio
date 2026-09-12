@@ -828,6 +828,51 @@ class CopyFormatPopup(QFrame):
         self.format_selected.emit(fmt)
 
 
+class UiSnapshotPopup(QFrame):
+    """Всплывающее меню выбора действия для снимка интерфейса (сохранить в файл или скопировать в буфер)."""
+
+    action_selected = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        theme = get_theme_styles()
+        self.is_dark = theme["is_dark"]
+        self.setStyleSheet(theme["popup_frame"] + f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {theme['text_color']};
+                border: none;
+                border-radius: 4px;
+                padding: 6px 14px;
+                text-align: left;
+                font-size: 12px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                background-color: {theme['popup_item_hover']};
+                color: #3b82f6;
+            }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+
+        self.btn_save = QPushButton(tr("ui_snapshot_action_save", "Сохранить в файл..."))
+        self.btn_save.setIcon(create_themed_icon("save", self.is_dark, size=14))
+        self.btn_save.clicked.connect(lambda: self._on_action("save"))
+        layout.addWidget(self.btn_save)
+
+        self.btn_copy = QPushButton(tr("ui_snapshot_action_copy", "Копировать в буфер обмена"))
+        self.btn_copy.setIcon(create_themed_icon("copy", self.is_dark, size=14))
+        self.btn_copy.clicked.connect(lambda: self._on_action("copy"))
+        layout.addWidget(self.btn_copy)
+
+    def _on_action(self, action: str):
+        self.close()
+        self.action_selected.emit(action)
+
+
 class SearchEnginePopup(QFrame):
     engine_selected = pyqtSignal(str)
 
@@ -2383,6 +2428,7 @@ class RegionActionHeader(QFrame):
     record_gif_started = pyqtSignal(dict)
     mass_filter_selected = pyqtSignal(str)
     mass_filter_parameters_changed = pyqtSignal(dict)
+    ui_snapshot_requested = pyqtSignal(str)
     close_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -2459,6 +2505,11 @@ class RegionActionHeader(QFrame):
         self.btn_mass_filter.clicked.connect(self._show_filter_popup)
         layout.addWidget(self.btn_mass_filter)
 
+        self.btn_ui_snapshot = ModernButton(tr("region_ui_snapshot_short", "Интерфейс"), tr("action_ui_snapshot", "Сделать снимок экрана с текущим оверлеем программы"))
+        self.btn_ui_snapshot.setIcon(create_themed_icon("camera", self.is_dark, size=14))
+        self.btn_ui_snapshot.clicked.connect(self._show_ui_snapshot_popup)
+        layout.addWidget(self.btn_ui_snapshot)
+
         self.popup_formats = ScreenshotFormatPopup(self)
         self.popup_formats.format_selected.connect(self.save_clicked.emit)
         self.popup_copy = CopyFormatPopup(self)
@@ -2467,6 +2518,8 @@ class RegionActionHeader(QFrame):
         self.popup_video.start_video.connect(self.record_video_started.emit)
         self.popup_gif = GifOptionsPopup(self)
         self.popup_gif.start_gif.connect(self.record_gif_started.emit)
+        self.popup_ui_snapshot = UiSnapshotPopup(self)
+        self.popup_ui_snapshot.action_selected.connect(self.ui_snapshot_requested.emit)
         self.popup_filter = None
         self.mass_filter = FilterType.NONE
         self.mass_filter_selection = FilterType.NONE
@@ -2483,7 +2536,7 @@ class RegionActionHeader(QFrame):
                 tr("region_header_title_count", "Зоны · массовые действия ({available}/{total})", available=available_count, total=total_count)
             )
         enabled = available_count > 0
-        for button in (self.btn_mass_save, self.btn_mass_copy, self.btn_mass_video, self.btn_mass_gif, self.btn_mass_filter):
+        for button in (self.btn_mass_save, self.btn_mass_copy, self.btn_mass_video, self.btn_mass_gif, self.btn_mass_filter, self.btn_ui_snapshot):
             button.setEnabled(enabled)
         self.setVisible(bool(add_mode or total_count > 1))
 
@@ -2498,6 +2551,9 @@ class RegionActionHeader(QFrame):
 
     def _show_gif_popup(self):
         show_smart_popup(self.btn_mass_gif, self.popup_gif)
+
+    def _show_ui_snapshot_popup(self):
+        show_smart_popup(self.btn_ui_snapshot, self.popup_ui_snapshot)
 
     def _show_filter_popup(self):
         if self.popup_filter is None:
@@ -2970,6 +3026,13 @@ class BottomActionToolbar(QFrame):
         )
         menu.addAction(tr("action_all_gif", "Записывать GIF всех зон")).triggered.connect(
             lambda: self.all_regions_action.emit("gif")
+        )
+        menu.addSeparator()
+        menu.addAction(create_themed_icon("camera", self.is_dark, size=14), tr("ui_snapshot_action_save", "Сохранить снимок интерфейса...")).triggered.connect(
+            lambda: self.all_regions_action.emit("ui_snapshot_save")
+        )
+        menu.addAction(create_themed_icon("copy", self.is_dark, size=14), tr("ui_snapshot_action_copy", "Копировать снимок интерфейса")).triggered.connect(
+            lambda: self.all_regions_action.emit("ui_snapshot_copy")
         )
         show_smart_popup(self.btn_all_regions, menu)
 
