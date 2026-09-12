@@ -13,6 +13,7 @@ import threading
 import ctypes
 from ctypes import wintypes
 import numpy as np
+from PyQt6.QtCore import QPoint
 from PyQt6.QtGui import QPixmap, QImage
 from PyQt6.QtWidgets import QApplication
 
@@ -92,9 +93,14 @@ class BITMAPINFO(ctypes.Structure):
     ]
 
 
-def get_screen_dpr() -> float:
-    """Возвращает текущий коэффициент масштабирования Windows (DPI Ratio)."""
+def get_screen_dpr(rx: int | None = None, ry: int | None = None) -> float:
+    """Возвращает текущий коэффициент масштабирования Windows (DPI Ratio) для экрана в точке (rx, ry)."""
     try:
+        if rx is not None and ry is not None:
+            pt = QPoint(int(rx), int(ry))
+            screen = QApplication.screenAt(pt)
+            if screen is not None:
+                return float(screen.devicePixelRatio())
         screen = QApplication.primaryScreen()
         if screen is not None:
             return float(screen.devicePixelRatio())
@@ -119,7 +125,7 @@ def win32_captureblt_pixmap(rx: int, ry: int, rw: int, rh: int) -> QPixmap | Non
             dwmapi.DwmFlush()
         except Exception:
             pass
-        dpr = get_screen_dpr()
+        dpr = get_screen_dpr(rx, ry)
         px = int(round(rx * dpr))
         py = int(round(ry * dpr))
         pw = max(1, int(round(rw * dpr)))
@@ -199,7 +205,7 @@ def win32_captureblt_bgr(rx: int, ry: int, rw: int, rh: int, flush: bool = False
                 dwmapi.DwmFlush()
             except Exception:
                 pass
-        dpr = get_screen_dpr()
+        dpr = get_screen_dpr(rx, ry)
         px = int(round(rx * dpr))
         py = int(round(ry * dpr))
         pw = max(16, int(round(rw * dpr)))
@@ -285,7 +291,7 @@ def safe_grab_screen_bgr(rx: int, ry: int, rw: int, rh: int, target_hwnd: int | 
         except Exception as e:
             print(f"[ScreenLock] Резервный захват экрана не удался: {e}")
 
-        dpr = get_screen_dpr()
+        dpr = get_screen_dpr(rx, ry)
         pw = max(16, int(round(rw * dpr)))
         ph = max(16, int(round(rh * dpr)))
         return np.zeros((ph, pw, 3), dtype=np.uint8)

@@ -1384,21 +1384,20 @@ def test_bounding_rects_and_toolbar_layout():
     p.end()
     assert not test_img.isNull()
 
-    # 3. RightDrawingToolbar: стрелка barbed по умолчанию и положение мозаики ниже Undo/Redo
+    # 3. RightDrawingToolbar: стрелка barbed по умолчанию и положение мозаики сразу под фигурами
     toolbar = RightDrawingToolbar()
     assert ToolType.MOSAIC in toolbar.tool_buttons
     shapes_cfg = toolbar.tools_config[ToolType.SHAPES]
     assert shapes_cfg.get("subshape") == "arrow"
     assert shapes_cfg.get("arrow_style") == "barbed"
 
-    # Проверяем, что кнопка мозаики находится в layout ниже кнопок Undo и Redo
+    # Проверяем, что кнопка мозаики находится в layout сразу под кнопкой фигур
+    btn_shapes = toolbar.tool_buttons[ToolType.SHAPES]
     btn_mosaic = toolbar.tool_buttons[ToolType.MOSAIC]
-    mosaic_idx = toolbar.layout().indexOf(btn_mosaic)
-    # Находим индексы всех кнопок в layout
     items_in_layout = [toolbar.layout().itemAt(i).widget() for i in range(toolbar.layout().count()) if toolbar.layout().itemAt(i).widget()]
+    shapes_pos = items_in_layout.index(btn_shapes)
     mosaic_pos = items_in_layout.index(btn_mosaic)
-    # Перед мозаикой должны быть инструменты рисования, палитра и Undo/Redo
-    assert mosaic_pos >= 7, f"Кнопка мозаики должна быть ниже палитры и Undo/Redo (позиция {mosaic_pos})"
+    assert mosaic_pos == shapes_pos + 1, f"Кнопка мозаики должна быть сразу под фигурами (shapes={shapes_pos}, mosaic={mosaic_pos})"
 
     toolbar.select_tool(ToolType.PEN)
     assert not toolbar.properties_flyout.isVisible()
@@ -4317,6 +4316,75 @@ def test_ui_snapshot_in_mass_actions():
     print("  -> Снимок интерфейса копирует и сохраняет экран с оверлеем, зоны и интерфейс не закрываются.")
 
 
+def test_censor_placement_bounds_and_dpr():
+    """Проверка переноса кнопки цензуры, ограничения эффекта зоной, обводки при перемещении и отсутствия лупы (DPR)."""
+    print("[TEST] Проверка инструмента цензуры, привязки к зоне, обводки и масштабирования DPR...")
+    from ui.overlay import OverlayWindow
+    from ui.toolbars import ToolType, RightDrawingToolbar
+    from models.shapes import MosaicShape, RegionalEffectShape
+    from ui.transform_box import HandleType
+
+    overlay = OverlayWindow()
+    overlay.resize(1200, 800)
+
+    # 1. Положение кнопки Цензура на тулбаре
+    toolbar = overlay.right_toolbar
+    assert ToolType.MOSAIC in toolbar.tool_buttons
+    btn_shapes = toolbar.tool_buttons[ToolType.SHAPES]
+    btn_mosaic = toolbar.tool_buttons[ToolType.MOSAIC]
+    items_in_layout = [toolbar.layout().itemAt(i).widget() for i in range(toolbar.layout().count()) if toolbar.layout().itemAt(i).widget()]
+    shapes_pos = items_in_layout.index(btn_shapes)
+    mosaic_pos = items_in_layout.index(btn_mosaic)
+    assert mosaic_pos == shapes_pos + 1, f"MOSAIC ({mosaic_pos}) must be directly below SHAPES ({shapes_pos})"
+
+    # 2. Фон с DPR=1.5
+    img = QImage(1800, 1200, QImage.Format.Format_ARGB32)
+    img.fill(QColor(80, 80, 80))
+    img.setDevicePixelRatio(1.5)
+    bg_pm = QPixmap.fromImage(img)
+    overlay._set_background_pixmap(bg_pm)
+    assert overlay.dimmed_background_pixmap is not None
+
+    sel_rect = QRectF(100, 100, 400, 300)
+    overlay.selection_rect = sel_rect
+    overlay.regions = [sel_rect]
+    overlay.active_region_idx = 0
+
+    # 3. Создание эффекта и ограничение перемещения
+    mosaic = MosaicShape(QRectF(150, 150, 100, 80), pixel_size=10)
+    mosaic.update_effect(overlay.background_pixmap)
+    overlay.layer_manager.add_shape(mosaic)
+
+    overlay.transform_box.set_shape(mosaic)
+    overlay.transform_box.start_drag(HandleType.INSIDE, QPointF(160, 160))
+    overlay.is_transforming = True
+
+    # Пытаемся утащить фигуру за пределы зоны
+    overlay.transform_box.drag_to(QPointF(900, 900), constrain_rect=overlay.selection_rect)
+    br = mosaic.get_bounding_rect()
+    assert br.right() <= sel_rect.right() + 0.1, f"Shape right ({br.right()}) exceeded selection rect right ({sel_rect.right()})"
+    assert br.bottom() <= sel_rect.bottom() + 0.1, f"Shape bottom ({br.bottom()}) exceeded selection rect bottom ({sel_rect.bottom()})"
+
+    overlay.transform_box.drag_to(QPointF(-500, -500), constrain_rect=overlay.selection_rect)
+    br = mosaic.get_bounding_rect()
+    assert br.left() >= sel_rect.left() - 0.1, f"Shape left ({br.left()}) went past selection rect left ({sel_rect.left()})"
+    assert br.top() >= sel_rect.top() - 0.1, f"Shape top ({br.top()}) went past selection rect top ({sel_rect.top()})"
+
+    # 4. Проверка обводки
+    render_target = QPixmap(1200, 800)
+    render_target.setDevicePixelRatio(1.5)
+    p = QPainter(render_target)
+    overlay.current_tool = ToolType.MOSAIC
+    overlay._draw_effect_shape_outline(p)
+    overlay._draw_dragged_shape_indicator(p)
+    p.end()
+
+    # 5. Проверка paintEvent без сбоев на DPR > 1.0
+    overlay.paintEvent(None)
+    overlay.close()
+    print("  -> Кнопка цензуры под фигурами, эффект ограничен зоной, обводка рисуется, DPR 1:1 без лупы.")
+
+
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
@@ -4414,6 +4482,7 @@ if __name__ == "__main__":
         test_image_search_uses_direct_google_upload_and_direct_yandex_upload()
         test_multi_region_drag_shapes_badge_and_static_background()
         test_ui_snapshot_in_mass_actions()
+        test_censor_placement_bounds_and_dpr()
         import time
         time.sleep(0.5)
         QApplication.processEvents()

@@ -10,7 +10,7 @@ import math
 import uuid
 import copy
 import threading
-from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtCore import QPointF, QRectF, QRect, Qt
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QBrush, QFont, QFontMetrics, QPolygonF,
     QPainterPath, QPixmap, QImage, QPainterPathStroker, QLinearGradient,
@@ -1141,10 +1141,17 @@ class RegionalEffectShape(BaseShape):
             self._cache_key = None
             return
 
+        dpr = float(background_pixmap.devicePixelRatio() or 1.0)
         rot = getattr(self, "rotation", 0.0)
         global_poly = self.get_rotated_polygon(QPointF(0, 0))
         poly_br = global_poly.boundingRect().toRect()
-        needed_rect = poly_br.intersected(background_pixmap.rect())
+        phys_rect = QRect(
+            int(round(poly_br.x() * dpr)),
+            int(round(poly_br.y() * dpr)),
+            int(round(poly_br.width() * dpr)),
+            int(round(poly_br.height() * dpr)),
+        )
+        needed_rect = phys_rect.intersected(background_pixmap.rect())
 
         if needed_rect.width() < 2 or needed_rect.height() < 2:
             self.cached_pixmap = None
@@ -1154,12 +1161,18 @@ class RegionalEffectShape(BaseShape):
             return
 
         cropped = background_pixmap.copy(needed_rect)
-        self.cached_pixmap = get_filtered_pixmap(cropped, self.effect_type, self.intensity)
+        filtered = get_filtered_pixmap(cropped, self.effect_type, self.intensity)
+        if filtered is not None and not filtered.isNull():
+            filtered.setDevicePixelRatio(dpr)
+        self.cached_pixmap = filtered
         self._cached_needed_rect = needed_rect
         self._cached_rect = QRectF(r)
+        self._cached_draw_x = needed_rect.x() / dpr
+        self._cached_draw_y = needed_rect.y() / dpr
         self._cache_key = (
             needed_rect.x(), needed_rect.y(), needed_rect.width(), needed_rect.height(),
-            round(rot, 2), self.intensity, self.effect_type, id(background_pixmap)
+            round(rot, 2), self.intensity, self.effect_type, id(background_pixmap),
+            round(dpr, 2)
         )
 
     def draw(self, painter: QPainter, offset: QPointF = QPointF(0, 0), source_pixmap: QPixmap = None):
@@ -1172,30 +1185,47 @@ class RegionalEffectShape(BaseShape):
             rot = getattr(self, "rotation", 0.0)
             global_poly = self.get_rotated_polygon(QPointF(0, 0))
             poly_br = global_poly.boundingRect().toRect()
+            dpr = float(source_pixmap.devicePixelRatio() or 1.0)
+
+            phys_poly = QRect(
+                int(round(poly_br.x() * dpr)),
+                int(round(poly_br.y() * dpr)),
+                int(round(poly_br.width() * dpr)),
+                int(round(poly_br.height() * dpr)),
+            )
 
             # Определяем систему координат source_pixmap:
             # 1) Если source_pixmap полноэкранный (overlay):
-            if poly_br.intersects(source_pixmap.rect()):
-                needed_rect = poly_br.intersected(source_pixmap.rect())
-                draw_x = needed_rect.x() - int(offset.x())
-                draw_y = needed_rect.y() - int(offset.y())
+            if phys_poly.intersects(source_pixmap.rect()):
+                needed_rect = phys_poly.intersected(source_pixmap.rect())
+                draw_x = (needed_rect.x() / dpr) - offset.x()
+                draw_y = (needed_rect.y() / dpr) - offset.y()
             else:
                 # 2) Если source_pixmap уже обрезан со смещением offset (локальный crop_pix):
                 local_br = canvas_poly.boundingRect().toRect()
-                needed_rect = local_br.intersected(source_pixmap.rect())
-                draw_x = needed_rect.x()
-                draw_y = needed_rect.y()
+                phys_local = QRect(
+                    int(round(local_br.x() * dpr)),
+                    int(round(local_br.y() * dpr)),
+                    int(round(local_br.width() * dpr)),
+                    int(round(local_br.height() * dpr)),
+                )
+                needed_rect = phys_local.intersected(source_pixmap.rect())
+                draw_x = needed_rect.x() / dpr
+                draw_y = needed_rect.y() / dpr
 
             cur_key = (
                 needed_rect.x(), needed_rect.y(), needed_rect.width(), needed_rect.height(),
                 round(rot, 2), self.intensity, self.effect_type, id(source_pixmap),
-                int(offset.x()), int(offset.y())
+                int(offset.x()), int(offset.y()), round(dpr, 2)
             )
 
             if cur_key != getattr(self, "_cache_key", None) or self.cached_pixmap is None:
                 if needed_rect.width() >= 2 and needed_rect.height() >= 2:
                     cropped = source_pixmap.copy(needed_rect)
-                    self.cached_pixmap = get_filtered_pixmap(cropped, self.effect_type, self.intensity)
+                    filtered = get_filtered_pixmap(cropped, self.effect_type, self.intensity)
+                    if filtered is not None and not filtered.isNull():
+                        filtered.setDevicePixelRatio(dpr)
+                    self.cached_pixmap = filtered
                     self._cached_draw_x = draw_x
                     self._cached_draw_y = draw_y
                     self._cache_key = cur_key
@@ -1210,7 +1240,7 @@ class RegionalEffectShape(BaseShape):
             clip_path = QPainterPath()
             clip_path.addPolygon(canvas_poly)
             painter.setClipPath(clip_path)
-            painter.drawPixmap(self._cached_draw_x, self._cached_draw_y, self.cached_pixmap)
+            painter.drawPixmap(QPointF(self._cached_draw_x, self._cached_draw_y), self.cached_pixmap)
             painter.restore()
         elif source_pixmap is None:
             painter.save()

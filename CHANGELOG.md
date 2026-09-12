@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.0.13] - 2026-09-12
+
+### English
+
+Censorship toolbar placement, shape bounds clamping, dual-contrast outline, and High-DPI display scaling (magnifier bug) fix.
+
+- Moved the "Censorship & Filters" (Mosaic / Blur / Effects) tool out of the hidden collapsible menu directly onto the main drawing toolbar, positioned right below "Shapes".
+- Clicking the Censorship tool now toggles its dedicated flyout settings panel.
+- Fixed an issue where censorship and effect shapes could be dragged, scaled, or drawn outside the selected screenshot boundary (`selection_rect`).
+- Added a high-contrast dual-tone outline (dark shadow + bright sky-blue dashed stroke) when moving or transforming effect shapes, making them clearly visible across both light and dark backgrounds.
+- Fixed the magnifier ("zoom-in / лупа") bug on Windows displays with high-DPI scaling (125%, 150%, 175%, 200%): physical device coordinates are now correctly matched with devicePixelRatio during screen capture cutout and un-dimming, rendering regions with 100% pixel-perfect (1:1) clarity.
+
+### Русский
+
+Перенос инструмента «Цензура», привязка эффектов к границам зоны, контрастная обводка и исправление бага масштабирования экрана («эффекта лупы» на High-DPI).
+
+- Инструмент «Цензура и фильтры» перенесён из скрытой секции на основной боковой тулбар рисования и размещён непосредственно под кнопкой «Фигуры».
+- Клик по кнопке цензуры теперь открывает выпадающую панель параметров (выбор режима мозаики/размытия/эффекта и ползунок интенсивности).
+- Исправлена проблема выхода эффектов за пределы зоны: перемещение, масштабирование и создание эффектов мозаики и фильтров теперь строго ограничены рамкой выделения (`selection_rect`).
+- Добавлена контрастная двухслойная обводка (тёмная тень + яркий голубой пунктир) при перемещении и трансформации эффектов цензуры для отличной видимости на любом фоне.
+- Полностью устранён «эффект лупы» на экранах с масштабированием Windows (125%, 150%, 175%, 200%): подложка оверлея теперь вырезается с точным пересчётом физических пикселей экрана через devicePixelRatio, гарантируя кристальную чёткость и 100% соответствие 1:1.
+
 ## [1.0.12] - 2026-09-12
 
 ### English

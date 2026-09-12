@@ -1872,7 +1872,7 @@ class OverlayWindow(QWidget):
         # 1. Трансформация фигуры (масштабирование, вращение, перемещение)
         if getattr(self, "is_transforming", False) and self.transform_box.is_active():
             shift_pressed = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-            self.transform_box.drag_to(pos, shift_pressed=shift_pressed)
+            self.transform_box.drag_to(pos, shift_pressed=shift_pressed, constrain_rect=self.selection_rect)
             total_dx = pos.x() - getattr(self, "shape_drag_initial_pos", pos).x()
             total_dy = pos.y() - getattr(self, "shape_drag_initial_pos", pos).y()
             if abs(total_dx) > 3 or abs(total_dy) > 3:
@@ -2070,6 +2070,11 @@ class OverlayWindow(QWidget):
             is_click_only = (abs(total_dx) <= 3 and abs(total_dy) <= 3)
 
             if old_state and new_state and not is_click_only and target_shape:
+                if isinstance(target_shape, (RegionalEffectShape, MosaicShape, BlurShape)):
+                    if self.selection_rect.isValid() and not self.selection_rect.isEmpty():
+                        target_shape.rect = target_shape.rect.intersected(self.selection_rect)
+                        if self.background_pixmap is not None:
+                            target_shape.update_effect(self.background_pixmap)
                 cmd = HistoryCommand(
                     tr("hist_cmd_transform", "Трансформация {name}", name=target_shape.name),
                     do_func=lambda s=target_shape, ns=new_state: (self._apply_shape_geometry(s, ns), self._on_layers_changed()),
@@ -2637,6 +2642,12 @@ class OverlayWindow(QWidget):
         except Exception:
             pass
         if drag_started and self.object_drag_moved and states:
+            if self.selection_rect.isValid() and not self.selection_rect.isEmpty():
+                for shape, _ in states:
+                    if isinstance(shape, (RegionalEffectShape, MosaicShape, BlurShape)):
+                        shape.rect = shape.rect.intersected(self.selection_rect)
+                        if self.background_pixmap is not None:
+                            shape.update_effect(self.background_pixmap)
             new_states = [(shape, shape.clone()) for shape, _ in states]
 
             def apply_group(snapshot):
@@ -2900,18 +2911,28 @@ class OverlayWindow(QWidget):
                         origin.y() + math.sin(angle) * length,
                     )
             self.temp_shape.p2 = pos
-        elif isinstance(self.temp_shape, (RectangleShape, CircleShape, RegionalEffectShape, MosaicShape, BlurShape)):
+        elif isinstance(self.temp_shape, (RegionalEffectShape, MosaicShape, BlurShape)):
+            if origin is None:
+                origin = self.temp_shape.rect.topLeft()
+            if self.selection_rect.isValid() and not self.selection_rect.isEmpty():
+                clamped_x = max(self.selection_rect.left(), min(pos.x(), self.selection_rect.right()))
+                clamped_y = max(self.selection_rect.top(), min(pos.y(), self.selection_rect.bottom()))
+                pos = QPointF(clamped_x, clamped_y)
+            if shift_pressed:
+                pos = self._constrain_square_endpoint(origin, pos)
+                if self.selection_rect.isValid() and not self.selection_rect.isEmpty():
+                    clamped_x = max(self.selection_rect.left(), min(pos.x(), self.selection_rect.right()))
+                    clamped_y = max(self.selection_rect.top(), min(pos.y(), self.selection_rect.bottom()))
+                    pos = QPointF(clamped_x, clamped_y)
+            self.temp_shape.rect = QRectF(origin, pos).normalized()
+            if self.background_pixmap is not None:
+                self.temp_shape.update_effect(self.background_pixmap)
+        elif isinstance(self.temp_shape, (RectangleShape, CircleShape)):
             if origin is None:
                 origin = self.temp_shape.rect.topLeft()
             if shift_pressed:
                 pos = self._constrain_square_endpoint(origin, pos)
             self.temp_shape.rect = QRectF(origin, pos).normalized()
-        elif isinstance(self.temp_shape, (RegionalEffectShape, MosaicShape, BlurShape)):
-            if origin is None:
-                origin = self.temp_shape.rect.topLeft()
-            self.temp_shape.rect = QRectF(origin, pos).normalized()
-            if self.background_pixmap is not None:
-                self.temp_shape.update_effect(self.background_pixmap)
         elif isinstance(self.temp_shape, CaptureMaskShape):
             if self.temp_shape.kind == "freeform":
                 self.temp_shape.add_point(pos)
@@ -2961,8 +2982,11 @@ class OverlayWindow(QWidget):
                         history.push_already_done(cmd)
                 self.update()
                 return
-            if isinstance(shape, (RegionalEffectShape, MosaicShape, BlurShape)) and self.background_pixmap is not None:
-                shape.update_effect(self.background_pixmap)
+            if isinstance(shape, (RegionalEffectShape, MosaicShape, BlurShape)):
+                if self.selection_rect.isValid() and not self.selection_rect.isEmpty():
+                    shape.rect = shape.rect.intersected(self.selection_rect)
+                if self.background_pixmap is not None:
+                    shape.update_effect(self.background_pixmap)
 
             shape.region_idx = self.active_region_idx
             self.layer_manager.add_shape(shape)
@@ -3245,8 +3269,9 @@ class OverlayWindow(QWidget):
 
     def _sample_screen_color(self, pos: QPointF) -> QColor:
         """Считывает точный цвет пикселя с холста или экрана в указанных координатах."""
-        px = int(pos.x())
-        py = int(pos.y())
+        dpr = float(self.background_pixmap.devicePixelRatio() or 1.0) if self.background_pixmap else 1.0
+        px = int(round(pos.x() * dpr))
+        py = int(round(pos.y() * dpr))
         if self.background_pixmap and not self.background_pixmap.isNull():
             img = self.background_pixmap.toImage()
             if 0 <= px < img.width() and 0 <= py < img.height():
@@ -3257,14 +3282,14 @@ class OverlayWindow(QWidget):
                     p.drawPixmap(0, 0, self.background_pixmap, px, py, 1, 1)
                     for s in self.layer_manager.shapes:
                         if getattr(s, "visible", True):
-                            s.draw(p, offset=QPointF(px, py), source_pixmap=self.background_pixmap)
+                            s.draw(p, offset=pos, source_pixmap=self.background_pixmap)
                     p.end()
                     return canvas.pixelColor(0, 0)
                 return img.pixelColor(px, py)
         try:
-            screen = QApplication.primaryScreen()
+            screen = QApplication.screenAt(pos.toPoint()) or QApplication.primaryScreen()
             if screen:
-                pix = screen.grabWindow(0, px, py, 1, 1)
+                pix = screen.grabWindow(0, int(pos.x()), int(pos.y()), 1, 1)
                 return pix.toImage().pixelColor(0, 0)
         except Exception:
             pass
@@ -3461,7 +3486,15 @@ class OverlayWindow(QWidget):
                     if region_idx not in recording_indices:
                         rx, ry, rw, rh = int(reg.x()), int(reg.y()), int(reg.width()), int(reg.height())
                         if rw > 0 and rh > 0:
-                            painter.drawPixmap(rx, ry, rw, rh, self.background_pixmap, rx, ry, rw, rh)
+                            dpr = float(self.background_pixmap.devicePixelRatio() or 1.0)
+                            sx = int(round(rx * dpr))
+                            sy = int(round(ry * dpr))
+                            sw = int(round(rw * dpr))
+                            sh = int(round(rh * dpr))
+                            sw = min(sw, self.background_pixmap.width() - sx)
+                            sh = min(sh, self.background_pixmap.height() - sy)
+                            if sw > 0 and sh > 0:
+                                painter.drawPixmap(rx, ry, rw, rh, self.background_pixmap, sx, sy, sw, sh)
                     else:
                         # Область записи очищаем до прозрачности для живого экрана
                         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
@@ -3530,6 +3563,7 @@ class OverlayWindow(QWidget):
             if self.temp_shape is not None:
                 self.temp_shape.draw(painter, source_pixmap=self.background_pixmap)
                 self._draw_temp_shape_outline(painter)
+            self._draw_effect_shape_outline(painter)
 
             # Рамка трансформации и индикатор фигур
             self._draw_dragged_shape_indicator(painter)
@@ -3573,10 +3607,18 @@ class OverlayWindow(QWidget):
             if dimmed_bg is not None:
                 painter.drawPixmap(0, 0, dimmed_bg)
                 if self.background_pixmap is not None:
+                    dpr = float(self.background_pixmap.devicePixelRatio() or 1.0)
                     for reg in valid_regions:
                         rx, ry, rw, rh = int(reg.x()), int(reg.y()), int(reg.width()), int(reg.height())
                         if rw > 0 and rh > 0:
-                            painter.drawPixmap(rx, ry, rw, rh, self.background_pixmap, rx, ry, rw, rh)
+                            sx = int(round(rx * dpr))
+                            sy = int(round(ry * dpr))
+                            sw = int(round(rw * dpr))
+                            sh = int(round(rh * dpr))
+                            sw = min(sw, self.background_pixmap.width() - sx)
+                            sh = min(sh, self.background_pixmap.height() - sy)
+                            if sw > 0 and sh > 0:
+                                painter.drawPixmap(rx, ry, rw, rh, self.background_pixmap, sx, sy, sw, sh)
             else:
                 if self.background_pixmap is not None:
                     painter.drawPixmap(0, 0, self.background_pixmap)
@@ -3645,6 +3687,7 @@ class OverlayWindow(QWidget):
             if self.temp_shape is not None:
                 self.temp_shape.draw(painter, source_pixmap=self.background_pixmap)
                 self._draw_temp_shape_outline(painter)
+            self._draw_effect_shape_outline(painter)
 
             # Рамка и плашка с номером фигуры при перемещении ПКМ
             self._draw_dragged_shape_indicator(painter)
@@ -3680,11 +3723,57 @@ class OverlayWindow(QWidget):
                 painter.drawRect(r)
                 painter.restore()
 
+    def _draw_effect_shape_outline(self, painter: QPainter):
+        """Отрисовывает контрастную пунктирную рамку вокруг эффектов цензуры и фильтров при их трансформации/перемещении."""
+        shapes_to_outline = []
+        if getattr(self, "is_transforming", False) and hasattr(self, "transform_box") and self.transform_box.is_active():
+            s = getattr(self.transform_box, "shape", None)
+            if s is not None and isinstance(s, (RegionalEffectShape, MosaicShape, BlurShape)):
+                shapes_to_outline.append(s)
+        if getattr(self, "is_moving_objects", False) and getattr(self, "object_drag_initial_states", None):
+            for s, _ in self.object_drag_initial_states:
+                if isinstance(s, (RegionalEffectShape, MosaicShape, BlurShape)):
+                    shapes_to_outline.append(s)
+
+        if not shapes_to_outline:
+            return
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        for s in shapes_to_outline:
+            r = getattr(s, "rect", None)
+            if r is None or r.isEmpty():
+                continue
+            r = r.normalized()
+            rot = getattr(s, "rotation", 0.0)
+            painter.save()
+            if rot != 0.0:
+                center = r.center()
+                painter.translate(center)
+                painter.rotate(rot)
+                local_rect = QRectF(-r.width() / 2.0, -r.height() / 2.0, r.width(), r.height())
+            else:
+                local_rect = r
+
+            # Контрастная двойная обводка (черная тень + голубой пунктир)
+            pen_bg = QPen(QColor(0, 0, 0, 180), 2.0, Qt.PenStyle.SolidLine)
+            painter.setPen(pen_bg)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(local_rect)
+
+            pen_dash = QPen(QColor(56, 189, 248), 1.5, Qt.PenStyle.DashLine)
+            pen_dash.setDashPattern([4, 4])
+            painter.setPen(pen_dash)
+            painter.drawRect(local_rect)
+            painter.restore()
+        painter.restore()
+
     def _draw_dragged_shape_indicator(self, painter: QPainter):
         """Отрисовывает рамку трансформации в стиле Photoshop / Figma вокруг активной фигуры."""
         self.interactive_badge_expand_rect = QRectF()
-        if self.current_tool not in (ToolType.SELECT, ToolType.MOVE, ToolType.CAPTURE_MASK):
-            return
+        if not getattr(self, "is_transforming", False) and not getattr(self, "is_moving_objects", False):
+            if self.current_tool not in (ToolType.SELECT, ToolType.MOVE, ToolType.CAPTURE_MASK):
+                return
         if not hasattr(self, "transform_box") or not self.transform_box.is_active():
             return
 
@@ -3966,17 +4055,26 @@ class OverlayWindow(QWidget):
 
             rx, ry, rw, rh = int(rect.x()), int(rect.y()), int(rect.width()), int(rect.height())
             if rw <= 0 or rh <= 0: return
-            crop = self.background_pixmap.copy(rx, ry, rw, rh)
+            dpr = float(self.background_pixmap.devicePixelRatio() or 1.0)
+            sx = int(round(rect.x() * dpr))
+            sy = int(round(rect.y() * dpr))
+            sw = max(1, int(round(rect.width() * dpr)))
+            sh = max(1, int(round(rect.height() * dpr)))
+            sw = min(sw, self.background_pixmap.width() - sx)
+            sh = min(sh, self.background_pixmap.height() - sy)
+            if sw <= 0 or sh <= 0: return
+            crop = self.background_pixmap.copy(sx, sy, sw, sh)
             qimg = crop.toImage().convertToFormat(QImage.Format.Format_ARGB32)
             ptr = qimg.bits()
             ptr.setsize(qimg.sizeInBytes())
-            arr = np.frombuffer(ptr, np.uint8).reshape((rh, rw, 4))
+            arr = np.frombuffer(ptr, np.uint8).reshape((sh, sw, 4))
             bgr = cv2.cvtColor(arr, cv2.COLOR_BGRA2BGR)
             if filter_type is None:
                 filter_type, filter_params = self._filter_state_for_region(self.active_region_idx)
             fbgr = apply_filter(bgr, filter_type, **(filter_params or {}))
             frgb = cv2.cvtColor(fbgr, cv2.COLOR_BGR2RGB)
-            fqimg = QImage(frgb.data, rw, rh, rw * 3, QImage.Format.Format_RGB888)
+            fqimg = QImage(frgb.data, sw, sh, sw * 3, QImage.Format.Format_RGB888).copy()
+            fqimg.setDevicePixelRatio(dpr)
             painter.drawPixmap(rx, ry, QPixmap.fromImage(fqimg))
         except Exception as e:
             print(f"[Overlay] Ошибка фильтра: {e}")

@@ -1981,6 +1981,7 @@ class RightDrawingToolbar(QFrame):
             ToolType.PEN: tr("tool_lbl_pen", "Карандаш"),
             ToolType.HIGHLIGHTER: tr("tool_lbl_highlighter", "Маркер"),
             ToolType.SHAPES: tr("tool_lbl_shapes", "Фигуры"),
+            ToolType.MOSAIC: tr("tool_lbl_censor", "Цензура"),
             ToolType.CAPTURE_MASK: tr("tool_lbl_mask", "Маска"),
             ToolType.TEXT: tr("tool_lbl_text", "Текст"),
         }
@@ -1990,6 +1991,7 @@ class RightDrawingToolbar(QFrame):
             (ToolType.PEN, "pen", tr("tool_pen", "Карандаш")),
             (ToolType.HIGHLIGHTER, "highlighter", tr("tool_highlighter", "Маркер-хайлайтер")),
             (ToolType.SHAPES, "shapes", tr("tool_shapes", "Фигуры (Линия, Стрелка, Прямоугольник, Круг)")),
+            (ToolType.MOSAIC, "mosaic", tr("action_censor_tip", "Цензура и фильтры (Мозаика / Размытие / Эффекты)")),
             (ToolType.CAPTURE_MASK, "mask", tr("tool_capture_mask", "Маска области записи")),
             (ToolType.TEXT, "text", tr("tool_text", "Текст"))
         ]
@@ -2019,6 +2021,8 @@ class RightDrawingToolbar(QFrame):
             self.tool_buttons[t_type] = btn
             if t_type == ToolType.SHAPES:
                 btn.clicked.connect(lambda checked: self._toggle_shapes_flyout())
+            elif t_type == ToolType.MOSAIC:
+                btn.clicked.connect(lambda checked: self._toggle_censor_flyout())
             elif t_type == ToolType.CAPTURE_MASK:
                 btn.clicked.connect(lambda checked: self._toggle_capture_mask_flyout())
             else:
@@ -2101,31 +2105,6 @@ class RightDrawingToolbar(QFrame):
         sep3.setStyleSheet(f"background-color: {theme['sep_color']}; max-height: 1px;")
         layout.addWidget(sep3)
         self._advanced_tool_widgets.append(sep3)
-
-        # 4. Инструмент «Цензура и фильтры» (боковой флайаут)
-        mosaic_txt = f"  {tr('tool_lbl_censor', 'Цензура')}" if self.show_labels else ""
-        btn_mosaic = ModernButton(mosaic_txt, tr("action_censor_tip", "Цензура и фильтры (Мозаика / Размытие / Эффекты)"))
-        btn_mosaic.setCheckable(True)
-        if self.show_labels:
-            btn_mosaic.setFixedSize(126, 26)
-            btn_mosaic.setStyleSheet("text-align: left; padding-left: 8px; font-size: 11px; font-weight: 500;")
-            btn_mosaic.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
-        else:
-            btn_mosaic.setFixedSize(26, 26)
-        btn_mosaic.setIcon(create_themed_icon("mosaic", self.is_dark, size=16))
-        btn_mosaic.setIconSize(QSize(16, 16))
-        self.button_group.addButton(btn_mosaic)
-        self.tool_buttons[ToolType.MOSAIC] = btn_mosaic
-        btn_mosaic.clicked.connect(lambda checked: self._toggle_censor_flyout())
-        layout.addWidget(btn_mosaic)
-        self._advanced_tool_widgets.append(btn_mosaic)
-
-        # Разделитель 4
-        sep4 = QFrame()
-        sep4.setFrameShape(QFrame.Shape.HLine)
-        sep4.setStyleSheet(f"background-color: {theme['sep_color']}; max-height: 1px;")
-        layout.addWidget(sep4)
-        self._advanced_tool_widgets.append(sep4)
 
         # 5. Слои и история действий
         layer_history = [

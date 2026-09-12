@@ -247,7 +247,7 @@ class ShapeTransformBox:
             self.initial_rotation = getattr(self.shape, "rotation", 0.0)
             self.initial_state = self.shape.clone()
 
-    def drag_to(self, current_pt: QPointF, shift_pressed: bool = False, offset: QPointF = QPointF(0, 0)):
+    def drag_to(self, current_pt: QPointF, shift_pressed: bool = False, offset: QPointF = QPointF(0, 0), constrain_rect: QRectF = None):
         """Вычисляет новое состояние фигуры при перетаскивании маркера."""
         if not self.is_active() or self.active_handle == HandleType.NONE or self.initial_bounding_rect.isEmpty():
             return
@@ -260,6 +260,17 @@ class ShapeTransformBox:
         if self.active_handle == HandleType.INSIDE:
             dx = current_pt.x() - self.drag_start_pos.x()
             dy = current_pt.y() - self.drag_start_pos.y()
+            if constrain_rect is not None and constrain_rect.isValid() and not constrain_rect.isEmpty():
+                init_bbox = self.initial_bounding_rect
+                if init_bbox.isValid() and not init_bbox.isEmpty():
+                    min_dx = constrain_rect.left() - init_bbox.left()
+                    max_dx = constrain_rect.right() - init_bbox.right()
+                    min_dy = constrain_rect.top() - init_bbox.top()
+                    max_dy = constrain_rect.bottom() - init_bbox.bottom()
+                    if min_dx <= max_dx:
+                        dx = max(min_dx, min(dx, max_dx))
+                    if min_dy <= max_dy:
+                        dy = max(min_dy, min(dy, max_dy))
             # Перемещаем относительно начального состояния
             if self.initial_state:
                 state_copy = self.initial_state.clone()
@@ -347,6 +358,15 @@ class ShapeTransformBox:
                 state_copy = self.initial_state.clone()
                 if hasattr(state_copy, "scale_from_origin"):
                     state_copy.scale_from_origin(sx, sy, origin)
+                if constrain_rect is not None and constrain_rect.isValid() and not constrain_rect.isEmpty():
+                    if hasattr(state_copy, "rect"):
+                        r = state_copy.rect.normalized()
+                        clamped_left = max(constrain_rect.left(), min(r.left(), constrain_rect.right()))
+                        clamped_right = max(constrain_rect.left(), min(r.right(), constrain_rect.right()))
+                        clamped_top = max(constrain_rect.top(), min(r.top(), constrain_rect.bottom()))
+                        clamped_bottom = max(constrain_rect.top(), min(r.bottom(), constrain_rect.bottom()))
+                        if clamped_right > clamped_left and clamped_bottom > clamped_top:
+                            state_copy.rect = QRectF(clamped_left, clamped_top, clamped_right - clamped_left, clamped_bottom - clamped_top)
                 self._apply_shape_geometry(state_copy)
 
     def _apply_shape_geometry(self, src: BaseShape):
@@ -413,10 +433,12 @@ class ShapeTransformBox:
         local_h = br.height()
         local_rect = QRectF(-local_w / 2.0, -local_h / 2.0, local_w, local_h)
 
-        # Контрастный пунктирный контур рамки (Photoshop-стиль)
-        pen_outline = QPen(QColor("#0078d4"), 1.5, Qt.PenStyle.DashLine, Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen_outline)
+        # Контрастный двухслойный пунктирный контур рамки (Photoshop-стиль)
+        painter.setPen(QPen(QColor(0, 0, 0, 160), 2.0, Qt.PenStyle.SolidLine))
         painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(local_rect)
+        pen_outline = QPen(QColor("#38bdf8"), 1.5, Qt.PenStyle.DashLine, Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen_outline)
         painter.drawRect(local_rect)
 
         # Линия-направляющая к маркеру вращения
