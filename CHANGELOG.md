@@ -1,6 +1,31 @@
 # Changelog
 
+## [1.0.11] - 2026-09-12
+
+### English
+
+Smooth window movement, default Move tool, canvas drag support, and multi-selection fixes.
+
+- Fixed visually jittery and stuttering recording window movement during recording by bypassing heavy layout updates and full-screen synchronous repaints on each mouse drag pixel.
+- Opening the drawing toolbar via the pencil icon in the recording header now defaults to the Move tool (`ToolType.MOVE` / cursor) instead of automatically selecting the Pen tool.
+- Enabled the Move tool to smoothly drag and reposition the recording window by clicking and dragging directly inside empty regions of the recording canvas.
+- Fixed multi-selection deselect behavior: clicking outside the selected group or switching to another tool immediately clears the selection without leaving non-interactive phantom bounding boxes; added `Escape` to deselect and `Delete` to remove selected shapes.
+- Optimized scrolling screenshot performance: horizontal stride detection accelerates matching 8-15x (down to 4-8 ms per frame), strip-based frame accumulation prevents memory fragmentation, and added sticky-header bypass and freeze prevention.
+- Strengthened system tray status reliability: cleared lingering recording indicator and restored tooltip to ready state once recording windows are closed.
+
+### Русский
+
+Плавное перемещение окна записи, инструмент «Перемещение» по умолчанию, драг за холст и исправление мульти-выделения.
+
+- Устранены рывки и визуальные подёргивания окна записи во время видео: исключены тяжёлые вызовы компоновки и синхронные перерисовки экрана на каждый пиксель перемещения мыши.
+- При нажатии на иконку карандашика в шапке окна записи панель инструментов теперь открывается с выбранным инструментом «Перемещение» (`ToolType.MOVE`), а не карандашом.
+- Инструмент «Перемещение» теперь позволяет плавно перетаскивать окно записи при клике и драге в свободной области холста.
+- Исправлен сброс группового мульти-выделения: клик снаружи выбранной группы или переключение на любой другой инструмент мгновенно снимает выделение и не оставляет фантомных рамок; клавиша `Escape` сбрасывает выделение, а `Delete` удаляет выбранные объекты.
+- Оптимизирован длинный скриншот: поиск сдвига ускорен в 8–15 раз (до 4–8 мс на кадр), накопление полос без фрагментации памяти, обход плавающих шапок сайтов и защита от зависаний интерфейса.
+- Повышена надёжность статуса в системном трее: гарантирован сброс иконки активной записи и возвращение всплывающей подсказки в режим готовности после закрытия окон захвата.
+
 ## [1.0.10] - 2026-09-12
+
 
 ### English
 

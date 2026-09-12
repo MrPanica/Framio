@@ -18,6 +18,8 @@ import ctypes
 from ctypes import wintypes
 from pathlib import Path
 from datetime import datetime
+import cv2
+import numpy as np
 
 from PyQt6.QtCore import Qt, QObject, pyqtSignal, QTimer, QPoint, QRect, QSize
 from PyQt6.QtWidgets import (
@@ -297,13 +299,15 @@ class ScrollingCaptureEngine(QObject):
         super().__init__(parent)
         self.region = region  # (rx, ry, rw, rh)
         self.target_hwnd = target_hwnd
-        self.accumulated_bgr: np.ndarray | None = None
+        self.strips: list[np.ndarray] = []
+        self.total_height = 0
         self.last_frame: np.ndarray | None = None
         self.frames_captured = 0
         self.is_running = False
         self.is_paused = True  # Авто-скролл отключен по умолчанию (пользователь крутит сам)
         self.is_autoscrolling = False
         self._is_stitching = False
+        self._consecutive_fails = 0
 
         self.max_height = 40000  # Защита от бесконечного скролла
         self.guide: ScrollingCaptureGuide | None = None
@@ -318,10 +322,25 @@ class ScrollingCaptureEngine(QObject):
         self.autoscroll_timer.setInterval(250)
         self.autoscroll_timer.timeout.connect(self._autoscroll_tick)
 
+    @property
+    def accumulated_bgr(self) -> np.ndarray | None:
+        if not self.strips:
+            return None
+        if len(self.strips) == 1:
+            return self.strips[0]
+        return np.vstack(self.strips)
+
+    @accumulated_bgr.setter
+    def accumulated_bgr(self, val: np.ndarray | None):
+        if val is None:
+            self.strips = []
+            self.total_height = 0
+        else:
+            self.strips = [val]
+            self.total_height = val.shape[0]
+
     def start(self):
         """Запуск захвата первого кадра, отображение направляющей рамки и запуск мониторинга скролла."""
-        import numpy as np
-
         rx, ry, rw, rh = self.region
         try:
             img0 = safe_grab_screen_bgr(rx, ry, rw, rh, self.target_hwnd)
@@ -333,19 +352,21 @@ class ScrollingCaptureEngine(QObject):
             self.error.emit(tr("scroll_err_grab", "Не удалось захватить начальную область экрана."))
             return
 
-        self.accumulated_bgr = img0.copy()
+        self.strips = [img0.copy()]
+        self.total_height = img0.shape[0]
         self.last_frame = img0.copy()
         self.frames_captured = 1
         self.is_running = True
         self.is_paused = True
         self.is_autoscrolling = False
         self._is_stitching = False
+        self._consecutive_fails = 0
 
         # Показываем направляющую рамку
         self.guide = ScrollingCaptureGuide(QRect(rx, ry, rw, rh))
         self.guide.show()
 
-        self.progress.emit(self.frames_captured, self.accumulated_bgr.shape[0])
+        self.progress.emit(self.frames_captured, self.total_height)
         self.poll_timer.start()
 
     def capture_step(self):
@@ -393,17 +414,27 @@ class ScrollingCaptureEngine(QObject):
 
     def finish(self):
         """Завершает захват и возвращает длинное склеенное изображение."""
-        self.cleanup()
-        if self.accumulated_bgr is not None and self.accumulated_bgr.shape[0] > 0:
-            self.finished.emit(self.accumulated_bgr)
-        else:
+        try:
+            self.cleanup()
+            if self.strips:
+                final_img = np.vstack(self.strips) if len(self.strips) > 1 else self.strips[0]
+                if final_img is not None and final_img.shape[0] > 0:
+                    self.finished.emit(final_img)
+                    return
+            self.cancelled.emit()
+        except Exception as e:
+            print(f"[ScrollingCaptureEngine] Ошибка при завершении: {e}")
             self.cancelled.emit()
 
     def cancel(self):
         """Отмена длинного скриншота без сохранения."""
-        self.cleanup()
-        self.accumulated_bgr = None
-        self.cancelled.emit()
+        try:
+            self.cleanup()
+            self.strips.clear()
+            self.total_height = 0
+            self.cancelled.emit()
+        except Exception:
+            self.cancelled.emit()
 
     def cleanup(self):
         self.is_running = False
@@ -413,14 +444,15 @@ class ScrollingCaptureEngine(QObject):
         self.poll_timer.stop()
         self.autoscroll_timer.stop()
         if self.guide:
-            self.guide.close()
-            self.guide.deleteLater()
+            try:
+                self.guide.close()
+                self.guide.deleteLater()
+            except Exception:
+                pass
             self.guide = None
 
     def _poll_scroll(self):
         """Периодическая проверка изменения экрана при прокрутке колесом мыши."""
-        import numpy as np
-
         if not self.is_running or self._is_stitching:
             return
         rx, ry, rw, rh = self.region
@@ -439,11 +471,22 @@ class ScrollingCaptureEngine(QObject):
                 self.last_frame[::8, ::8, :].astype(np.int16)
             ))
             if diff < 1.2:
+                self._consecutive_fails = 0
                 return
 
         try:
             self._is_stitching = True
-            self.stitch_frame(curr_bgr, force_append_on_fail=False)
+            matched = self.stitch_frame(curr_bgr, force_append_on_fail=False)
+            if matched:
+                self._consecutive_fails = 0
+            else:
+                self._consecutive_fails += 1
+                # Если 2 тика подряд экран изменился, но перекрытие не найдено
+                # (быстрый скролл пользователем или прыжок через страницу),
+                # синхронизируем last_frame, чтобы не крутить тяжелые поиски на одном старом кадре
+                if self._consecutive_fails >= 2:
+                    self.last_frame = curr_bgr.copy()
+                    self._consecutive_fails = 0
         finally:
             self._is_stitching = False
 
@@ -472,9 +515,7 @@ class ScrollingCaptureEngine(QObject):
         высокоточный многополосный шаблонный поиск OpenCV matchTemplate.
         Бесшовно склеивает изображение вниз с точностью до 1 пикселя.
         """
-        import numpy as np
-
-        if curr_bgr is None or curr_bgr.size == 0 or self.accumulated_bgr is None:
+        if curr_bgr is None or curr_bgr.size == 0 or not self.strips:
             return False
 
         H, W = curr_bgr.shape[:2]
@@ -482,64 +523,68 @@ class ScrollingCaptureEngine(QObject):
             return False
 
         # Если превышена максимальная высота, больше не наращиваем
-        if self.accumulated_bgr.shape[0] >= self.max_height:
+        if self.total_height >= self.max_height:
             return False
 
-        ref_frame = self.last_frame if self.last_frame is not None else self.accumulated_bgr[-H:, :, :]
+        ref_frame = self.last_frame if self.last_frame is not None else self.strips[-1]
         best_dy, best_conf = self._detect_vertical_shift(ref_frame, curr_bgr)
 
         # Надежное совпадение сдвига (от 4 до H пикселей)
         if best_conf >= 0.70 and 4 <= best_dy <= H:
             new_strip = curr_bgr[H - best_dy :, :, :]
-            self.accumulated_bgr = np.vstack([self.accumulated_bgr, new_strip])
+            self.strips.append(new_strip)
+            self.total_height += new_strip.shape[0]
             self.last_frame = curr_bgr.copy()
             self.frames_captured += 1
-            self.progress.emit(self.frames_captured, self.accumulated_bgr.shape[0])
+            self.progress.emit(self.frames_captured, self.total_height)
             return True
 
         # Если включен принудительный режим (пользователь нажал «Сделать кадр» без перекрытия):
         if force_append_on_fail:
-            self.accumulated_bgr = np.vstack([self.accumulated_bgr, curr_bgr])
+            self.strips.append(curr_bgr)
+            self.total_height += curr_bgr.shape[0]
             self.last_frame = curr_bgr.copy()
             self.frames_captured += 1
-            self.progress.emit(self.frames_captured, self.accumulated_bgr.shape[0])
+            self.progress.emit(self.frames_captured, self.total_height)
             return True
 
         return False
 
     def _detect_vertical_shift(self, prev_bgr: np.ndarray, curr_bgr: np.ndarray) -> tuple[int, float]:
         """
-        Многополосный высокоточный алгоритм вычисления вертикального сдвига dy.
-        Оптимизирован для 60+ FPS: горизонтальный шаг ускоряет поиск в 4-8 раз при сохранении точности dy 1 px.
+        Высокоскоростной многополосный алгоритм вычисления вертикального сдвига dy.
+        Оптимизирован для полного исключения лагов и зависаний:
+        - Равномерное горизонтальное прореживание до ширины ~160 px снижает вычислительную сложность в 10+ раз
+          при сохранении идеальной точности vertical dy 1 px.
+        - Поддержка страниц с плавающими и фиксированными шапками (sticky headers/navbars).
+        - Ранний выход при уверенном совпадении (> 85%).
         """
-        import cv2
-        import numpy as np
-
         H, W = prev_bgr.shape[:2]
-        g_prev = cv2.cvtColor(prev_bgr, cv2.COLOR_BGR2GRAY)
-        g_curr = cv2.cvtColor(curr_bgr, cv2.COLOR_BGR2GRAY)
 
         # Исключаем вертикальный скроллбар справа (28 px) и границу слева (8 px)
         w_start = 8
         w_end = max(w_start + 40, W - 28)
 
-        # Горизонтальное прореживание для поиска вертикального сдвига:
-        # координаты строк не меняются, поэтому точность dy остаётся идеальной (1 px),
-        # но объём шаблонных вычислений сокращается в 4-8 раз!
-        h_step = 2 if (w_end - w_start) > 400 else 1
-        g_prev = g_prev[:, w_start:w_end:h_step]
-        g_curr = g_curr[:, w_start:w_end:h_step]
+        # Равномерное горизонтальное прореживание: строки не меняются (точность dy 100%),
+        # а вычисления matchTemplate ускоряются на порядок!
+        tw = 160
+        step = max(1, (w_end - w_start) // tw)
+
+        p_slice = np.ascontiguousarray(prev_bgr[:, w_start:w_end:step, :])
+        c_slice = np.ascontiguousarray(curr_bgr[:, w_start:w_end:step, :])
+        g_prev = cv2.cvtColor(p_slice, cv2.COLOR_BGR2GRAY)
+        g_curr = cv2.cvtColor(c_slice, cv2.COLOR_BGR2GRAY)
 
         strip_h = min(36, max(16, H // 8))
         best_dy = 0
         best_conf = -1.0
 
-        # Стратегия 1: Поиск полос из prev снизу вверх
+        # Стратегия 1: Поиск полос из prev (снизу вверх) в текущем кадре curr
         for anchor_y in [H, int(H * 0.75), int(H * 0.5), int(H * 0.3)]:
             if anchor_y < strip_h:
                 continue
             strip = g_prev[anchor_y - strip_h : anchor_y, :]
-            if np.std(strip) < 2.0:
+            if float(np.std(strip)) < 2.0:
                 continue
             res = cv2.matchTemplate(g_curr, strip, cv2.TM_CCOEFF_NORMED)
             min_v, max_v, min_l, max_l = cv2.minMaxLoc(res)
@@ -552,15 +597,25 @@ class ScrollingCaptureEngine(QObject):
                     if best_conf >= 0.85:
                         return best_dy, best_conf
 
-        # Стратегия 2: Верхняя полоса curr, ищем в prev
-        top_strip = g_curr[0:strip_h, :]
-        if np.std(top_strip) >= 2.0:
+        # Стратегия 2: Поиск верхней полосы curr в prev.
+        # Проверяем позицию y=0, а также полосу ниже типичной «плавающей шапки» сайтов
+        top_candidates = [0]
+        offset_y = min(H // 4, max(strip_h, 60))
+        if offset_y + strip_h <= H and offset_y not in top_candidates:
+            top_candidates.append(offset_y)
+
+        for curr_y in top_candidates:
+            top_strip = g_curr[curr_y : curr_y + strip_h, :]
+            if float(np.std(top_strip)) < 2.0:
+                continue
             res = cv2.matchTemplate(g_prev, top_strip, cv2.TM_CCOEFF_NORMED)
             min_v, max_v, min_l, max_l = cv2.minMaxLoc(res)
             if max_v > best_conf:
-                cand_dy = max_l[1]
+                cand_dy = max_l[1] - curr_y
                 if 4 <= cand_dy <= H:
                     best_conf = max_v
                     best_dy = cand_dy
+                    if best_conf >= 0.85:
+                        return best_dy, best_conf
 
         return best_dy, best_conf

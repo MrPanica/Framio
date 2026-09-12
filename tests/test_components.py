@@ -1731,10 +1731,10 @@ def test_passthrough_and_drawing_interactivity():
     assert canvas.current_tool == "cursor"
     assert canvas.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
-    # При открытии панели рисования автоматически включается "pen" и мышь перехватывается
+    # При открытии панели рисования по умолчанию активен инструмент перемещения ("cursor"), и мышь перехватывается
     rec_win._toggle_drawing_bar()
     assert rec_win.draw_bar_visible
-    assert canvas.current_tool == "pen"
+    assert canvas.current_tool == "cursor"
     assert not canvas.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
     # При закрытии панели рисования автоматически возвращается "cursor" и сквозной клик

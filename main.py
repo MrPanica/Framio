@@ -34,6 +34,7 @@ from PyQt6.QtGui import (
 from datetime import datetime
 from config import ConfigManager, DEFAULT_HOTKEY_SCREENSHOT
 from ui.overlay import OverlayWindow
+from ui.recording_window import RecordingFrameWindow
 from ui.settings_dialog import SettingsDialog
 from utils.hotkey_manager import GlobalHotkeyManager
 from utils.screen_lock import safe_grab_screen_pixmap
@@ -801,7 +802,27 @@ class FramioApp(QObject):
 
     def _update_tray_state(self):
         # Оставляем окна, которые ещё активны или сохраняются в фоне
-        self.active_recordings = [w for w in self.active_recordings if not getattr(w, "is_finished", False)]
+        clean_recordings = []
+        for w in self.active_recordings:
+            is_fin = getattr(w, "is_finished", False)
+            is_saving = getattr(w, "is_saving", False)
+            worker = getattr(w, "capture_worker", None)
+            is_worker_running = worker is not None and worker.isRunning()
+            is_counting = getattr(w, "is_counting_down", False)
+
+            if is_fin:
+                continue
+            if not w.isVisible() and not is_saving and not is_worker_running:
+                continue
+            if not is_saving and not is_worker_running and not is_counting and not w.isVisible():
+                continue
+            clean_recordings.append(w)
+        self.active_recordings = clean_recordings
+
+        # Если активных окон записи не осталось, сбрасываем незавершённые задачи обработки
+        if not self.active_recordings:
+            self.processing_tasks.clear()
+
         rec_count = len([w for w in self.active_recordings if not getattr(w, "is_saving", False)])
         proc_count = len(self.processing_tasks)
 
@@ -937,16 +958,20 @@ class FramioApp(QObject):
 
     @pyqtSlot()
     def stop_all_recordings(self):
-        active_recs = [w for w in list(self.active_recordings) if not getattr(w, "is_saving", False) and not getattr(w, "is_finished", False)]
+        active_recs = [w for w in list(self.active_recordings) if not getattr(w, "is_finished", False)]
         if not active_recs:
             return
         count = len(active_recs)
         print(f"[Main] Остановка {count} активных записей по запросу...")
         for rec in active_recs:
             try:
-                rec.stop_and_save()
+                if not getattr(rec, "is_saving", False):
+                    rec.stop_and_save()
+                elif getattr(rec, "capture_worker", None) and rec.capture_worker.isRunning():
+                    rec.capture_worker.stop()
             except Exception as e:
                 print(f"[Main] Ошибка при остановке записи: {e}")
+        self._update_tray_state()
 
     @pyqtSlot()
     def start_fullscreen_recording(self, mode="video"):

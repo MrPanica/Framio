@@ -6,6 +6,7 @@
 профессиональными векторными SVG-иконками, кнопкой настроек (выбор приложения/окна) и кнопкой Стоп.
 """
 
+import sys
 import ctypes
 from ctypes import wintypes
 from pathlib import Path
@@ -17,7 +18,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QBrush, QRegion, QIcon, QPolygon,
-    QPainterPathStroker
+    QPainterPathStroker, QCursor
 )
 
 from recorder.capture_worker import CaptureWorker
@@ -1098,14 +1099,17 @@ class RecordingFrameWindow(QWidget):
         self.draw_bar_visible = not self.draw_bar_visible
         if self.draw_bar_visible:
             self.btn_draw.setStyleSheet("background-color: #0c4a6e; border: 1px solid #0284c7;")
-            # При открытии панели рисования автоматически активируем карандаш
+            # При открытии панели рисования по умолчанию активен инструмент перемещения
             if self.drawing_toolbar:
                 self.drawing_toolbar.show()
-                self.drawing_toolbar.select_tool(ToolType.PEN, show_options=False)
+                self.drawing_toolbar.select_tool(ToolType.MOVE, show_options=False)
             self._sync_rec_toolbar_position()
             if hasattr(self, "_rec_toolbar_win"):
                 self._rec_toolbar_win.show()
                 self._rec_toolbar_win.raise_()
+            if self.canvas:
+                self.canvas.raise_()
+                self.canvas.activateWindow()
         else:
             self.btn_draw.setStyleSheet("")
             # При закрытии возвращаем сквозной режим
@@ -1119,13 +1123,8 @@ class RecordingFrameWindow(QWidget):
 
     def _sync_position(self):
         """
-        Легковесная синхронизация координат при перетаскивании рамки.
-        Обеспечивает плавное перемещение со скоростью 60-144 FPS без лагов DWM.
-
-        Во время драга окно записи перемещается отдельно от overlay. Поэтому
-        после каждого шага нужно обновлять его отверстие в маске overlay:
-        иначе старое отверстие остаётся на прежнем месте и выглядит как
-        замороженный второй контур.
+        Ультра-быстрая синхронизация координат при перетаскивании рамки.
+        Обеспечивает плавное 60-144 FPS перемещение без дёрганья DWM и лишних перерисовок.
         """
         previous_header_on_bottom = self.header_on_bottom
         self._update_header_placement()
@@ -1140,31 +1139,68 @@ class RecordingFrameWindow(QWidget):
                 win_y -= head_h
             self.move(win_x, win_y)
 
-        # A side change also changes the native mask. Rebuild it immediately
-        # so the old header area cannot remain as a small frozen trail.
+        # При смене стороны шапки требуется пересчитать маску
         if header_side_changed:
             self._sync_geometry()
             return
 
-        # Moving only the top-level window can leave child controls and the
-        # independent drawing canvas with stale backing-store pixels on some
-        # Windows/DWM combinations. Re-apply their geometry and repaint them
-        # without rebuilding the expensive window mask.
-        self._sync_chrome_geometry()
-
+        # Холст перемещаем напрямую вызовом move() без дорогого SetWindowPos/resize/update
         if self.canvas:
-            self.canvas.setGeometry(self.inner_x, self.inner_y, self.inner_w, self.inner_h)
-            self.canvas.update()
-            if getattr(self.canvas, "current_tool", "cursor") != "cursor" or getattr(self, "is_protected_zone", False):
-                self.canvas.raise_()
+            self.canvas.move(int(self.inner_x), int(self.inner_y))
+            if getattr(self.canvas, "is_pinned", False):
+                self.canvas.update()
 
-        self.lbl_size.setText(f"{self.inner_w}×{self.inner_h}")
-        self.header_frame.update()
-        self.update()
+        # Боковая панель инструментов перемещается вместе с рамкой без пересчёта layout/adjustSize
+        win = getattr(self, "_rec_toolbar_win", None)
+        if win is not None and getattr(self, "draw_bar_visible", False) and win.isVisible():
+            tb_w = win.width()
+            tb_h = win.height()
+            screen = self.screen() or QApplication.primaryScreen()
+            screen_geo = screen.availableGeometry() if screen else QRect(0, 0, 1920, 1080)
+            toolbar_x = self.inner_x + self.inner_w + BORDER_THICKNESS + 6
+            if toolbar_x + tb_w > screen_geo.right() - 4:
+                toolbar_x = self.inner_x - BORDER_THICKNESS - tb_w - 6
+                if toolbar_x < screen_geo.left() + 4:
+                    toolbar_x = self.inner_x + self.inner_w - tb_w - 6
+            toolbar_y = self.inner_y + max(0, (self.inner_h - tb_h) // 2)
+            toolbar_y = max(screen_geo.top() + 4, min(toolbar_y, screen_geo.bottom() - tb_h - 4))
+            win.move(int(toolbar_x), int(toolbar_y))
 
-        # HeaderDragFilter вызывает _sync_position на каждом MouseMove.
-        # Сигнал синхронизирует маску overlay до отпускания кнопки мыши.
+        # Оповещаем overlay для актуализации списка зон захвата
         self.geometry_changed.emit()
+
+    def _adapt_header_for_width(self, width: int):
+        """Адаптирует элементы шапки под узкие размеры рамки записи, чтобы Stop и Cancel всегда оставались доступны."""
+        if not hasattr(self, "header_frame") or self.header_frame is None:
+            return
+
+        is_narrow = width < 500
+        is_very_narrow = width < 380
+        is_tiny = width < 300
+
+        if hasattr(self, "lbl_size") and self.lbl_size is not None:
+            self.lbl_size.setVisible(not is_narrow)
+
+        if hasattr(self, "lbl_target_icon") and self.lbl_target_icon is not None:
+            self.lbl_target_icon.setVisible(not is_very_narrow)
+
+        if hasattr(self, "btn_lock") and self.btn_lock is not None:
+            self.btn_lock.setVisible(not is_very_narrow)
+
+        if hasattr(self, "btn_settings") and self.btn_settings is not None:
+            self.btn_settings.setVisible(not is_very_narrow)
+
+        if hasattr(self, "btn_filter") and self.btn_filter is not None:
+            self.btn_filter.setVisible(not is_tiny)
+
+        if hasattr(self, "lbl_mode") and self.lbl_mode is not None:
+            if is_very_narrow:
+                self.lbl_mode.setText("⋮⋮")
+            else:
+                mode_text = "REC MP4" if self.mode == "video" else "REC GIF"
+                if self.region_index is not None and self.region_count > 1:
+                    mode_text += f" · {self.region_index}"
+                self.lbl_mode.setText(f"⋮⋮ {mode_text}")
 
     def _sync_chrome_geometry(self):
         """Обновляет положение шапки и панели рисования без перестройки маски."""
@@ -1175,6 +1211,7 @@ class RecordingFrameWindow(QWidget):
             header_w = max(1, min(560, self.inner_w - 40))
             header_x = max(0, (self.inner_w - header_w) // 2)
             header_y = max(0, self.inner_h - head_h - 6) if self.header_on_bottom else 6
+            self._adapt_header_for_width(header_w)
             self.header_frame.setGeometry(header_x, header_y, header_w, header_h)
             self._sync_rec_toolbar_position()
             return
@@ -1183,6 +1220,7 @@ class RecordingFrameWindow(QWidget):
         header_w = win_w
         header_x = 0
         header_y = self.inner_h + BORDER_THICKNESS if self.header_on_bottom else 0
+        self._adapt_header_for_width(header_w)
         self.header_frame.setGeometry(header_x, header_y, header_w, header_h)
         self._sync_rec_toolbar_position()
 
@@ -1202,6 +1240,7 @@ class RecordingFrameWindow(QWidget):
             header_w = min(560, win_w - 40)
             header_x = (win_w - header_w) // 2
             header_y = max(0, self.inner_h - head_h - 6) if self.header_on_bottom else 6
+            self._adapt_header_for_width(header_w)
             self.header_frame.setGeometry(header_x, header_y, header_w, header_h)
             self._sync_rec_toolbar_position()
 
@@ -1219,6 +1258,7 @@ class RecordingFrameWindow(QWidget):
             header_y = self.inner_h + BORDER_THICKNESS if self.header_on_bottom else 0
             header_w = win_w
             header_x = 0
+            self._adapt_header_for_width(header_w)
             self.header_frame.setGeometry(header_x, header_y, header_w, header_h)
             self._sync_rec_toolbar_position()
 
@@ -1268,7 +1308,7 @@ class RecordingFrameWindow(QWidget):
             self.canvas.sync_to_rec_geometry(self.inner_x, self.inner_y, self.inner_w, self.inner_h)
             if not self.canvas.isVisible():
                 self.canvas.show()
-            if getattr(self.canvas, "current_tool", "cursor") != "cursor" or getattr(self, "is_protected_zone", False):
+            if getattr(self.canvas, "current_tool", "cursor") != "cursor" or getattr(self, "is_protected_zone", False) or getattr(self, "draw_bar_visible", False):
                 self.canvas.raise_()
 
         self.lbl_size.setText(f"{self.inner_w}×{self.inner_h}")
@@ -1491,38 +1531,42 @@ class RecordingFrameWindow(QWidget):
             return
         self.is_saving = True
 
-        # Скрываем оставшиеся свободные зоны сразу при остановке. GIF ещё
-        # может кодироваться в фоне, но затемнение, контуры и панели выбора
-        # не должны оставаться на экране до сигнала recording_finished.
-        # Исключение: если нет свободных незадействованных зон — dismiss не нужен.
-        owner = getattr(self, "overlay_owner", None)
-        dismiss = getattr(owner, "dismiss_unused_selection", None)
-        if (
-            callable(dismiss)
-            and getattr(owner, "is_recording", False)
-            and not getattr(owner, "_mass_recording", False)
-            and not getattr(owner, "_recording_overlay_closed", False)
-        ):
-            action_items = (
-                owner.get_action_region_items(all_regions=True)
-                if hasattr(owner, "get_action_region_items")
-                else []
-            )
-            valid_items = (
-                owner.get_valid_region_items()
-                if hasattr(owner, "get_valid_region_items")
-                else []
-            )
-            r_idx = (getattr(self, "region_index", 1) or 1) - 1
-            has_other_free = any(idx != r_idx for idx, _ in valid_items)
-            if not has_other_free:
-                dismiss()
-            else:
-                on_stopped = getattr(owner, "_on_recording_stopped_for_region", None)
-                if callable(on_stopped):
-                    on_stopped(self)
+        # 1. Сразу останавливаем рабочий поток захвата!
+        # Это мгновенно отсекает запись лишних кадров закрытия интерфейса
+        # и запускает финализацию файла в фоновом потоке, независимо от любых задержек или сбоев UI.
+        worker = self.capture_worker
+        try:
+            worker.stop()
+        except Exception as stop_err:
+            print(f"[RecordingWindow] Ошибка вызова capture_worker.stop(): {stop_err}")
 
-        # 1. Мгновенно скрываем рамку записи, боковую панель инструментов и холст рисования с экрана!
+        # 2. Безопасное скрытие оставшихся свободных зон оверлея
+        try:
+            owner = getattr(self, "overlay_owner", None)
+            dismiss = getattr(owner, "dismiss_unused_selection", None)
+            if (
+                callable(dismiss)
+                and getattr(owner, "is_recording", False)
+                and not getattr(owner, "_mass_recording", False)
+                and not getattr(owner, "_recording_overlay_closed", False)
+            ):
+                valid_items = (
+                    owner.get_valid_region_items()
+                    if hasattr(owner, "get_valid_region_items")
+                    else []
+                )
+                r_idx = (getattr(self, "region_index", 1) or 1) - 1
+                has_other_free = any(idx != r_idx for idx, _ in valid_items)
+                if not has_other_free:
+                    dismiss()
+                else:
+                    on_stopped = getattr(owner, "_on_recording_stopped_for_region", None)
+                    if callable(on_stopped):
+                        on_stopped(self)
+        except Exception as dismiss_err:
+            print(f"[RecordingWindow] Предупреждение dismiss оверлея: {dismiss_err}")
+
+        # 3. Мгновенно скрываем рамку записи, боковую панель инструментов и холст рисования с экрана
         if hasattr(self, "_rec_toolbar_win") and self._rec_toolbar_win:
             try:
                 self._rec_toolbar_win.hide()
@@ -1540,34 +1584,47 @@ class RecordingFrameWindow(QWidget):
                     self.drawing_toolbar.censor_flyout.hide()
             except Exception:
                 pass
-        self.hide()
+        try:
+            self.hide()
+        except Exception:
+            pass
         if self.canvas:
-            self.canvas.hide()
-            self.canvas.close()
+            try:
+                self.canvas.hide()
+                self.canvas.close()
+            except Exception:
+                pass
         if sys.platform == "win32":
             try:
-                import ctypes
                 ctypes.windll.dwmapi.DwmFlush()
             except Exception:
                 pass
-        QApplication.processEvents()
+        try:
+            QApplication.processEvents()
+        except Exception:
+            pass
 
-        # 2. Для массовой записи итоговое уведомление будет одно на всю
-        # группу. Поэтому не засыпаем пользователя одинаковыми сообщениями
-        # при остановке 4–5 зон одновременно.
-        app_inst = getattr(QApplication.instance(), "app_instance", None)
-        if app_inst and self.region_count <= 1:
-            is_gif = self.mode == "gif"
-            title = tr("notif_rec_saving_gif", "Сохранение GIF...") if is_gif else tr("notif_rec_saving_video", "Сохранение видео...")
-            body = tr("rec_exporting_wait", "Идёт оптимизация и кодирование в высоком качестве (в фоне)...")
-            app_inst.show_notification(
-                f"⏳ {title}",
-                body,
-                timeout=3500
-            )
+        # 4. Уведомление о сохранении в фоне
+        try:
+            app_inst = getattr(QApplication.instance(), "app_instance", None)
+            if app_inst and self.region_count <= 1:
+                is_gif = self.mode == "gif"
+                title = tr("notif_rec_saving_gif", "Сохранение GIF...") if is_gif else tr("notif_rec_saving_video", "Сохранение видео...")
+                body = tr("rec_exporting_wait", "Идёт оптимизация и кодирование в высоком качестве (в фоне)...")
+                app_inst.show_notification(
+                    f"⏳ {title}",
+                    body,
+                    timeout=3500
+                )
+        except Exception as notif_err:
+            print(f"[RecordingWindow] Предупреждение уведомления: {notif_err}")
 
-        # 3. Останавливаем рабочий поток и запускаем финализацию файла
-        self.capture_worker.stop()
+        # 5. Финальная гарантия вызова stop() на случай непредвиденных сбоев
+        try:
+            if worker and getattr(worker, "running", False):
+                worker.stop()
+        except Exception:
+            pass
 
     def cancel_recording(self):
         if getattr(self, "is_counting_down", False):
@@ -1576,30 +1633,50 @@ class RecordingFrameWindow(QWidget):
             if self.canvas:
                 self.canvas.clear_countdown()
 
+        self.is_saving = True
+        self.is_finished = True
+
+        # Сразу отменяем поток записи
+        if self.capture_worker:
+            try:
+                if hasattr(self.capture_worker, "cancel"):
+                    self.capture_worker.cancel()
+                else:
+                    self.capture_worker.stop()
+            except Exception:
+                pass
+
         if hasattr(self, "_rec_toolbar_win") and self._rec_toolbar_win:
             try:
                 self._rec_toolbar_win.close()
             except Exception:
                 pass
-        self.hide()
+        try:
+            self.hide()
+        except Exception:
+            pass
         if self.canvas:
-            self.canvas.hide()
-            self.canvas.close()
-        self.is_saving = True
-        self.is_finished = True
-        if self.capture_worker:
-            if hasattr(self.capture_worker, "cancel"):
-                self.capture_worker.cancel()
-            else:
-                self.capture_worker.stop()
+            try:
+                self.canvas.hide()
+                self.canvas.close()
+            except Exception:
+                pass
+
         try:
             p = Path(self.output_path)
             if p.exists():
                 p.unlink()
         except Exception:
             pass
-        self.recording_closed.emit("")
-        self.close()
+
+        try:
+            self.recording_closed.emit("")
+        except Exception:
+            pass
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def wait_for_shutdown(self, timeout_ms: int = 10000) -> bool:
         """Дожидается остановки потока захвата и всех его дочерних рекордеров."""
@@ -1624,7 +1701,10 @@ class RecordingFrameWindow(QWidget):
             except Exception:
                 pass
         if self.canvas:
-            self.canvas.close()
+            try:
+                self.canvas.close()
+            except Exception:
+                pass
         if self.cfg.play_sound:
             play_capture_sound()
         print(f"[RecordingWindow] Запись завершена: {out_path}")
@@ -1638,7 +1718,22 @@ class RecordingFrameWindow(QWidget):
             except Exception:
                 pass
         if self.canvas:
-            self.canvas.close()
+            try:
+                self.canvas.close()
+            except Exception:
+                pass
+        if (
+            getattr(self, "capture_worker", None) is not None
+            and self.capture_worker.isRunning()
+            and not getattr(self, "is_finished", False)
+        ):
+            try:
+                if not getattr(self, "is_saving", False):
+                    self.stop_and_save()
+                else:
+                    self.capture_worker.stop()
+            except Exception:
+                pass
         super().closeEvent(event)
 
     def keyPressEvent(self, event):
@@ -1664,14 +1759,19 @@ class RecordingFrameWindow(QWidget):
                 self.cancel_recording()
                 return
             owner = getattr(self, "overlay_owner", None)
-            if owner is not None and getattr(owner, "is_recording", False):
+            if (
+                owner is not None
+                and getattr(owner, "is_recording", False)
+                and not getattr(owner, "_recording_overlay_closed", False)
+            ):
                 dismiss = getattr(owner, "dismiss_unused_selection", None)
-                if callable(dismiss):
+                valid_items = owner.get_valid_region_items() if hasattr(owner, "get_valid_region_items") else []
+                r_idx = (getattr(self, "region_index", 1) or 1) - 1
+                has_other_free = any(idx != r_idx for idx, _ in valid_items)
+                if has_other_free and callable(dismiss):
                     dismiss()
-                else:
-                    owner.stop_recording(close_selection=True)
-                return
-            self.stop_and_save()
+                    return
+            self.cancel_recording()
         else:
             super().keyPressEvent(event)
 

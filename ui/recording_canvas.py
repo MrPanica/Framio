@@ -186,12 +186,24 @@ class RecordingDrawingCanvas(QWidget):
         self.current_tool = tool_name
         self.is_selecting_objects = False
         self.object_selection_rect = QRectF()
+        # При любой смене инструмента полностью сбрасываем выделение объектов
+        self.selected_shapes = []
+        self.active_editing_shape = None
+        self.dragged_shape = None
+        if hasattr(self, "transform_box"):
+            self.transform_box.set_shape(None)
+
+        draw_bar_open = getattr(getattr(self, "rec_win", None), "draw_bar_visible", False)
+
         if tool_name == "cursor":
-            if not getattr(self, "is_protected_zone", False):
+            # Если панель рисования открыта или включена защищённая зона,
+            # курсор должен перехватывать события мыши для перемещения окна и работы с фигурами
+            if not getattr(self, "is_protected_zone", False) and not draw_bar_open:
                 self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+                self.setCursor(Qt.CursorShape.ArrowCursor)
             else:
                 self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-            self.setCursor(Qt.CursorShape.ArrowCursor)
+                self.setCursor(Qt.CursorShape.OpenHandCursor)
         elif tool_name == "select":
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
             self.setCursor(Qt.CursorShape.ArrowCursor)
@@ -331,7 +343,7 @@ class RecordingDrawingCanvas(QWidget):
         # Если выбран инструмент рисования (не курсор) или активна защита зоны — заливаем холст почти прозрачным цветом (alpha=2).
         # На экране это на 100% невидимо, но Windows DWM перехватывает клики и доставляет их
         # на холст рисования, не пропуская в плеер YouTube или фоновые окна!
-        if self.current_tool != "cursor" or getattr(self, "is_protected_zone", False):
+        if self.current_tool != "cursor" or getattr(self, "is_protected_zone", False) or getattr(getattr(self, "rec_win", None), "draw_bar_visible", False):
             painter.fillRect(self.rect(), QColor(0, 0, 0, 2))
 
         # Если в шапке выбран общий фильтр записи (ч/б, блюр, инверсия, сепия и т.д.) —
@@ -465,14 +477,13 @@ class RecordingDrawingCanvas(QWidget):
             painter.drawRect(shifted_sel)
             painter.restore()
 
-        active_shape = None
-        if hasattr(self, "transform_box") and self.transform_box.is_active():
-            active_shape = self.transform_box.shape
-        elif getattr(self, "dragged_shape", None):
-            active_shape = self.dragged_shape
-        elif getattr(self, "active_editing_shape", None):
-            active_shape = self.active_editing_shape
+        # Рамка трансформации отображается только для инструментов cursor и select при активном transform_box
+        if self.current_tool not in ("cursor", "select"):
+            return
+        if not hasattr(self, "transform_box") or not self.transform_box.is_active():
+            return
 
+        active_shape = self.transform_box.shape
         if active_shape is None or not getattr(active_shape, "visible", True):
             return
 
@@ -483,8 +494,7 @@ class RecordingDrawingCanvas(QWidget):
             return
 
         # 1. Отрисовываем интерактивную рамку с маркерами
-        if hasattr(self, "transform_box") and self.transform_box.is_active():
-            self.transform_box.draw(painter, offset=offset)
+        self.transform_box.draw(painter, offset=offset)
 
         bbox = active_shape.get_bounding_rect()
         if not bbox.isValid() or bbox.isEmpty():
@@ -493,16 +503,6 @@ class RecordingDrawingCanvas(QWidget):
         shifted_bbox = bbox.translated(-offset.x(), -offset.y())
         pad = 6.0
         frame_rect = shifted_bbox.adjusted(-pad, -pad, pad, pad)
-
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        if not hasattr(self, "transform_box") or not self.transform_box.is_active():
-            pen_border = QPen(QColor(56, 189, 248, 220), 1.5, Qt.PenStyle.DashLine)
-            pen_border.setDashPattern([5, 3])
-            painter.setPen(pen_border)
-            painter.setBrush(QColor(56, 189, 248, 25))
-            painter.drawRoundedRect(frame_rect, 4, 4)
 
         rot = getattr(active_shape, "rotation", 0.0)
         rot_str = f" ({round(rot)}°)" if rot != 0.0 else ""
@@ -652,9 +652,16 @@ class RecordingDrawingCanvas(QWidget):
                     self.update()
                     return
 
+            # Клик снаружи активной группы/фигуры: сбрасываем предыдущее выделение
+            self.selected_shapes = []
+            self.active_editing_shape = None
+            self.dragged_shape = None
+            self.transform_box.set_shape(None)
+
             if clicked_shape is not None:
                 # Одиночный клик по фигуре: активируем для неё рамку трансформации
                 self.selected_shapes = [clicked_shape]
+                self.active_editing_shape = clicked_shape
                 self.transform_box.set_shape(clicked_shape)
                 self.is_transforming = True
                 self.transform_box.start_drag(HandleType.INSIDE, pos)
@@ -664,18 +671,29 @@ class RecordingDrawingCanvas(QWidget):
                 return
 
             # Клик по пустому месту: начинаем резиновую рамку группового выделения
-            self.selected_shapes = []
-            self.transform_box.set_shape(None)
             self.is_selecting_objects = True
             self.object_selection_start = test_pos
             self.object_selection_rect = QRectF(test_pos, test_pos)
             self.update()
             return
 
-        # 4. Инструмент "cursor" (Взаимодействие)
+        # 4. Инструмент "cursor" (Взаимодействие / Перемещение)
         if self.current_tool == "cursor":
+            # Сначала проверяем маркеры активной рамки трансформации
+            if self.transform_box.is_active():
+                h = self.transform_box.hit_test_handle(pos, offset=offset)
+                if h != HandleType.NONE:
+                    self.is_transforming = True
+                    self.transform_box.start_drag(h, pos)
+                    self.shape_drag_initial_pos = pos
+                    self.setCursor(self.transform_box.get_cursor_for_handle(h))
+                    self.update()
+                    return
+
             shape = self.find_shape_at(test_pos)
             if shape is not None:
+                self.selected_shapes = [shape]
+                self.active_editing_shape = shape
                 self.transform_box.set_shape(shape)
                 self.is_transforming = True
                 self.transform_box.start_drag(HandleType.INSIDE, pos)
@@ -683,9 +701,25 @@ class RecordingDrawingCanvas(QWidget):
                 self.setCursor(Qt.CursorShape.SizeAllCursor)
                 self.update()
                 return
-            if self.transform_box.is_active():
+
+            # Клик по пустому месту: сбрасываем рамку трансформации
+            if self.transform_box.is_active() or self.selected_shapes:
+                self.selected_shapes = []
+                self.active_editing_shape = None
                 self.transform_box.set_shape(None)
                 self.update()
+
+            # Начинаем перетаскивание всего окна записи
+            if hasattr(self, "rec_win") and self.rec_win is not None:
+                self.is_dragging_window = True
+                self.window_drag_start = event.globalPosition().toPoint()
+                self.window_start_inner_x = self.rec_win.inner_x
+                self.window_start_inner_y = self.rec_win.inner_y
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                self.rec_win._raise_for_pointer()
+                event.accept()
+                return
+
             if getattr(self, "is_protected_zone", False):
                 event.accept()
             return
@@ -783,6 +817,18 @@ class RecordingDrawingCanvas(QWidget):
         self.update()
 
     def mouseMoveEvent(self, event):
+        # Перетаскивание окна записи инструментом перемещения
+        if getattr(self, "is_dragging_window", False):
+            gpos = event.globalPosition().toPoint()
+            dx = gpos.x() - self.window_drag_start.x()
+            dy = gpos.y() - self.window_drag_start.y()
+            self.rec_win.inner_x = self.window_start_inner_x + dx
+            min_top = self.rec_win._get_min_top()
+            self.rec_win.inner_y = max(min_top, self.window_start_inner_y + dy)
+            self.rec_win._sync_position()
+            event.accept()
+            return
+
         pos = event.position()
         offset = QPointF(float(self.rec_win.inner_x), float(self.rec_win.inner_y)) if self.is_pinned else QPointF(0.0, 0.0)
         test_pos = pos + offset
@@ -804,16 +850,33 @@ class RecordingDrawingCanvas(QWidget):
             self.update()
             return
 
-        # Курсор при наведении на маркеры
-        if self.transform_box.is_active() and not self.is_transforming and not getattr(self, "is_selecting_objects", False):
-            h = self.transform_box.hit_test_handle(pos, offset=offset)
-            if h != HandleType.NONE:
-                self.setCursor(self.transform_box.get_cursor_for_handle(h))
-                return
-            elif self.current_tool in ("cursor", "select"):
-                self.setCursor(Qt.CursorShape.ArrowCursor)
+        # Курсор при наведении
+        if not self.is_transforming and not getattr(self, "is_selecting_objects", False) and self.dragged_shape is None:
+            if self.transform_box.is_active():
+                h = self.transform_box.hit_test_handle(pos, offset=offset)
+                if h != HandleType.NONE:
+                    self.setCursor(self.transform_box.get_cursor_for_handle(h))
+                    return
+                elif self.find_shape_at(test_pos) is not None:
+                    self.setCursor(Qt.CursorShape.SizeAllCursor)
+                    return
+                elif self.current_tool == "cursor":
+                    self.setCursor(Qt.CursorShape.OpenHandCursor)
+                    return
+                elif self.current_tool == "select":
+                    self.setCursor(Qt.CursorShape.ArrowCursor)
+                    return
             else:
-                self.setCursor(Qt.CursorShape.CrossCursor)
+                if self.find_shape_at(test_pos) is not None:
+                    if self.current_tool in ("cursor", "select"):
+                        self.setCursor(Qt.CursorShape.SizeAllCursor)
+                        return
+                elif self.current_tool == "cursor":
+                    self.setCursor(Qt.CursorShape.OpenHandCursor)
+                    return
+                elif self.current_tool == "select":
+                    self.setCursor(Qt.CursorShape.ArrowCursor)
+                    return
 
         # 1. Перемещение фигуры зажатием ПКМ (запасной режим)
         if self.dragged_shape is not None and not self.is_transforming:
@@ -848,6 +911,15 @@ class RecordingDrawingCanvas(QWidget):
         self.update()
 
     def mouseReleaseEvent(self, event):
+        # Завершение перетаскивания окна записи инструментом перемещения
+        if getattr(self, "is_dragging_window", False):
+            self.is_dragging_window = False
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            if hasattr(self, "rec_win") and self.rec_win is not None:
+                self.rec_win._sync_geometry()
+            event.accept()
+            return
+
         pos = event.position()
         offset = QPointF(float(self.rec_win.inner_x), float(self.rec_win.inner_y)) if self.is_pinned else QPointF(0.0, 0.0)
         test_pos = pos + offset
@@ -885,7 +957,14 @@ class RecordingDrawingCanvas(QWidget):
             self.object_selection_rect = QRectF()
             if rect.width() <= 4 and rect.height() <= 4:
                 shape = self.find_shape_at(self.object_selection_start)
-                self.selected_shapes = [shape] if shape is not None else []
+                if shape is not None:
+                    self.selected_shapes = [shape]
+                    self.active_editing_shape = shape
+                    self.transform_box.set_shape(shape)
+                else:
+                    self.selected_shapes = []
+                    self.active_editing_shape = None
+                    self.transform_box.set_shape(None)
             else:
                 found = []
                 for s in self.layer_manager.shapes:
@@ -896,12 +975,15 @@ class RecordingDrawingCanvas(QWidget):
                         found.append(s)
                 self.selected_shapes = found
 
-            if len(self.selected_shapes) == 1:
-                self.transform_box.set_shape(self.selected_shapes[0])
-            elif len(self.selected_shapes) > 1:
-                self.transform_box.set_shape(ShapeGroup(self.selected_shapes))
-            else:
-                self.transform_box.set_shape(None)
+                if len(self.selected_shapes) == 1:
+                    self.active_editing_shape = self.selected_shapes[0]
+                    self.transform_box.set_shape(self.selected_shapes[0])
+                elif len(self.selected_shapes) > 1:
+                    self.active_editing_shape = None
+                    self.transform_box.set_shape(ShapeGroup(self.selected_shapes))
+                else:
+                    self.active_editing_shape = None
+                    self.transform_box.set_shape(None)
             self.update()
             return
 
@@ -958,6 +1040,42 @@ class RecordingDrawingCanvas(QWidget):
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            if self.is_selecting_objects or self.selected_shapes or self.transform_box.is_active():
+                self.selected_shapes = []
+                self.is_selecting_objects = False
+                self.object_selection_rect = QRectF()
+                self.active_editing_shape = None
+                self.transform_box.set_shape(None)
+                self.update()
+                event.accept()
+                return
+        elif event.key() == Qt.Key.Key_Delete:
+            if self.selected_shapes:
+                with self.shape_lock:
+                    for s in list(self.selected_shapes):
+                        if s in self.layer_manager.shapes:
+                            self.layer_manager.shapes.remove(s)
+                self.selected_shapes = []
+                self.active_editing_shape = None
+                self.transform_box.set_shape(None)
+                self.update()
+                event.accept()
+                return
+            elif self.transform_box.is_active() and self.transform_box.shape:
+                s = self.transform_box.shape
+                with self.shape_lock:
+                    if s in self.layer_manager.shapes:
+                        self.layer_manager.shapes.remove(s)
+                self.selected_shapes = []
+                self.active_editing_shape = None
+                self.transform_box.set_shape(None)
+                self.update()
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
     def _on_right_hold_timeout(self):
         """Вызывается по таймеру удержания ПКМ на фигуре (350 мс)."""

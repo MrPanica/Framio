@@ -17,6 +17,7 @@ from pathlib import Path
 
 import math
 import copy
+import numpy as np
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QPoint, QRect, QBuffer, QIODevice, QTimer, QUrl
 from PyQt6.QtWidgets import (
     QWidget, QApplication, QLineEdit, QFileDialog, QSystemTrayIcon, QMenu
@@ -1153,14 +1154,15 @@ class OverlayWindow(QWidget):
 
         Внутри записываемой области не должно быть Framio, а вся рамка окна
         записи, включая шапку и панель рисования, должна получать клики сама.
-        Раньше из маски вырезался только прямоугольник кадра, из-за чего
-        overlay перехватывал кнопки Stop/Draw.
         """
         if not getattr(self, "is_recording", False) or getattr(self, "_mass_recording", False):
             return
 
         recording_indices = set(getattr(self, "recording_region_indices", set()))
-        mask = QRegion(self.rect())
+        try:
+            mask = QRegion(self.rect())
+        except Exception:
+            mask = QRegion()
         window_holes = 0
 
         # Вырезаем фактические окна записи целиком. frameGeometry() у
@@ -1187,19 +1189,14 @@ class OverlayWindow(QWidget):
             if region_idx in recording_indices and window_holes == 0:
                 mask = mask.subtracted(QRegion(region.toRect().adjusted(-2, -2, 2, 2)))
 
-        self.setMask(mask)
-        # Изменение маски само по себе не гарантирует очистку уже записанных
-        # пикселей backing store. При переносе окна записи старый участок мог
-        # поэтому выглядеть как застывший кадр. repaint() синхронно перерисовывает
-        # весь backing store в этом же стеке вызовов, полностью устраняя призрак.
-        # В headless-контексте (тесты) виджет не показан — используем update().
         try:
-            if self.isVisible():
-                self.repaint()
-            else:
-                self.update()
+            self.setMask(mask)
         except Exception:
+            pass
+        try:
             self.update()
+        except Exception:
+            pass
 
     def _on_recording_window_geometry_changed(self, rec_window=None):
         """Синхронизирует выбранную зону с перемещаемым окном записи.
@@ -1640,9 +1637,14 @@ class OverlayWindow(QWidget):
 
         # Отдельный инструмент выделения объектов: клик по объекту выбирает
         # его, drag по пустому месту рисует рамку группового выделения.
-        if self.current_tool == ToolType.SELECT and self.selection_rect.contains(pos):
-            self._begin_object_selection(pos)
-            return
+        if self.current_tool == ToolType.SELECT:
+            if self.selection_rect.contains(pos):
+                self._begin_object_selection(pos)
+                return
+            else:
+                self._clear_shape_selection()
+                self.update()
+                return
 
         # Если рамка есть — проверяем манипуляторы изменения размера активной зоны
         handle = self._hit_test_handles(pos)
@@ -2514,6 +2516,28 @@ class OverlayWindow(QWidget):
             except Exception:
                 pass
             return
+
+        # Клик снаружи активной группы/фигуры: сбрасываем предыдущее выделение
+        self.selected_shapes = []
+        self.last_active_shape = None
+        self.active_editing_shape = None
+        if getattr(self, "transform_box", None) is not None:
+            self.transform_box.set_shape(None)
+
+        if clicked is not None:
+            # Одиночный клик по фигуре: активируем для неё рамку трансформации
+            self.selected_shapes = [clicked]
+            self.last_active_shape = clicked
+            self.active_editing_shape = clicked
+            if getattr(self, "transform_box", None) is not None:
+                self.transform_box.set_shape(clicked)
+                self.is_transforming = True
+                self.transform_box.start_drag(HandleType.INSIDE, pos)
+                self.shape_drag_initial_pos = pos
+                self._set_cursor_if_needed(Qt.CursorShape.SizeAllCursor)
+            self.update()
+            return
+
         self.is_selecting_objects = True
         self.object_selection_start = QPointF(pos)
         self.object_selection_rect = QRectF(pos, pos)
@@ -2521,12 +2545,6 @@ class OverlayWindow(QWidget):
             self.grabMouse()
         except Exception:
             pass
-        if not (QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier):
-            self.selected_shapes = []
-            self.last_active_shape = None
-            self.active_editing_shape = None
-            if getattr(self, "transform_box", None) is not None:
-                self.transform_box.set_shape(None)
         self.update()
 
     def _update_object_selection(self, pos: QPointF):
@@ -2536,21 +2554,28 @@ class OverlayWindow(QWidget):
         rect = self.object_selection_rect.normalized()
         if rect.width() <= 4 and rect.height() <= 4:
             shape = self._shape_at(self.object_selection_start)
-            self.selected_shapes = [shape] if shape is not None else []
+            if shape is not None:
+                self.selected_shapes = [shape]
+                self.last_active_shape = shape
+                self.active_editing_shape = shape
+            else:
+                self.selected_shapes = []
+                self.last_active_shape = None
+                self.active_editing_shape = None
         else:
             selected = [
                 shape for shape in getattr(self.layer_manager, "shapes", [])
                 if getattr(shape, "visible", True) and rect.intersects(self._shape_bounds(shape))
             ]
             self.selected_shapes = selected
+            self.last_active_shape = self.selected_shapes[-1] if self.selected_shapes else None
+            self.active_editing_shape = self.last_active_shape
         self.is_selecting_objects = False
         self.object_selection_rect = QRectF()
         try:
             self.releaseMouse()
         except Exception:
             pass
-        self.last_active_shape = self.selected_shapes[-1] if self.selected_shapes else None
-        self.active_editing_shape = self.last_active_shape
         if getattr(self, "transform_box", None) is not None:
             if len(self.selected_shapes) == 1:
                 self.transform_box.set_shape(self.selected_shapes[0])
@@ -3651,6 +3676,11 @@ class OverlayWindow(QWidget):
     def _draw_dragged_shape_indicator(self, painter: QPainter):
         """Отрисовывает рамку трансформации в стиле Photoshop / Figma вокруг активной фигуры."""
         self.interactive_badge_expand_rect = QRectF()
+        if self.current_tool not in (ToolType.SELECT, ToolType.MOVE, ToolType.CAPTURE_MASK):
+            return
+        if not hasattr(self, "transform_box") or not self.transform_box.is_active():
+            return
+
         active_shape = self._active_interactive_shape()
         selected_shapes = self._selected_interactive_shapes()
         is_group = len(selected_shapes) > 1
@@ -3684,16 +3714,7 @@ class OverlayWindow(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # 1. Отрисовка интерактивной рамки с 8 маркерами и маркером вращения
-        if hasattr(self, "transform_box") and self.transform_box.is_active():
-            self.transform_box.draw(painter)
-        else:
-            pad = 6.0
-            frame_rect = bbox.adjusted(-pad, -pad, pad, pad)
-            pen_border = QPen(QColor(59, 130, 246, 200), 1.5, Qt.PenStyle.DashLine)
-            pen_border.setDashPattern([5, 3])
-            painter.setPen(pen_border)
-            painter.setBrush(QColor(59, 130, 246, 20))
-            painter.drawRoundedRect(frame_rect, 4, 4)
+        self.transform_box.draw(painter)
 
         # 2. Плашка с названием, номером и углом поворота (например «Стрелка #1 (45°)»)
         tb_shape = getattr(self.transform_box, "shape", None) if hasattr(self, "transform_box") else None
@@ -4243,8 +4264,7 @@ class OverlayWindow(QWidget):
     def _on_tool_changed(self, tool_type):
         if hasattr(self, "text_editor") and self.text_editor.isVisible():
             self._commit_text()
-        if tool_type != ToolType.SELECT:
-            self._clear_shape_selection()
+        self._clear_shape_selection()
         self.current_tool = tool_type
         if tool_type == ToolType.CAPTURE_MASK:
             masks = self._capture_masks_for_region()
@@ -4938,40 +4958,47 @@ class OverlayWindow(QWidget):
     def _on_scrolling_screenshot_finished(self, accumulated_bgr: np.ndarray):
         import cv2
 
-        if self.scrolling_engine:
-            self.scrolling_engine.cleanup()
-            self.scrolling_engine = None
-        if self.scrolling_hud:
-            self.scrolling_hud.close()
-            self.scrolling_hud = None
+        try:
+            if self.scrolling_engine:
+                self.scrolling_engine.cleanup()
+                self.scrolling_engine = None
+            if self.scrolling_hud:
+                self.scrolling_hud.close()
+                self.scrolling_hud = None
 
-        H, W = accumulated_bgr.shape[:2]
-        rgb = cv2.cvtColor(accumulated_bgr, cv2.COLOR_BGR2RGB)
-        qimg = QImage(rgb.data, W, H, W * 3, QImage.Format.Format_RGB888).copy()
+            if accumulated_bgr is None or accumulated_bgr.size == 0:
+                return
 
-        # 1. Буфер обмена
-        if self.cfg.auto_copy_to_clipboard:
-            QApplication.clipboard().setImage(qimg)
+            H, W = accumulated_bgr.shape[:2]
+            rgb = cv2.cvtColor(accumulated_bgr, cv2.COLOR_BGR2RGB)
+            qimg = QImage(rgb.data, W, H, W * 3, QImage.Format.Format_RGB888).copy()
 
-        # 2. Сохранение на диск
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"Screenshot_Long_{timestamp}.png"
-        save_dir = Path(self.cfg.save_dir_screenshots)
-        save_dir.mkdir(parents=True, exist_ok=True)
-        path = str(save_dir / filename)
-        qimg.save(path)
+            # 1. Буфер обмена
+            if self.cfg.auto_copy_to_clipboard:
+                QApplication.clipboard().setImage(qimg)
 
-        if self.cfg.play_sound:
-            play_capture_sound()
+            # 2. Сохранение на диск
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            filename = f"Screenshot_Long_{timestamp}.png"
+            save_dir = Path(self.cfg.save_dir_screenshots)
+            save_dir.mkdir(parents=True, exist_ok=True)
+            path = str(save_dir / filename)
+            qimg.save(path)
 
-        self._notify(
-            tr("notif_scroll_saved_title", "Длинный скриншот сохранен"),
-            tr("notif_scroll_saved_body", filename=filename, height=H),
-            QSystemTrayIcon.MessageIcon.Information,
-            4000,
-            target_path=path
-        )
-        self.close_overlay()
+            if self.cfg.play_sound:
+                play_capture_sound()
+
+            self._notify(
+                tr("notif_scroll_saved_title", "Длинный скриншот сохранен"),
+                tr("notif_scroll_saved_body", filename=filename, height=H),
+                QSystemTrayIcon.MessageIcon.Information,
+                4000,
+                target_path=path
+            )
+        except Exception as e:
+            print(f"[Overlay] Ошибка сохранения длинного скриншота: {e}")
+        finally:
+            self.close_overlay()
 
     def _on_scrolling_screenshot_error(self, err_msg: str):
         if self.scrolling_engine:
