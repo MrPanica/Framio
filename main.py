@@ -494,8 +494,8 @@ class FramioApp(QObject):
                 continue
             try:
                 candidates.extend(
-                    path for path in Path(folder).rglob("*")
-                    if path.is_file() and path.suffix.lower() in suffixes
+                    path for path in Path(folder).glob("*")
+                    if path.is_file() and not path.name.startswith(".") and not path.name.startswith("Framio_Clipboard_") and path.suffix.lower() in suffixes
                 )
             except OSError:
                 continue
@@ -1164,13 +1164,6 @@ def setup_exception_handling():
 
 def main():
     setup_exception_handling()
-
-    if sys.platform == "win32":
-        try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(2)
-        except Exception:
-            pass
-
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 

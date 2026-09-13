@@ -42,9 +42,19 @@ def set_windows_autostart(enabled: bool) -> bool:
                     exe_path = str(Path(sys.executable).resolve())
                     cmd = f'"{exe_path}" --minimized'
                 else:
-                    exe_path = str(Path(sys.executable).resolve())
-                    main_py = str((Path(__file__).parent.parent / "main.py").resolve())
-                    cmd = f'"{exe_path}" "{main_py}" --minimized'
+                    repo_root = Path(__file__).parent.parent
+                    compiled_exe = repo_root / "dist-onefile" / "Framio.exe"
+                    folder_exe = repo_root / "dist" / "Framio" / "Framio.exe"
+                    if compiled_exe.exists():
+                        cmd = f'"{compiled_exe.resolve()}" --minimized'
+                    elif folder_exe.exists():
+                        cmd = f'"{folder_exe.resolve()}" --minimized'
+                    else:
+                        python_exe = Path(sys.executable)
+                        pythonw_exe = python_exe.with_name("pythonw.exe")
+                        exe_to_use = pythonw_exe if pythonw_exe.exists() else python_exe
+                        main_py = str((repo_root / "main.py").resolve())
+                        cmd = f'"{exe_to_use.resolve()}" "{main_py}" --minimized'
                 winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, cmd)
                 try:
                     winreg.DeleteValue(key, "LightCap")
