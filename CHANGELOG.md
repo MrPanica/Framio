@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.14] - 2026-09-13
+
+### English
+
+- Completely eliminated the startup warning `qt.qpa.window: SetProcessDpiAwarenessContext() failed: Access is denied` by letting Qt 6 handle native PerMonitorV2 awareness.
+- Fixed Windows startup black console window by correctly launching compiled `Framio.exe` or GUI `pythonw.exe` instead of console `python.exe`.
+- Optimized media history restoration on startup by switching to non-recursive scanning and excluding internal cache/clipboard directories.
+- Ensured single instance IPC correctly raises the settings window without hangs.
+
+### Русский
+
+- Полностью устранено предупреждение при запуске `qt.qpa.window: SetProcessDpiAwarenessContext() failed: Отказано в доступе` (Qt 6 теперь нативно и чисто выставляет PerMonitorV2 без конфликтов).
+- Исправлено появление чёрного окна консоли при запуске Windows: в автозагрузку теперь прописывается скомпилированный `Framio.exe` или GUI-интерпретатор `pythonw.exe` вместо консольного `python.exe`.
+- Оптимизирована загрузка истории снимков при старте: нерекурсивное чтение папок и исключение внутренних временных файлов кэша (`.recent`, `.clipboard`) для мгновенного запуска.
+- Защита от зависаний при повторном запуске и гарантированное открытие окна приложения/настроек через Single Instance.
+
 ## [1.0.13] - 2026-09-12
 
 ### English
