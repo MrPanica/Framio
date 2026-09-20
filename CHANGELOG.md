@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.0.15] - 2026-09-20
+
+### English
+
+Critical fix: GIF recording consumed up to 30 GB of RAM and caused the entire application (and screenshots) to freeze during processing.
+
+- **Root cause**: After FFmpeg generated the GIF, a second Pillow pass loaded ALL frames into RAM at once (`[f.copy() for f in ImageSequence.Iterator(im)]`) and then re-saved with `optimize=True`, which blocked the Python GIL for minutes. For a 3-4 minute GIF at 15 fps (~2700 frames at 1280×720) this created two simultaneous in-memory copies totaling 20-30 GB.
+- **Fix**: Removed the Pillow GIF repack entirely. FFmpeg's two-pass `palettegen+paletteuse` already produces an optimally quantized GIF. If `gifsicle` is installed it is used as a lightweight streaming alternative; otherwise no secondary compression is applied.
+- **Fix**: `GifRecorder.stop()` (no-FFmpeg fallback) now writes frames via a generator instead of building a second `normalized_frames[]` list, and immediately clears the frame list after saving.
+- UI is now fully responsive during GIF processing: no more 20-30 second lag on hotkeys and screenshot capture.
+
+### Русский
+
+Критическое исправление: запись GIF потребляла до 30 ГБ оперативной памяти и полностью замораживала приложение и скриншоты на время обработки.
+
+- **Причина**: После генерации GIF через FFmpeg запускался повторный проход Pillow, который загружал ВСЕ кадры в память одновременно (`[f.copy() for f in ImageSequence.Iterator(im)]`) и пересохранял с `optimize=True`, блокируя Python GIL на минуты. Для 3-4 минутного GIF (15 fps, ~2700 кадров 1280×720) создавались две копии всех кадров — 20-30 ГБ ОЗУ.
+- **Исправление**: Pillow-перепаковка полностью удалена. FFmpeg двухпроходный `palettegen+paletteuse` уже создаёт оптимальный GIF. При наличии `gifsicle` используется он как потоковая альтернатива без нагрузки на ОЗУ.
+- **Исправление**: `GifRecorder.stop()` (fallback без FFmpeg) теперь пишет кадры через генератор, не создавая второй список `normalized_frames[]`, и немедленно освобождает память после сохранения.
+- UI остаётся отзывчивым во время обработки GIF: лаги хоткеев и захвата экрана на 20-30 секунд устранены.
+
 ## [1.0.14] - 2026-09-13
 
 ### English

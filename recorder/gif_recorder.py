@@ -241,28 +241,35 @@ class GifRecorder:
             return
 
         duration_ms = max(20, int(1000 / self.fps))
-        print(f"[GifRecorder] Сохранение {len(self.frames)} кадров в GIF: {self.output_path}...")
+        n = len(self.frames)
+        print(f"[GifRecorder] Сохранение {n} кадров в GIF: {self.output_path}...")
         try:
-            normalized_frames = []
-            for frame in self.frames:
-                if frame.size != (self.max_width, self.max_height):
-                    frame = frame.convert("RGB").resize(
-                        (self.max_width, self.max_height),
-                        Image.Resampling.BILINEAR,
-                    ).convert("P", dither=Image.Dither.NONE)
-                normalized_frames.append(frame)
+            target_size = (self.max_width, self.max_height)
 
-            # Быстрое сохранение без блокирующего optimize=True, занимающего минуты
-            normalized_frames[0].save(
+            def _normalize(frame):
+                if frame.size != target_size:
+                    return frame.convert("RGB").resize(
+                        target_size, Image.Resampling.BILINEAR
+                    ).convert("P", dither=Image.Dither.NONE)
+                return frame
+
+            first_frame = _normalize(self.frames[0])
+            # Передаём остальные кадры как генератор, чтобы не держать
+            # одновременно ни normalized_frames[], ни self.frames[] в памяти.
+            rest = (_normalize(f) for f in self.frames[1:])
+            first_frame.save(
                 self.output_path,
                 save_all=True,
-                append_images=normalized_frames[1:],
+                append_images=rest,
                 duration=duration_ms,
-                loop=0
+                loop=0,
             )
             print(f"[GifRecorder] GIF успешно сохранён: {self.output_path}")
         except Exception as e:
             print(f"[GifRecorder] Ошибка сохранения GIF: {e}")
+        finally:
+            # Освобождаем всю память немедленно после записи
+            self.frames.clear()
 
     def get_elapsed_seconds(self) -> float:
         if not self.is_recording:

@@ -650,36 +650,40 @@ class CaptureWorker(QThread):
                     except Exception:
                         pass
 
-                # Дополнительное сжатие GIF алгоритмами оптимизации кадров
-                if self.compress_gif and os.path.exists(self.output_path):
+                # Дополнительное сжатие GIF через gifsicle (если доступен) — работает
+                # потоково без загрузки всех кадров в ОЗУ, в отличие от Pillow.
+                # Pillow-вариант (frames = [f.copy() for f in ImageSequence.Iterator(im)])
+                # загружает ВСЕ кадры в память — для 3-4 минут при 15fps это 2700+ кадров
+                # и 20-30 ГБ ОЗУ. Поэтому используем только потоковые инструменты.
+                if self.compress_gif and os.path.exists(self.output_path) and os.path.getsize(self.output_path) > 1000:
                     try:
-                        from PIL import Image, ImageSequence
-                        print(f"[CaptureWorker] Запуск сжатия GIF (Pillow Optimize)...")
-                        self._emit_progress(65, "Оптимизация кадров GIF...")
-                        with Image.open(self.output_path) as im:
-                            frames = [f.copy() for f in ImageSequence.Iterator(im)]
-                            if frames:
-                                temp_comp = self.output_path + ".comp.gif"
-                                self._emit_progress(80, "Сжатие LZW...")
-                                frames[0].save(
-                                    temp_comp,
-                                    save_all=True,
-                                    append_images=frames[1:],
-                                    optimize=True,
-                                    loop=0,
-                                    duration=int(1000 / self.fps)
-                                )
-                                if os.path.exists(temp_comp):
-                                    if os.path.getsize(temp_comp) < os.path.getsize(self.output_path):
-                                        self._safe_replace(temp_comp, self.output_path)
-                                        print(f"[CaptureWorker] GIF успешно оптимизирован и сжат!")
-                                    else:
-                                        try:
-                                            os.remove(temp_comp)
-                                        except Exception:
-                                            pass
+                        import shutil as _shutil
+                        gifsicle_exe = _shutil.which("gifsicle")
+                        if gifsicle_exe:
+                            temp_comp = self.output_path + ".comp.gif"
+                            self._emit_progress(70, "Оптимизация GIF (gifsicle)...")
+                            import subprocess as _sp
+                            creation_flags = 0x08000000 if os.name == "nt" else 0
+                            ret_gs = _sp.run(
+                                [gifsicle_exe, "--optimize=3", "--lossy=30",
+                                 "-o", temp_comp, self.output_path],
+                                timeout=120, creationflags=creation_flags,
+                                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                            ).returncode
+                            if ret_gs == 0 and os.path.exists(temp_comp) and os.path.getsize(temp_comp) > 100:
+                                if os.path.getsize(temp_comp) < os.path.getsize(self.output_path):
+                                    self._safe_replace(temp_comp, self.output_path)
+                                    print("[CaptureWorker] GIF дополнительно оптимизирован через gifsicle!")
+                                else:
+                                    try:
+                                        os.remove(temp_comp)
+                                    except Exception:
+                                        pass
+                        # gifsicle недоступен — FFmpeg palettegen уже дал оптимальный GIF,
+                        # дополнительного сжатия не требуется. Pillow-перепаковка намеренно
+                        # отключена: она загружает все кадры разом и потребляет 20-30 ГБ ОЗУ.
                     except Exception as comp_err:
-                        print(f"[CaptureWorker] Ошибка сжатия GIF: {comp_err}")
+                        print(f"[CaptureWorker] Предупреждение: не удалось запустить gifsicle: {comp_err}")
 
         except Exception as e:
             print(f"[CaptureWorker] Непредвиденная ошибка в _finalize_recording: {e}")
