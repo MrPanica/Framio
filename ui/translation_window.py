@@ -4,15 +4,18 @@
 Позволяет свободно перемещать и масштабировать область на экране, непрерывно сканирует
 текст под рамкой с помощью локального OCR и динамически отображает перевод:
 1. В виде аккуратных субтитров (HUD) внизу рамки (в стиле игровых субтитров).
-2. Либо прямо поверх оригинального текста (In-place замена) с точным соответствием размера шрифта.
+2. Либо прямо поверх оригинального текста (In-place замена) с точным соответствием:
+   - размера шрифта (кегль)
+   - цвета слов (извлечение доминантного цвета штриха с экрана)
+   - гарнитуры и жирности начертания
 
 Особенности эргономики:
 - Полностью векторный интерфейс (Lucide / SVG), без эмодзи и смайликов.
 - Компактные кнопки настроек с выпадающими списками (Язык, Режим, Настройки оформления).
-- Режим полной маскировки (Глазик): скрывает всю рамку и шапку, оставляя лишь крошечную
-  иконку глазика. Клики и наведение мыши проходят сквозь рамку прямо в игру (WS_EX_TRANSPARENT),
-  пока снова не будет нажат глазик.
-- Настройки прозрачности фона, стиля подложки, размера шрифта и частоты сканирования.
+- Режим полной маскировки (Глазик): скрывает всю рамку и шапку, оставляя лишь миниатюрную
+  иконку глазика (в 2 раза меньше обычной, 16x16 px). Клики мыши проходят сквозь рамку прямо в игру (WS_EX_TRANSPARENT).
+- Настройки прозрачности фона, стиля подложки, размера шрифта, скорости сканирования.
+- Отдельные переключатели «Повторять цвет оригинала» и «Повторять шрифт оригинала» (включены по умолчанию).
 - Плавное перемещение как за заголовок, так и за любую область рамки (Win32 SendMessageW).
 - Аппаратно исключена из захвата (WDA_EXCLUDEFROMCAPTURE), не грузит CPU на статичных кадрах (Smart Diff).
 """
@@ -45,6 +48,60 @@ from .icons import create_themed_icon, get_svg_pixmap
 if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
+
+
+def extract_visual_props(crop_bgr: np.ndarray) -> dict:
+    """
+    Анализирует вырезку текста из экрана и определяет:
+    - color_rgb: кортеж (r, g, b) оригинального цвета текста
+    - is_bold: логический флаг жирности начертания
+    - font_family: семейство шрифта ('Segoe UI', 'Trebuchet MS', 'Impact', 'Arial Black')
+    """
+    import cv2
+    if crop_bgr is None or crop_bgr.size == 0 or crop_bgr.shape[0] < 4 or crop_bgr.shape[1] < 4:
+        return {"color_rgb": (248, 250, 252), "is_bold": False, "font_family": "Segoe UI"}
+
+    try:
+        h, w = crop_bgr.shape[:2]
+        gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+        _, mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # Анализ фона по краям вырезки
+        border_pixels = np.concatenate([gray[0, :], gray[-1, :], gray[:, 0], gray[:, -1]])
+        bg_val = float(np.median(border_pixels))
+
+        mean_mask_255 = float(np.mean(gray[mask == 255])) if np.any(mask == 255) else 128.0
+        is_bright_text = mean_mask_255 > bg_val
+        text_mask = (mask == 255) if is_bright_text else (mask == 0)
+
+        text_pts = float(np.count_nonzero(text_mask))
+        total_pts = float(mask.size)
+        density = text_pts / max(1.0, total_pts)
+
+        # Определение оригинального цвета текста
+        if text_pts >= 4:
+            bgr_median = np.median(crop_bgr[text_mask], axis=0).astype(int)
+            color_rgb = (int(bgr_median[2]), int(bgr_median[1]), int(bgr_median[0]))
+        else:
+            color_rgb = (248, 250, 252)
+
+        # Определение жирности и гарнитуры
+        is_bold = (density > 0.25) or (h >= 26 and density > 0.20)
+        if h >= 32 and is_bold:
+            font_family = "Trebuchet MS"
+        elif density > 0.32:
+            font_family = "Arial Black"
+        else:
+            font_family = "Segoe UI"
+
+        return {
+            "color_rgb": color_rgb,
+            "is_bold": is_bold,
+            "font_family": font_family
+        }
+    except Exception:
+        return {"color_rgb": (248, 250, 252), "is_bold": False, "font_family": "Segoe UI"}
 
 
 class TranslationScannerWorker(QThread):
@@ -158,19 +215,31 @@ class TranslationScannerWorker(QThread):
             # Перевод общего текста
             translated_full = translate_text(full_text, source_lang=src, target_lang=tgt)
 
-            # Перевод каждого блока для режима In-place
+            # Перевод каждого блока для режима In-place с извлечением цвета и характеристик шрифта
             translated_blocks = []
+            f_h, f_w = frame_bgr.shape[:2]
             for b in blocks:
                 b_text = b.get("text", "").strip()
                 if b_text:
                     b_tr = translate_text(b_text, source_lang=src, target_lang=tgt)
+                    bx = int(max(0, min(f_w - 2, b.get("x", 0))))
+                    by = int(max(0, min(f_h - 2, b.get("y", 0))))
+                    bw = int(max(10, min(f_w - bx, b.get("width", 50))))
+                    bh = int(max(10, min(f_h - by, b.get("height", 20))))
+
+                    crop = frame_bgr[by:by+bh, bx:bx+bw]
+                    visual = extract_visual_props(crop)
+
                     translated_blocks.append({
                         "original": b_text,
                         "translated": b_tr,
-                        "x": b.get("x", 0),
-                        "y": b.get("y", 0),
-                        "width": b.get("width", 50),
-                        "height": b.get("height", 20)
+                        "x": bx,
+                        "y": by,
+                        "width": bw,
+                        "height": bh,
+                        "color_rgb": visual["color_rgb"],
+                        "is_bold": visual["is_bold"],
+                        "font_family": visual["font_family"]
                     })
 
             self.translation_ready.emit(full_text, translated_full, translated_blocks)
@@ -180,10 +249,8 @@ class TranslationScannerWorker(QThread):
 class EyeUnlockPill(QPushButton):
     """
     Автономная миниатюрная плавающая кнопка разблокировки глазика.
-    Отображается в углу экрана поверх всех окон, когда рамка находится в режиме маскировки.
-    Поскольку сама рамка переводится в сквозной режим кликов (WS_EX_TRANSPARENT),
-    отдельное окно кнопки гарантирует 100% отклик на клик без необходимости перехватывать
-    низкоуровневые сообщения Windows или рисковать сбоем SIP в PyQt6.
+    Сделана сверхкомпактной (16x16 px, ровно в 2 раза меньше обычной 28x28 px),
+    чтобы не отвлекать и не закрывать обзор в играх.
     """
     def __init__(self, target_window: TranslationFrameWindow):
         super().__init__()
@@ -194,14 +261,17 @@ class EyeUnlockPill(QPushButton):
             Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setFixedSize(28, 28)
-        self.setIcon(create_themed_icon("eye", is_dark=True, size=15, custom_color="#38bdf8"))
+        self.setFixedSize(16, 16)
+        self.setIcon(create_themed_icon("eye", is_dark=True, size=10, custom_color="#38bdf8"))
+        self.setIconSize(QSize(10, 10))
         self.setToolTip(tr("trans_unlock_tooltip", "Нажмите на глазик, чтобы вернуть настройки"))
         self.setStyleSheet("""
             QPushButton {
-                background-color: rgba(15, 23, 42, 235);
-                border: 1.5px solid #38bdf8;
-                border-radius: 6px;
+                background-color: rgba(15, 23, 42, 230);
+                border: 1px solid rgba(56, 189, 248, 200);
+                border-radius: 3px;
+                padding: 0px;
+                margin: 0px;
             }
             QPushButton:hover {
                 background-color: #0284c7;
@@ -218,7 +288,7 @@ class EyeUnlockPill(QPushButton):
     def update_position(self):
         if self.target_window and self.target_window.isVisible():
             geo = self.target_window.geometry()
-            self.move(geo.right() - 32, geo.top() + 6)
+            self.move(geo.right() - 20, geo.top() + 4)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -234,10 +304,10 @@ class TranslationFrameWindow(QWidget):
     Интерактивное окно рамки живого перевода.
     Поддерживает:
     - Компактный заголовок с объединенными кнопками настроек (Язык, Режим, Настройки оформления)
-    - Режим скрытия и сквозного клика по кнопке «Глазик» (остается только иконка глазика)
+    - Режим скрытия и сквозного клика по кнопке «Глазик» (остается мини-глазик 16x16)
     - Плавное перемещение и изменение размера
-    - Динамический расчет размера шрифта для In-place наложения
-    - Пользовательские параметры фона и прозрачности
+    - Динамический расчет размера шрифта, цвета слов и гарнитуры оригинала
+    - Пользовательские параметры фона, прозрачности и оптимизации
     """
     closed = pyqtSignal()
     frame_closed = pyqtSignal()
@@ -299,6 +369,10 @@ class TranslationFrameWindow(QWidget):
         self.scan_interval = 300
         self.smart_diff_enabled = True
 
+        # Две отдельные настройки соответствия оригиналу (включены по умолчанию)
+        self.match_text_color = True    # Соответствие цвета слов
+        self.match_font_family = True   # Соответствие шрифта и начертания
+
         self.translated_text = ""
         self.original_text = ""
         self.translated_blocks = []
@@ -310,7 +384,7 @@ class TranslationFrameWindow(QWidget):
         self.drag_start_pos = QPoint()
         self.initial_geometry = QRect()
 
-        # Автономная плавающая кнопка разблокировки глазика
+        # Автономная плавающая кнопка разблокировки глазика (в 2 раза меньше)
         self.unlock_pill = EyeUnlockPill(self)
 
         self._setup_ui()
@@ -391,10 +465,10 @@ class TranslationFrameWindow(QWidget):
         self.btn_mode.clicked.connect(self._show_mode_menu)
         header_layout.addWidget(self.btn_mode)
 
-        # Кнопка расширенных настроек (Фон, Прозрачность, Шрифт, Скорость)
+        # Кнопка расширенных настроек (Фон, Прозрачность, Шрифт, Скорость, Цвета)
         self.btn_settings = QPushButton(tr("trans_settings_btn", "Настройки ▾"))
         self.btn_settings.setIcon(create_themed_icon("settings", is_dark=True, size=13))
-        self.btn_settings.setToolTip(tr("trans_settings_tooltip", "Настройки прозрачности, темы и оптимизации"))
+        self.btn_settings.setToolTip(tr("trans_settings_tooltip", "Настройки прозрачности, темы, шрифта и цвета"))
         self.btn_settings.clicked.connect(self._show_settings_menu)
         header_layout.addWidget(self.btn_settings)
 
@@ -527,7 +601,6 @@ class TranslationFrameWindow(QWidget):
         menu = QMenu(self)
         menu.setStyleSheet(self._menu_stylesheet())
 
-        # Популярные пары
         pairs = [
             ("Auto → RU", "auto", "ru", "Auto → Русский"),
             ("EN → RU", "en", "ru", "English → Русский"),
@@ -543,7 +616,6 @@ class TranslationFrameWindow(QWidget):
 
         menu.addSeparator()
 
-        # Подменю исходного языка
         src_menu = menu.addMenu(tr("trans_menu_src", "Исходный язык"))
         src_menu.setStyleSheet(self._menu_stylesheet())
         all_src = [("auto", "Auto"), ("en", "English"), ("ja", "Japanese"), ("zh-CN", "Chinese"),
@@ -552,7 +624,6 @@ class TranslationFrameWindow(QWidget):
             act = src_menu.addAction(name)
             act.triggered.connect(lambda ch, s=tag: self._set_languages(s, self.tgt_lang))
 
-        # Подменю языка перевода
         tgt_menu = menu.addMenu(tr("trans_menu_tgt", "Язык перевода"))
         tgt_menu.setStyleSheet(self._menu_stylesheet())
         all_tgt = [("ru", "Русский"), ("en", "English"), ("de", "Deutsch"), ("fr", "Français"),
@@ -599,7 +670,23 @@ class TranslationFrameWindow(QWidget):
         menu = QMenu(self)
         menu.setStyleSheet(self._menu_stylesheet())
 
-        # 1. Прозрачность фона
+        # 1. Повторение цвета оригинального текста (Отдельная настройка, по умолчанию ВКЛ)
+        act_color = menu.addAction(tr("trans_opt_match_color", "Повторять цвет текста оригинала"))
+        act_color.setCheckable(True)
+        act_color.setChecked(self.match_text_color)
+        act_color.setToolTip(tr("trans_opt_match_color_tip", "Окрашивать переведенные слова в цвета оригинала с экрана"))
+        act_color.triggered.connect(self._toggle_match_color)
+
+        # 2. Повторение шрифта и жирности оригинала (Отдельная настройка, по умолчанию ВКЛ)
+        act_font = menu.addAction(tr("trans_opt_match_font", "Повторять шрифт и начертание оригинала"))
+        act_font.setCheckable(True)
+        act_font.setChecked(self.match_font_family)
+        act_font.setToolTip(tr("trans_opt_match_font_tip", "Подбирать жирность и гарнитуру шрифта, как в исходном тексте"))
+        act_font.triggered.connect(self._toggle_match_font)
+
+        menu.addSeparator()
+
+        # 3. Прозрачность фона
         op_menu = menu.addMenu(tr("trans_menu_opacity", "Прозрачность фона"))
         op_menu.setStyleSheet(self._menu_stylesheet())
         op_levels = [
@@ -615,7 +702,7 @@ class TranslationFrameWindow(QWidget):
             act.setChecked(abs(self.bg_opacity - val) < 0.05)
             act.triggered.connect(lambda ch, v=val: self._set_opacity(v))
 
-        # 2. Стиль / Цвет фона
+        # 4. Стиль / Цвет фона
         theme_menu = menu.addMenu(tr("trans_menu_theme", "Цвет фона"))
         theme_menu.setStyleSheet(self._menu_stylesheet())
         themes = [
@@ -629,7 +716,7 @@ class TranslationFrameWindow(QWidget):
             act.setChecked(self.bg_theme == key)
             act.triggered.connect(lambda ch, k=key: self._set_theme(k))
 
-        # 3. Размер шрифта субтитров
+        # 5. Размер шрифта субтитров
         font_menu = menu.addMenu(tr("trans_menu_font_size", "Размер шрифта субтитров"))
         font_menu.setStyleSheet(self._menu_stylesheet())
         fonts = [
@@ -647,7 +734,7 @@ class TranslationFrameWindow(QWidget):
 
         menu.addSeparator()
 
-        # 4. Скорость сканирования (FPS)
+        # 6. Скорость сканирования (FPS)
         fps_menu = menu.addMenu(tr("trans_menu_fps", "Скорость сканирования"))
         fps_menu.setStyleSheet(self._menu_stylesheet())
         speeds = [
@@ -661,13 +748,21 @@ class TranslationFrameWindow(QWidget):
             act.setChecked(self.scan_interval == ms)
             act.triggered.connect(lambda ch, m=ms: self._set_scan_interval(m))
 
-        # 5. Smart Diff (Оптимизация CPU)
+        # 7. Smart Diff (Оптимизация CPU)
         act_diff = menu.addAction(tr("trans_menu_smart_diff", "Умная пауза при статичном кадре"))
         act_diff.setCheckable(True)
         act_diff.setChecked(self.smart_diff_enabled)
         act_diff.triggered.connect(self._toggle_smart_diff)
 
         menu.exec(self.btn_settings.mapToGlobal(QPoint(0, self.btn_settings.height() + 2)))
+
+    def _toggle_match_color(self, checked: bool):
+        self.match_text_color = checked
+        self.update()
+
+    def _toggle_match_font(self, checked: bool):
+        self.match_font_family = checked
+        self.update()
 
     def _set_opacity(self, val: float):
         self.bg_opacity = val
@@ -699,7 +794,7 @@ class TranslationFrameWindow(QWidget):
         Включает или выключает режим маскировки по кнопке «Глазик».
         В заблокированном режиме:
         - Шапка и контур рамки полностью скрываются.
-        - Отображается только мини-иконка глазика в углу.
+        - Отображается только мини-иконка глазика в углу (16x16 px).
         - Наведение и клики мыши по области рамки проходят насквозь в фоновое окно/игру (WS_EX_TRANSPARENT).
         - Единственный элемент, реагирующий на клик — иконка глазика.
         """
@@ -953,9 +1048,8 @@ class TranslationFrameWindow(QWidget):
             painter.drawRect(0, h - m, m, m)
             painter.drawRect(w - m, h - m, m, m)
 
-        # 2. Режим In-place: отрисовка перевода прямо поверх оригинального текста с адаптивным кеглем
+        # 2. Режим In-place: отрисовка перевода прямо поверх оригинального текста с адаптивным кеглем, цветом и шрифтом
         if self.current_mode == "inplace" and self.translated_blocks:
-            base_font = QFont("Segoe UI", 10, QFont.Weight.DemiBold)
             r, g, b = self.THEME_COLORS.get(self.bg_theme, (15, 23, 42))
             alpha = int(self.bg_opacity * 255)
 
@@ -974,7 +1068,16 @@ class TranslationFrameWindow(QWidget):
                 else:
                     target_pixel_size = max(10, int(round(bh * 0.72)))
 
-                font = QFont(base_font)
+                # Выбор гарнитуры и жирности (если включена настройка соответствия оригиналу)
+                if self.match_font_family:
+                    family = item.get("font_family", "Segoe UI")
+                    is_bold = item.get("is_bold", True)
+                    weight = QFont.Weight.Bold if is_bold else QFont.Weight.DemiBold
+                else:
+                    family = "Segoe UI"
+                    weight = QFont.Weight.DemiBold
+
+                font = QFont(family, 10, weight)
                 font.setPixelSize(target_pixel_size)
                 fm = QFontMetrics(font)
 
@@ -1001,8 +1104,14 @@ class TranslationFrameWindow(QWidget):
                     painter.setPen(QPen(QColor(59, 130, 246, min(200, alpha + 30)), 1.0))
                     painter.drawRoundedRect(bg_rect, 4.0, 4.0)
 
-                # Текст перевода: контрастный светлый с четким рендерингом
-                painter.setPen(QColor(248, 250, 252))
+                # Выбор цвета текста (если включено повторение цвета оригинала)
+                if self.match_text_color and "color_rgb" in item:
+                    cr, cg, cb = item["color_rgb"]
+                    text_color = QColor(cr, cg, cb)
+                else:
+                    text_color = QColor(248, 250, 252)
+
+                painter.setPen(text_color)
                 painter.drawText(bg_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, txt)
 
     def showEvent(self, event):

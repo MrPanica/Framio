@@ -829,6 +829,10 @@ TRANSLATIONS = {
         "trans_fps_fast": "Быстро (150 мс)",
         "trans_fps_opt": "Оптимально (300 мс)",
         "trans_fps_eco": "Энергосбережение (600 мс)",
+        "trans_opt_match_color": "Повторять цвет текста оригинала",
+        "trans_opt_match_color_tip": "Окрашивать переведенные слова в цвета оригинала с экрана",
+        "trans_opt_match_font": "Повторять шрифт и начертание оригинала",
+        "trans_opt_match_font_tip": "Подбирать жирность и гарнитуру шрифта, как в исходном тексте",
     },
 
     "en": {
@@ -1645,6 +1649,10 @@ TRANSLATIONS = {
         "trans_fps_fast": "Fast (150 ms)",
         "trans_fps_opt": "Optimal (300 ms)",
         "trans_fps_eco": "Power Saver (600 ms)",
+        "trans_opt_match_color": "Match original text color",
+        "trans_opt_match_color_tip": "Render translated text in the original colors detected on screen",
+        "trans_opt_match_font": "Match original font & weight",
+        "trans_opt_match_font_tip": "Match font family and boldness of the original on-screen text",
     }
 }
 
