@@ -14,7 +14,7 @@ import time
 import numpy as np
 
 from PyQt6.QtCore import (
-    Qt, QRect, QRectF, QPoint, QPointF, QSize, QThread, pyqtSignal, pyqtSlot, QMutex, QMutexLocker, QTimer
+    Qt, QRect, QRectF, QPoint, QPointF, QSize, QThread, pyqtSignal, pyqtSlot, QMutex, QMutexLocker, QTimer, QEvent
 )
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QComboBox,
@@ -73,7 +73,6 @@ class TranslationScannerWorker(QThread):
 
     def run(self):
         import cv2
-
         while self._running:
             with QMutexLocker(self._mutex):
                 paused = self._paused
@@ -155,6 +154,7 @@ class TranslationFrameWindow(QWidget):
     режимы HUD-субтитров и In-place наложения поверх слов.
     """
     closed = pyqtSignal()
+    frame_closed = pyqtSignal()
 
     HANDLE_SIZE = 8
     HANDLE_NONE = 0
@@ -176,19 +176,17 @@ class TranslationFrameWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
-
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                ctypes.windll.user32.SetWindowDisplayAffinity(int(self.winId()), 0x00000011)
-            except Exception:
-                pass
+        self.setMinimumSize(320, 140)
 
         screen = QApplication.primaryScreen()
         screen_geo = screen.geometry() if screen else QRect(0, 0, 1920, 1080)
 
         if initial_rect is not None and initial_rect.isValid() and not initial_rect.isEmpty():
-            self.setGeometry(initial_rect)
+            w = max(340, initial_rect.width())
+            h = max(160, initial_rect.height())
+            x = initial_rect.x()
+            y = initial_rect.y()
+            self.setGeometry(x, y, w, h)
         else:
             w, h = 540, 260
             x = screen_geo.x() + (screen_geo.width() - w) // 2
@@ -334,6 +332,9 @@ class TranslationFrameWindow(QWidget):
         self.lbl_hud_text.setWordWrap(True)
         self.lbl_hud_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         hud_layout.addWidget(self.lbl_hud_text)
+
+        self.header_frame.installEventFilter(self)
+        self.lbl_title.installEventFilter(self)
 
         self._update_layout_positions()
 
@@ -556,8 +557,36 @@ class TranslationFrameWindow(QWidget):
                 painter.setPen(QColor(248, 250, 252))
                 painter.drawText(bg_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, txt)
 
+    def eventFilter(self, watched, event):
+        if watched in (self.header_frame, self.lbl_title):
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                self.is_moving_window = True
+                self.drag_start_pos = event.globalPosition().toPoint()
+                self.initial_geometry = self.geometry()
+                return True
+            elif event.type() == QEvent.Type.MouseMove and self.is_moving_window:
+                delta = event.globalPosition().toPoint() - self.drag_start_pos
+                self.move(self.initial_geometry.topLeft() + delta)
+                return True
+            elif event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+                self.is_moving_window = False
+                return True
+        return super().eventFilter(watched, event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.user32.SetWindowDisplayAffinity(int(self.winId()), 0x00000011)
+            except Exception:
+                pass
+        self.raise_()
+        self.activateWindow()
+
     def closeEvent(self, event):
         if hasattr(self, "worker") and self.worker.isRunning():
             self.worker.stop()
         self.closed.emit()
+        self.frame_closed.emit()
         super().closeEvent(event)

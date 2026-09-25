@@ -5034,23 +5034,38 @@ class OverlayWindow(QWidget):
         """
         Открывает перманентную плавающую рамку динамического перевода экрана.
         """
-        if target_rect is None or not isinstance(target_rect, QRect):
+        rect_to_use = None
+        if isinstance(target_rect, QRect) and target_rect.isValid() and not target_rect.isEmpty():
+            rect_to_use = target_rect
+        elif isinstance(target_rect, QRectF) and target_rect.isValid() and not target_rect.isEmpty():
+            rect_to_use = target_rect.toRect()
+        else:
             sel = self.selection_rect.toRect()
-            if sel.isValid() and sel.width() > 30 and sel.height() > 20:
-                target_rect = sel
-            else:
-                target_rect = None
+            if sel.isValid() and sel.width() > 10 and sel.height() > 10:
+                rect_to_use = sel
 
         self.close_overlay()
 
-        from ui.translation_window import TranslationFrameWindow
-        app_inst = QApplication.instance()
-        if not hasattr(app_inst, "_active_translation_windows"):
-            app_inst._active_translation_windows = []
-        win = TranslationFrameWindow(initial_rect=target_rect)
-        app_inst._active_translation_windows.append(win)
-        win.frame_closed.connect(lambda w=win: app_inst._active_translation_windows.remove(w) if hasattr(app_inst, "_active_translation_windows") and w in app_inst._active_translation_windows else None)
-        win.show()
+        try:
+            from ui.translation_window import TranslationFrameWindow
+            app_inst = QApplication.instance()
+            if not hasattr(app_inst, "_active_translation_windows"):
+                app_inst._active_translation_windows = []
+            win = TranslationFrameWindow(initial_rect=rect_to_use)
+            app_inst._active_translation_windows.append(win)
+
+            def _on_closed(w=win):
+                if hasattr(app_inst, "_active_translation_windows") and w in app_inst._active_translation_windows:
+                    app_inst._active_translation_windows.remove(w)
+
+            win.closed.connect(_on_closed)
+            win.frame_closed.connect(_on_closed)
+            win.show()
+            win.raise_()
+            win.activateWindow()
+        except Exception:
+            import traceback
+            traceback.print_exc()
 
     def grab_ui_snapshot_image(self) -> QImage:
         """
