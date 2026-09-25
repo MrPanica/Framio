@@ -456,6 +456,17 @@ class FramioApp(QObject):
         from ui.translation_window import TranslationFrameWindow
         if not hasattr(self, "_active_translation_windows"):
             self._active_translation_windows = []
+        if rect is None and self._active_translation_windows:
+            for win in self._active_translation_windows:
+                if getattr(win, "is_click_through", False):
+                    win.set_click_through(False)
+                if hasattr(win, "unfold_controls"):
+                    win.unfold_controls()
+                win.show()
+                win.raise_()
+                win.activateWindow()
+            return
+
         win = TranslationFrameWindow(initial_rect=rect)
         self._active_translation_windows.append(win)
         win.frame_closed.connect(lambda w=win: self._active_translation_windows.remove(w) if hasattr(self, "_active_translation_windows") and w in self._active_translation_windows else None)

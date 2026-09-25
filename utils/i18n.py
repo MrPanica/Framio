@@ -787,6 +787,22 @@ TRANSLATIONS = {
         "eyedropper_loupe_hint": "ЛКМ: выбрать цвет | Esc / ПКМ: отмена",
         "action_edit_text": "Редактировать текст...",
         "prop_text_italic": "Курсив",
+
+        # --- Рамка живого перевода экрана ---
+        "trans_frame_title": "Live Перевод",
+        "trans_mode_hud": "Субтитры",
+        "trans_mode_inplace": "Поверх текста",
+        "trans_mode_tooltip": "Режим: Субтитры внизу / Наложение поверх слов",
+        "trans_pause_tooltip": "Приостановить / возобновить сканирование",
+        "trans_copy_tooltip": "Скопировать текущий перевод в буфер",
+        "trans_close_tooltip": "Закрыть рамку перевода",
+        "trans_stealth_tooltip": "Свернуть панель (Игровой режим)",
+        "trans_unfold_tooltip": "Развернуть панель управления [Ctrl+Shift+T]",
+        "trans_passthrough_tooltip": "Сквозной клик для игр (клики мыши проходят в игру). Возврат: Ctrl+Shift+T",
+        "trans_passthrough_active": "Сквозной клик активен. Нажмите Ctrl+Shift+T для возврата панели.",
+        "trans_copied": "Перевод скопирован в буфер!",
+        "trans_waiting_text": "Ожидание текста в рамке...",
+        "trans_no_text": "Текст не обнаружен",
     },
 
     "en": {
@@ -1561,6 +1577,22 @@ TRANSLATIONS = {
         "eyedropper_loupe_hint": "LMB: pick color | Esc / RMB: cancel",
         "action_edit_text": "Edit text...",
         "prop_text_italic": "Italic",
+
+        # --- Live Screen Translator Frame ---
+        "trans_frame_title": "Live Translator",
+        "trans_mode_hud": "Subtitles",
+        "trans_mode_inplace": "In-place Text",
+        "trans_mode_tooltip": "Display Mode: Bottom Subtitles HUD / In-place overlay",
+        "trans_pause_tooltip": "Pause / Resume scanning",
+        "trans_copy_tooltip": "Copy current translation to clipboard",
+        "trans_close_tooltip": "Close translation frame",
+        "trans_stealth_tooltip": "Collapse panel (Gaming / Stealth mode)",
+        "trans_unfold_tooltip": "Unfold control panel [Ctrl+Shift+T]",
+        "trans_passthrough_tooltip": "Click-through mode for games (mouse clicks pass through). Restore: Ctrl+Shift+T",
+        "trans_passthrough_active": "Click-through is active. Press Ctrl+Shift+T to restore controls.",
+        "trans_copied": "Translation copied to clipboard!",
+        "trans_waiting_text": "Waiting for text in frame...",
+        "trans_no_text": "No text detected",
     }
 }
 

@@ -3,9 +3,14 @@
 Плавающая интерактивная рамка живого перевода экрана в реальном времени (Live Screen Translator).
 Позволяет свободно перемещать и масштабировать область на экране, непрерывно сканирует
 текст под рамкой с помощью локального OCR и динамически отображает перевод:
-1. В виде аккуратных субтитров (HUD) внизу рамки.
-2. Либо прямо поверх оригинального текста (In-place замена).
-Аппаратно исключена из захвата (WDA_EXCLUDEFROMCAPTURE), не грузит CPU на статичных кадрах (Smart Diff).
+1. В виде аккуратных субтитров (HUD) внизу рамки (в стиле игровых субтитров).
+2. Либо прямо поверх оригинального текста (In-place замена) с точным соответствием размера шрифта.
+
+Особенности эргономики:
+- Полностью векторный интерфейс (Lucide / SVG), без эмодзи и смайликов.
+- Плавное перемещение как за заголовок, так и за любую область рамки (через нативный Win32 Move).
+- Игровой режим / Стелс: автоскрытие рамки и шапки, сквозной клик (WS_EX_TRANSPARENT) для игр.
+- Аппаратно исключена из захвата (WDA_EXCLUDEFROMCAPTURE), не грузит CPU на статичных кадрах (Smart Diff).
 """
 
 from __future__ import annotations
@@ -14,7 +19,8 @@ import time
 import numpy as np
 
 from PyQt6.QtCore import (
-    Qt, QRect, QRectF, QPoint, QPointF, QSize, QThread, pyqtSignal, pyqtSlot, QMutex, QMutexLocker, QTimer, QEvent
+    Qt, QRect, QRectF, QPoint, QPointF, QSize, QThread, pyqtSignal, pyqtSlot,
+    QMutex, QMutexLocker, QTimer, QEvent
 )
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QComboBox,
@@ -22,14 +28,14 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QBrush, QFont, QCursor, QPaintEvent, QMouseEvent,
-    QPainterPath, QLinearGradient
+    QPainterPath, QLinearGradient, QFontMetrics
 )
 
 from utils.screen_lock import safe_grab_screen_bgr, user32
 from utils.ocr_helper import extract_text_and_blocks, extract_text_from_image
 from utils.translator import translate_text, get_available_translation_languages
 from utils.i18n import tr
-from .icons import create_themed_icon
+from .icons import create_themed_icon, get_svg_pixmap
 
 
 class TranslationScannerWorker(QThread):
@@ -150,8 +156,11 @@ class TranslationScannerWorker(QThread):
 class TranslationFrameWindow(QWidget):
     """
     Интерактивное окно рамки перевода.
-    Поддерживает перетаскивание, изменение размеров по 8 направлениям,
-    режимы HUD-субтитров и In-place наложения поверх слов.
+    Поддерживает:
+    - Свободное перетаскивание (через нативный Win32 Move или Qt-обработчики)
+    - Изменение размеров по 8 направлениям
+    - Режимы HUD-субтитров и In-place наложения поверх слов с пропорциональным кеглем шрифта
+    - Игровой режим: автоскрытие шапки, сверхтонкая рамка, сквозной клик (WS_EX_TRANSPARENT)
     """
     closed = pyqtSignal()
     frame_closed = pyqtSignal()
@@ -195,6 +204,10 @@ class TranslationFrameWindow(QWidget):
 
         self.current_mode = "hud"  # "hud" (субтитры) или "inplace" (поверх слов)
         self.is_paused = False
+        self.is_stealth = False
+        self.is_click_through = False
+        self.is_hovered = False
+
         self.translated_text = ""
         self.original_text = ""
         self.translated_blocks = []
@@ -205,6 +218,11 @@ class TranslationFrameWindow(QWidget):
         self.is_moving_window = False
         self.drag_start_pos = QPoint()
         self.initial_geometry = QRect()
+
+        # Таймер автоскрытия шапки при неактивности
+        self.stealth_timer = QTimer(self)
+        self.stealth_timer.setSingleShot(True)
+        self.stealth_timer.timeout.connect(self._on_stealth_timeout)
 
         self._setup_ui()
 
@@ -219,8 +237,8 @@ class TranslationFrameWindow(QWidget):
         self.header_frame = QFrame(self)
         self.header_frame.setStyleSheet("""
             QFrame {
-                background-color: rgba(18, 18, 22, 230);
-                border: 1px solid #3b82f6;
+                background-color: rgba(18, 20, 28, 240);
+                border: 1px solid rgba(59, 130, 246, 180);
                 border-radius: 6px;
             }
             QLabel {
@@ -230,7 +248,7 @@ class TranslationFrameWindow(QWidget):
                 font-weight: 600;
             }
             QPushButton {
-                background-color: rgba(39, 39, 42, 200);
+                background-color: rgba(39, 39, 42, 210);
                 color: #e4e4e7;
                 border: 1px solid #3f3f46;
                 border-radius: 4px;
@@ -239,17 +257,20 @@ class TranslationFrameWindow(QWidget):
                 padding: 2px 6px;
             }
             QPushButton:hover {
-                background-color: #3b82f6;
+                background-color: #2563eb;
                 color: #ffffff;
                 border-color: #60a5fa;
             }
             QComboBox {
-                background-color: rgba(39, 39, 42, 200);
+                background-color: rgba(39, 39, 42, 210);
                 color: #e4e4e7;
                 border: 1px solid #3f3f46;
                 border-radius: 4px;
                 font-size: 11px;
                 padding: 1px 4px;
+            }
+            QComboBox:hover {
+                border-color: #60a5fa;
             }
         """)
 
@@ -257,8 +278,20 @@ class TranslationFrameWindow(QWidget):
         header_layout.setContentsMargins(6, 4, 6, 4)
         header_layout.setSpacing(6)
 
-        # Значок и заголовок
-        self.lbl_title = QLabel("🌐 " + tr("trans_frame_title", "Live Перевод"))
+        # Значок захвата / перетаскивания (Grip)
+        self.drag_grip = QLabel(self)
+        self.drag_grip.setPixmap(get_svg_pixmap("move", color="#94a3b8", size=14))
+        self.drag_grip.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+        self.drag_grip.setToolTip(tr("trans_drag_tooltip", "Зажмите ЛКМ для перемещения рамки"))
+        header_layout.addWidget(self.drag_grip)
+
+        # Векторная иконка перевода и заголовок (без эмодзи)
+        self.lbl_icon = QLabel(self)
+        self.lbl_icon.setPixmap(get_svg_pixmap("translate", color="#60a5fa", size=15))
+        header_layout.addWidget(self.lbl_icon)
+
+        self.lbl_title = QLabel(tr("trans_frame_title", "Live Перевод"))
+        self.lbl_title.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
         header_layout.addWidget(self.lbl_title)
 
         # Выбор языков
@@ -272,8 +305,8 @@ class TranslationFrameWindow(QWidget):
         self.combo_src.currentIndexChanged.connect(self._on_language_changed)
         header_layout.addWidget(self.combo_src)
 
-        lbl_arrow = QLabel("➔")
-        lbl_arrow.setStyleSheet("color: #60a5fa; font-weight: bold;")
+        lbl_arrow = QLabel("→")
+        lbl_arrow.setStyleSheet("color: #60a5fa; font-weight: bold; font-size: 13px;")
         header_layout.addWidget(lbl_arrow)
 
         self.combo_tgt = QComboBox()
@@ -283,39 +316,79 @@ class TranslationFrameWindow(QWidget):
         self.combo_tgt.currentIndexChanged.connect(self._on_language_changed)
         header_layout.addWidget(self.combo_tgt)
 
-        # Переключатель режима отображения: HUD (субтитры) vs In-place
-        self.btn_toggle_mode = QPushButton("📄 " + tr("trans_mode_hud", "Субтитры"))
+        # Переключатель режима отображения: HUD (субтитры) vs In-place (без эмодзи)
+        self.btn_toggle_mode = QPushButton(tr("trans_mode_hud", "Субтитры"))
+        self.btn_toggle_mode.setIcon(create_themed_icon("text", is_dark=True, size=13))
         self.btn_toggle_mode.setToolTip(tr("trans_mode_tooltip", "Переключить режим: Субтитры внизу / Текст поверх экрана"))
         self.btn_toggle_mode.clicked.connect(self._toggle_display_mode)
         header_layout.addWidget(self.btn_toggle_mode)
 
-        # Пауза / Пуск
-        self.btn_pause = QPushButton("⏸")
+        # Пауза / Возобновление
+        self.btn_pause = QPushButton()
+        self.btn_pause.setIcon(create_themed_icon("pause", is_dark=True, size=13))
         self.btn_pause.setToolTip(tr("trans_pause_tooltip", "Приостановить / возобновить сканирование"))
-        self.btn_pause.setFixedWidth(26)
+        self.btn_pause.setFixedSize(26, 24)
         self.btn_pause.clicked.connect(self._toggle_pause)
         header_layout.addWidget(self.btn_pause)
 
         # Копировать перевод
-        self.btn_copy = QPushButton("📋")
-        self.btn_copy.setToolTip(tr("trans_copy_tooltip", "Скопировать текущий перевод в буфер обмена"))
-        self.btn_copy.setFixedWidth(26)
+        self.btn_copy = QPushButton()
+        self.btn_copy.setIcon(create_themed_icon("copy", is_dark=True, size=13))
+        self.btn_copy.setToolTip(tr("trans_copy_tooltip", "Скопировать текущий перевод в буфер"))
+        self.btn_copy.setFixedSize(26, 24)
         self.btn_copy.clicked.connect(self._copy_translation)
         header_layout.addWidget(self.btn_copy)
 
+        # Сквозной клик (Игровой режим: клики мыши проходят в игру)
+        self.btn_passthrough = QPushButton()
+        self.btn_passthrough.setIcon(create_themed_icon("passthrough", is_dark=True, size=13))
+        self.btn_passthrough.setToolTip(tr("trans_passthrough_tooltip", "Сквозной клик для игр (клики мыши проходят в игру). Возврат: Ctrl+Shift+T"))
+        self.btn_passthrough.setFixedSize(26, 24)
+        self.btn_passthrough.clicked.connect(self._toggle_click_through)
+        header_layout.addWidget(self.btn_passthrough)
+
+        # Свернуть панель / Стелс
+        self.btn_stealth = QPushButton()
+        self.btn_stealth.setIcon(create_themed_icon("eye_off", is_dark=True, size=13))
+        self.btn_stealth.setToolTip(tr("trans_stealth_tooltip", "Свернуть панель (Игровой режим)"))
+        self.btn_stealth.setFixedSize(26, 24)
+        self.btn_stealth.clicked.connect(self.fold_controls)
+        header_layout.addWidget(self.btn_stealth)
+
         # Закрыть
-        self.btn_close = QPushButton("✕")
-        self.btn_close.setFixedWidth(24)
+        self.btn_close = QPushButton()
+        self.btn_close.setIcon(create_themed_icon("close", is_dark=True, size=13))
+        self.btn_close.setToolTip(tr("trans_close_tooltip", "Закрыть рамку перевода"))
+        self.btn_close.setFixedSize(24, 24)
         self.btn_close.setStyleSheet("QPushButton:hover { background-color: #ef4444; border-color: #f87171; }")
         self.btn_close.clicked.connect(self.close)
         header_layout.addWidget(self.btn_close)
 
-        # 2. Нижняя плашка HUD для субтитров
+        # 2. Мини-кнопка разворачивания настроек (появляется в углу, когда шапка скрыта)
+        self.btn_unfold = QPushButton(self)
+        self.btn_unfold.setIcon(create_themed_icon("settings", is_dark=True, size=12))
+        self.btn_unfold.setToolTip(tr("trans_unfold_tooltip", "Развернуть панель управления [Ctrl+Shift+T]"))
+        self.btn_unfold.setFixedSize(26, 22)
+        self.btn_unfold.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(18, 20, 28, 170);
+                border: 1px solid rgba(255, 255, 255, 40);
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #2563eb;
+                border-color: #60a5fa;
+            }
+        """)
+        self.btn_unfold.clicked.connect(self.unfold_controls)
+        self.btn_unfold.hide()
+
+        # 3. Нижняя плашка HUD для субтитров (высокое качество, игровой стиль)
         self.hud_frame = QFrame(self)
         self.hud_frame.setStyleSheet("""
             QFrame {
-                background-color: rgba(15, 17, 23, 235);
-                border: 1px solid rgba(59, 130, 246, 180);
+                background-color: rgba(10, 12, 18, 235);
+                border: 1px solid rgba(59, 130, 246, 130);
                 border-radius: 8px;
             }
             QLabel {
@@ -323,7 +396,7 @@ class TranslationFrameWindow(QWidget):
                 font-family: 'Segoe UI', sans-serif;
                 font-size: 13px;
                 font-weight: 500;
-                line-height: 1.3;
+                line-height: 1.35;
             }
         """)
         hud_layout = QVBoxLayout(self.hud_frame)
@@ -333,21 +406,64 @@ class TranslationFrameWindow(QWidget):
         self.lbl_hud_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         hud_layout.addWidget(self.lbl_hud_text)
 
-        self.header_frame.installEventFilter(self)
-        self.lbl_title.installEventFilter(self)
+        # Установка фильтра событий на шапку для перемещения
+        for w in (self.header_frame, self.lbl_title, self.lbl_icon, self.drag_grip):
+            w.installEventFilter(self)
 
         self._update_layout_positions()
 
     def _update_layout_positions(self):
         w, h = self.width(), self.height()
-        # Шапка сверху
         hdr_h = 34
         self.header_frame.setGeometry(6, 6, max(100, w - 12), hdr_h)
+        self.btn_unfold.setGeometry(w - 32, 6, 26, 22)
 
-        # Плашка субтитров снизу
-        hud_h = max(42, min(100, int(h * 0.35)))
+        hud_h = max(42, min(110, int(h * 0.35)))
         self.hud_frame.setGeometry(8, max(hdr_h + 10, h - hud_h - 8), max(100, w - 16), hud_h)
         self.hud_frame.setVisible(self.current_mode == "hud")
+
+    def fold_controls(self):
+        """Сворачивает шапку в компактный режим (Стелс / В игре)."""
+        self.is_stealth = True
+        self.header_frame.hide()
+        self.btn_unfold.show()
+        self.update()
+
+    def unfold_controls(self):
+        """Разворачивает полную панель управления."""
+        self.is_stealth = False
+        self.btn_unfold.hide()
+        self.header_frame.show()
+        self.update()
+
+    def _on_stealth_timeout(self):
+        if not self.is_hovered and not self.is_moving_window and not self.is_resizing:
+            self.fold_controls()
+
+    def set_click_through(self, enabled: bool):
+        """Включает или выключает сквозной клик (WS_EX_TRANSPARENT) для игр."""
+        self.is_click_through = enabled
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hwnd = int(self.winId())
+                style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
+                if enabled:
+                    ctypes.windll.user32.SetWindowLongW(hwnd, -20, style | 0x00000020)  # WS_EX_TRANSPARENT
+                else:
+                    ctypes.windll.user32.SetWindowLongW(hwnd, -20, style & ~0x00000020)
+            except Exception as e:
+                print("Set click-through error:", e)
+
+        if enabled:
+            self.fold_controls()
+            QToolTip.showText(QCursor.pos(), tr("trans_passthrough_active", "Сквозной клик активен. Нажмите Ctrl+Shift+T для возврата панели."), self)
+        else:
+            self.unfold_controls()
+        self.update()
+
+    def _toggle_click_through(self):
+        self.set_click_through(not self.is_click_through)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -360,6 +476,21 @@ class TranslationFrameWindow(QWidget):
         if hasattr(self, "worker") and self.worker.isRunning():
             self.worker.update_geometry(self.geometry())
 
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.is_hovered = True
+        self.stealth_timer.stop()
+        if not self.is_click_through:
+            self.unfold_controls()
+        self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.is_hovered = False
+        if not self.is_click_through:
+            self.stealth_timer.start(3000)
+        self.update()
+
     def _on_language_changed(self):
         src = self.combo_src.currentData() or "auto"
         tgt = self.combo_tgt.currentData() or "ru"
@@ -368,10 +499,12 @@ class TranslationFrameWindow(QWidget):
     def _toggle_display_mode(self):
         if self.current_mode == "hud":
             self.current_mode = "inplace"
-            self.btn_toggle_mode.setText("🔤 " + tr("trans_mode_inplace", "Поверх текста"))
+            self.btn_toggle_mode.setText(tr("trans_mode_inplace", "Поверх текста"))
+            self.btn_toggle_mode.setIcon(create_themed_icon("scan_text", is_dark=True, size=13))
         else:
             self.current_mode = "hud"
-            self.btn_toggle_mode.setText("📄 " + tr("trans_mode_hud", "Субтитры"))
+            self.btn_toggle_mode.setText(tr("trans_mode_hud", "Субтитры"))
+            self.btn_toggle_mode.setIcon(create_themed_icon("text", is_dark=True, size=13))
         self._update_layout_positions()
         self.update()
 
@@ -379,10 +512,10 @@ class TranslationFrameWindow(QWidget):
         self.is_paused = not self.is_paused
         self.worker.set_paused(self.is_paused)
         if self.is_paused:
-            self.btn_pause.setText("▶")
-            self.btn_pause.setStyleSheet("background-color: #10b981; color: white;")
+            self.btn_pause.setIcon(create_themed_icon("play", is_dark=True, size=13))
+            self.btn_pause.setStyleSheet("background-color: #059669; border-color: #10b981; color: white;")
         else:
-            self.btn_pause.setText("⏸")
+            self.btn_pause.setIcon(create_themed_icon("pause", is_dark=True, size=13))
             self.btn_pause.setStyleSheet("")
 
     def _copy_translation(self):
@@ -404,6 +537,18 @@ class TranslationFrameWindow(QWidget):
         self.update()
 
     # ------------------ Обработка перемещения и изменения размера ------------------
+
+    def _start_system_move(self) -> bool:
+        """Инициирует нативное аппаратное перемещение окна Windows (Aero Snap, multi-monitor, 0 lag)."""
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.user32.ReleaseCapture()
+                ctypes.windll.user32.SendMessageW(int(self.winId()), 0x00A1, 0x02, 0)  # WM_NCLBUTTONDOWN, HTCAPTION
+                return True
+            except Exception:
+                pass
+        return False
 
     def _hit_test(self, pos: QPoint) -> int:
         margin = self.HANDLE_SIZE
@@ -458,15 +603,16 @@ class TranslationFrameWindow(QWidget):
                 event.accept()
                 return
 
-            # Если клик в свободной области шапки — перемещаем окно
-            if self.header_frame.geometry().contains(event.pos()):
-                child = self.header_frame.childAt(event.pos() - self.header_frame.pos())
-                if child in (None, self.header_frame, self.lbl_title):
-                    self.is_moving_window = True
-                    self.drag_start_pos = event.globalPosition().toPoint()
-                    self.initial_geometry = self.geometry()
-                    event.accept()
-                    return
+            # Клик по свободной области рамки сразу начинает перемещение
+            if self._start_system_move():
+                event.accept()
+                return
+
+            self.is_moving_window = True
+            self.drag_start_pos = event.globalPosition().toPoint()
+            self.initial_geometry = self.geometry()
+            event.accept()
+            return
 
         super().mousePressEvent(event)
 
@@ -495,6 +641,8 @@ class TranslationFrameWindow(QWidget):
         if self.is_moving_window:
             delta = event.globalPosition().toPoint() - self.drag_start_pos
             self.move(self.initial_geometry.topLeft() + delta)
+            if hasattr(self, "worker") and self.worker.isRunning():
+                self.worker.update_geometry(self.geometry())
             event.accept()
             return
 
@@ -512,54 +660,11 @@ class TranslationFrameWindow(QWidget):
             return
         super().mouseReleaseEvent(event)
 
-    # ------------------ Отрисовка рамки и In-place текста ------------------
-
-    def paintEvent(self, event: QPaintEvent):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        w, h = self.width(), self.height()
-
-        # 1. Тонкий полупрозрачный фон и синяя рамка с градиентом
-        pen = QPen(QColor(59, 130, 246, 220), 2.0, Qt.PenStyle.SolidLine)
-        painter.setPen(pen)
-        painter.setBrush(QColor(15, 23, 42, 18))  # Легчайшее затемнение центра
-        painter.drawRoundedRect(1, 1, w - 2, h - 2, 6, 6)
-
-        # 2. Маркеры по углам
-        painter.setBrush(QColor(96, 165, 250))
-        painter.setPen(Qt.PenStyle.NoPen)
-        m = 7
-        painter.drawRect(0, 0, m, m)
-        painter.drawRect(w - m, 0, m, m)
-        painter.drawRect(0, h - m, m, m)
-        painter.drawRect(w - m, h - m, m, m)
-
-        # 3. Режим In-place: отрисовка перевода прямо поверх текста
-        if self.current_mode == "inplace" and self.translated_blocks:
-            painter.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
-            for b in self.translated_blocks:
-                bx = float(b.get("x", 0))
-                by = float(b.get("y", 0))
-                bw = float(b.get("width", 50))
-                bh = float(b.get("height", 20))
-                txt = b.get("translated", "")
-                if not txt:
-                    continue
-
-                # Подложка под переведённый текст
-                pad = 3.0
-                bg_rect = QRectF(bx - pad, by - pad, bw + pad * 2, bh + pad * 2)
-                painter.setBrush(QColor(15, 23, 42, 235))
-                painter.setPen(QPen(QColor(59, 130, 246, 180), 1.0))
-                painter.drawRoundedRect(bg_rect, 4.0, 4.0)
-
-                # Текст перевода
-                painter.setPen(QColor(248, 250, 252))
-                painter.drawText(bg_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, txt)
-
     def eventFilter(self, watched, event):
-        if watched in (self.header_frame, self.lbl_title):
+        if watched in (self.header_frame, self.lbl_title, self.lbl_icon, self.drag_grip):
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                if self._start_system_move():
+                    return True
                 self.is_moving_window = True
                 self.drag_start_pos = event.globalPosition().toPoint()
                 self.initial_geometry = self.geometry()
@@ -572,6 +677,82 @@ class TranslationFrameWindow(QWidget):
                 self.is_moving_window = False
                 return True
         return super().eventFilter(watched, event)
+
+    # ------------------ Отрисовка рамки и In-place текста ------------------
+
+    def paintEvent(self, event: QPaintEvent):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        w, h = self.width(), self.height()
+
+        # 1. Отрисовка границ рамки в зависимости от режима (активен / стелс)
+        if self.is_hovered or not self.is_stealth:
+            pen = QPen(QColor(59, 130, 246, 210), 1.8, Qt.PenStyle.SolidLine)
+            painter.setPen(pen)
+            painter.setBrush(QColor(15, 23, 42, 20))  # Легчайшее затемнение центра
+            painter.drawRoundedRect(1, 1, w - 2, h - 2, 6, 6)
+
+            # Маркеры по углам
+            painter.setBrush(QColor(96, 165, 250))
+            painter.setPen(Qt.PenStyle.NoPen)
+            m = 6
+            painter.drawRect(0, 0, m, m)
+            painter.drawRect(w - m, 0, m, m)
+            painter.drawRect(0, h - m, m, m)
+            painter.drawRect(w - m, h - m, m, m)
+        else:
+            # Стелс / В игре: ультра-тонкая ненавязчивая пунктирная или полупрозрачная линия
+            pen = QPen(QColor(59, 130, 246, 35), 1.0, Qt.PenStyle.SolidLine)
+            painter.setPen(pen)
+            painter.setBrush(QColor(0, 0, 0, 1))  # Прозрачный центр (улавливает события)
+            painter.drawRoundedRect(1, 1, w - 2, h - 2, 4, 4)
+
+        # 2. Режим In-place: отрисовка перевода прямо поверх оригинального текста с адаптивным кеглем
+        if self.current_mode == "inplace" and self.translated_blocks:
+            base_font = QFont("Segoe UI", 10, QFont.Weight.DemiBold)
+
+            for b in self.translated_blocks:
+                bx = float(b.get("x", 0))
+                by = float(b.get("y", 0))
+                bw = float(b.get("width", 50))
+                bh = float(b.get("height", 20))
+                txt = b.get("translated", "")
+                if not txt:
+                    continue
+
+                # Вычисляем размер шрифта строго пропорционально высоте оригинального блока текста
+                target_pixel_size = max(10, int(round(bh * 0.72)))
+                font = QFont(base_font)
+                font.setPixelSize(target_pixel_size)
+                fm = QFontMetrics(font)
+
+                text_w = fm.horizontalAdvance(txt)
+                # Даём блоку ширины запас под перевод (русский часто длиннее английского)
+                eff_w = max(bw, float(text_w + 12))
+                max_avail_w = max(35.0, float(w - bx - 8))
+                if eff_w > max_avail_w:
+                    eff_w = max_avail_w
+                    if text_w > eff_w:
+                        scale_factor = eff_w / max(1.0, float(text_w))
+                        adj_size = max(9, int(round(target_pixel_size * max(0.70, scale_factor))))
+                        font.setPixelSize(adj_size)
+                        fm = QFontMetrics(font)
+
+                painter.setFont(font)
+
+                # Подложка под переведённый текст (в стиле аккуратных игровых плашек)
+                pad_x = 4.0
+                pad_y = 2.0
+                bg_rect = QRectF(bx - pad_x, by - pad_y, eff_w + pad_x * 2, bh + pad_y * 2)
+
+                painter.setBrush(QColor(10, 14, 23, 235))
+                painter.setPen(QPen(QColor(59, 130, 246, 120), 1.0))
+                painter.drawRoundedRect(bg_rect, 4.0, 4.0)
+
+                # Текст перевода: контрастный светлый с четким рендерингом
+                painter.setPen(QColor(248, 250, 252))
+                painter.drawText(bg_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, txt)
 
     def showEvent(self, event):
         super().showEvent(event)
