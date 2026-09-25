@@ -4541,11 +4541,15 @@ def test_translation_frame_and_translator():
     assert frame_win.height() >= 120
     assert frame_win.worker is not None
 
-    # Проверка внешней верхней шапки и области захвата
-    cap_rect = frame_win.get_capture_rect()
-    assert cap_rect.y() == frame_win.geometry().y() + frame_win.HEADER_OFFSET
-    assert cap_rect.height() == frame_win.geometry().height() - frame_win.HEADER_OFFSET
-    assert frame_win.header_frame.y() == 0
+    # Проверка внешней верхней панели управления и неосязаемости рамки
+    assert frame_win.header_frame is not None
+    assert frame_win.control_bar.isWindow()
+    assert frame_win.passthrough_enabled
+    # Переключение неосязаемости (сквозной клик / режим настройки)
+    frame_win.set_passthrough(False)
+    assert not frame_win.passthrough_enabled
+    frame_win.set_passthrough(True)
+    assert frame_win.passthrough_enabled
 
     # Переключение режимов (HUD vs In-place)
     frame_win._toggle_display_mode()

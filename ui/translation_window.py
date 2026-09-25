@@ -10,13 +10,15 @@
    - гарнитуры и жирности начертания
 
 Особенности эргономики:
-- Полностью векторный интерфейс (Lucide / SVG), без эмодзи и смайликов.
-- Компактные кнопки настроек с выпадающими списками (Язык, Режим, Настройки оформления).
-- Режим полной маскировки (Глазик): скрывает всю рамку и шапку, оставляя лишь миниатюрную
-  иконку глазика (в 2 раза меньше обычной, 16x16 px). Клики мыши проходят сквозь рамку прямо в игру (WS_EX_TRANSPARENT).
-- Настройки прозрачности фона, стиля подложки, размера шрифта, скорости сканирования.
-- Отдельные переключатели «Повторять цвет оригинала» и «Повторять шрифт оригинала» (включены по умолчанию).
-- Плавное перемещение как за заголовок, так и за любую область рамки (Win32 SendMessageW).
+- Панель управления и кнопки вынесены ПОЛНОСТЬЮ СНАРУЖИ (сверху рамки отдельным плавающим тулбаром).
+- Рамка в режиме перевода является НЕОСЯЗАЕМОЙ (сквозной клик WS_EX_TRANSPARENT) — клики внутри рамки
+  проходят прямо в игру или приложение за ней.
+- В настройках и на тулбаре есть удобный переключатель между неосязаемым режимом и режимом настройки размера.
+- Все кнопки тулбара имеют нормальный курсор руки/указателя (без курсора стрелочек изменения размера).
+- Режим полной маскировки (Глазик): скрывает тулбар и рамку, оставляя лишь миниатюрную иконку глазика (16x16 px).
+- Иконку глазика можно свободно перемещать по всему экрану как ЛЕВОЙ, так и ПРАВОЙ кнопкой мыши. Одиночный
+  клик ЛКМ возвращает панель настроек.
+- Высокоскоростной пакетный перевод (translate_batch) всех блоков за один сетевой запрос (<200 мс).
 - Аппаратно исключена из захвата (WDA_EXCLUDEFROMCAPTURE), не грузит CPU на статичных кадрах (Smart Diff).
 """
 
@@ -146,13 +148,13 @@ class TranslationScannerWorker(QThread):
     def update_geometry(self, rect: QRect):
         with QMutexLocker(self._mutex):
             self._rect = QRect(rect)
-            self._last_frame_small = None  # Сбрасываем кэш кадра при смене положения
+            self._last_frame_small = None
 
     def set_languages(self, src: str, tgt: str):
         with QMutexLocker(self._mutex):
             self._src_lang = src
             self._tgt_lang = tgt
-            self._last_ocr_text = ""  # Принудительный повторный перевод
+            self._last_ocr_text = ""
 
     def set_paused(self, paused: bool):
         with QMutexLocker(self._mutex):
@@ -206,7 +208,6 @@ class TranslationScannerWorker(QThread):
                     diff = cv2.absdiff(small_gray, self._last_frame_small)
                     mean_diff = np.mean(diff)
                     if mean_diff < 1.2:
-                        # Кадр не изменился — пропускаем тяжёлый OCR/перевод
                         self.msleep(interval)
                         continue
 
@@ -223,7 +224,6 @@ class TranslationScannerWorker(QThread):
                 self.msleep(interval)
                 continue
 
-            # Если распознанный текст совпадает с прошлым — не переводим повторно
             if full_text == self._last_ocr_text:
                 self.msleep(interval)
                 continue
@@ -281,8 +281,9 @@ class TranslationScannerWorker(QThread):
 class EyeUnlockPill(QPushButton):
     """
     Автономная миниатюрная плавающая кнопка разблокировки глазика.
-    Сделана сверхкомпактной (16x16 px, ровно в 2 раза меньше обычной 28x28 px),
-    чтобы не отвлекать и не закрывать обзор в играх.
+    Сделана сверхкомпактной (16x16 px, ровно в 2 раза меньше обычной 28x28 px).
+    Свободно перемещается по экрану как ЛЕВОЙ, так и ПРАВОЙ кнопкой мыши.
+    Одиночный клик левой кнопкой (без перемещения) возвращает панель управления.
     """
     def __init__(self, target_window: TranslationFrameWindow):
         super().__init__()
@@ -296,11 +297,12 @@ class EyeUnlockPill(QPushButton):
         self.setFixedSize(16, 16)
         self.setIcon(create_themed_icon("eye", is_dark=True, size=10, custom_color="#38bdf8"))
         self.setIconSize(QSize(10, 10))
-        self.setToolTip(tr("trans_unlock_tooltip", "Нажмите на глазик, чтобы вернуть настройки"))
+        self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+        self.setToolTip(tr("trans_unlock_tooltip", "Перетащите ЛКМ/ПКМ в любое место. Кликните ЛКМ, чтобы вернуть настройки."))
         self.setStyleSheet("""
             QPushButton {
-                background-color: rgba(15, 23, 42, 230);
-                border: 1px solid rgba(56, 189, 248, 200);
+                background-color: rgba(15, 23, 42, 235);
+                border: 1px solid rgba(56, 189, 248, 220);
                 border-radius: 3px;
                 padding: 0px;
                 margin: 0px;
@@ -310,7 +312,40 @@ class EyeUnlockPill(QPushButton):
                 border-color: #7dd3fc;
             }
         """)
-        self.clicked.connect(self._on_clicked)
+
+        self._drag_start = QPoint()
+        self._start_pos = QPoint()
+        self._has_dragged = False
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
+            self._drag_start = event.globalPosition().toPoint()
+            self._start_pos = self.pos()
+            self._has_dragged = False
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if event.buttons() & (Qt.MouseButton.LeftButton | Qt.MouseButton.RightButton):
+            delta = event.globalPosition().toPoint() - self._drag_start
+            if delta.manhattanLength() >= 3:
+                self._has_dragged = True
+                self.move(self._start_pos + delta)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            if not self._has_dragged:
+                self._on_clicked()
+            event.accept()
+            return
+        elif event.button() == Qt.MouseButton.RightButton:
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def _on_clicked(self):
         self.hide()
@@ -320,8 +355,7 @@ class EyeUnlockPill(QPushButton):
     def update_position(self):
         if self.target_window and self.target_window.isVisible():
             geo = self.target_window.geometry()
-            hdr = getattr(self.target_window, "HEADER_OFFSET", 38)
-            self.move(geo.right() - 20, geo.top() + hdr + 4)
+            self.move(geo.right() - 20, geo.top() + 4)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -332,123 +366,84 @@ class EyeUnlockPill(QPushButton):
                 pass
 
 
-class TranslationFrameWindow(QWidget):
+class TranslationControlBar(QWidget):
     """
-    Интерактивное окно рамки живого перевода.
-    Поддерживает:
-    - Внешняя верхняя панель управления над областью захвата (Header Bar снаружи)
-    - Компактный заголовок с объединенными кнопками настроек (Язык, Режим, Настройки оформления)
-    - Режим скрытия и сквозного клика по кнопке «Глазик» (остается мини-глазик 16x16)
-    - Аппаратное исключение из захвата экрана (WDA_EXCLUDEFROMCAPTURE) для окна и всех выпадающих меню
-    - Плавное перемещение и изменение размера
-    - Динамический расчет размера шрифта, цвета слов и гарнитуры оригинала
-    - Адаптивный перенос и расчет многострочного текста без вылезания за границы
-    - Пользовательские параметры фона, прозрачности и оптимизации
+    Автономная внешняя панель управления рамки перевода.
+    Размещается полностью СНАРУЖИ (сверху) над рамкой перевода.
+    Содержит все кнопки и настройки, перемещается вместе с рамкой,
+    имеет нормальные курсоры-указатели (без стрелок изменения размера).
     """
-    closed = pyqtSignal()
-    frame_closed = pyqtSignal()
-
-    HEADER_OFFSET = 38
-    HEADER_BAR_HEIGHT = 32
-
-    HANDLE_SIZE = 8
-    HANDLE_NONE = 0
-    HANDLE_TL = 1
-    HANDLE_T = 2
-    HANDLE_TR = 3
-    HANDLE_R = 4
-    HANDLE_BR = 5
-    HANDLE_B = 6
-    HANDLE_BL = 7
-    HANDLE_L = 8
-
-    THEME_COLORS = {
-        "slate": (15, 23, 42),
-        "oled": (0, 0, 0),
-        "cyber": (10, 25, 47),
-    }
-
-    def __init__(self, initial_rect: QRect | None = None, parent=None):
-        super().__init__(parent)
+    def __init__(self, frame_window: TranslationFrameWindow):
+        super().__init__()
+        self.frame_window = frame_window
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setMouseTracking(True)
-        self.setMinimumSize(320, 140 + self.HEADER_OFFSET)
+        self.setFixedHeight(32)
 
-        screen = QApplication.primaryScreen()
-        screen_geo = screen.geometry() if screen else QRect(0, 0, 1920, 1080)
-
-        if initial_rect is not None and initial_rect.isValid() and not initial_rect.isEmpty():
-            w = max(340, initial_rect.width())
-            h = max(160 + self.HEADER_OFFSET, initial_rect.height() + self.HEADER_OFFSET)
-            x = initial_rect.x()
-            y = max(0, initial_rect.y() - self.HEADER_OFFSET)
-            self.setGeometry(x, y, w, h)
-        else:
-            w, h = 540, 260 + self.HEADER_OFFSET
-            x = screen_geo.x() + (screen_geo.width() - w) // 2
-            y = screen_geo.y() + (screen_geo.height() - h) // 2
-            self.setGeometry(x, y, w, h)
-
-        # Конфигурация параметров оформления и работы
-        self.current_mode = "hud"  # "hud" (субтитры) или "inplace" (поверх слов)
-        self.src_lang = "auto"
-        self.tgt_lang = "ru"
-        self.is_paused = False
-        self.is_locked_stealth = False  # Режим блокировки и скрытия (по кнопке глазика)
-        self.is_hovered = False
-
-        self.bg_opacity = 0.85  # 85% по умолчанию
-        self.bg_theme = "slate"  # "slate", "oled", "cyber"
-        self.hud_font_size = 0   # 0 = Авто, иначе 11, 14, 18, 22
-        self.scan_interval = 300
-        self.smart_diff_enabled = True
-
-        # Две отдельные настройки соответствия оригиналу (включены по умолчанию)
-        self.match_text_color = True    # Соответствие цвета слов
-        self.match_font_family = True   # Соответствие шрифта и начертания
-
-        self.translated_text = ""
-        self.original_text = ""
-        self.translated_blocks = []
-
-        # Состояния мыши для перемещения и ресайза
-        self.active_handle = self.HANDLE_NONE
-        self.is_resizing = False
-        self.is_moving_window = False
-        self.drag_start_pos = QPoint()
-        self.initial_geometry = QRect()
-
-        # Автономная плавающая кнопка разблокировки глазика (в 2 раза меньше)
-        self.unlock_pill = EyeUnlockPill(self)
+        self._is_dragging = False
+        self._drag_start = QPoint()
+        self._bar_start_pos = QPoint()
+        self._frame_start_pos = QPoint()
 
         self._setup_ui()
 
-        # Рабочий поток
-        self.worker = TranslationScannerWorker(self)
-        self.worker.set_mode(self.current_mode)
-        self.worker.translation_ready.connect(self._on_translation_ready)
-        self.worker.update_geometry(self.get_capture_rect())
-        self.worker.start()
+    def showEvent(self, event):
+        super().showEvent(event)
+        if sys.platform == "win32":
+            try:
+                ctypes.windll.user32.SetWindowDisplayAffinity(int(self.winId()), 0x00000011)
+            except Exception:
+                pass
 
-    def get_capture_rect(self) -> QRect:
-        """Возвращает прямоугольник сканирования экрана строго под внешней шапкой управления."""
-        geo = self.geometry()
-        return QRect(
-            geo.x(),
-            geo.y() + self.HEADER_OFFSET,
-            geo.width(),
-            max(30, geo.height() - self.HEADER_OFFSET)
-        )
+    def sync_to_frame(self):
+        if not self.frame_window:
+            return
+        geo = self.frame_window.geometry()
+        bar_w = max(340, geo.width())
+        bar_h = 32
+        bar_x = geo.x()
+        bar_y = geo.y() - bar_h - 4
+        if bar_y < 0:
+            bar_y = geo.bottom() + 4
+        self.setGeometry(bar_x, bar_y, bar_w, bar_h)
+
+    def _menu_stylesheet(self) -> str:
+        return """
+            QMenu {
+                background-color: #18181b;
+                border: 1px solid #3f3f46;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item {
+                color: #f4f4f5;
+                padding: 5px 14px;
+                border-radius: 4px;
+                font-size: 11px;
+                font-family: 'Segoe UI', sans-serif;
+            }
+            QMenu::item:selected {
+                background-color: #2563eb;
+                color: #ffffff;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #27272a;
+                margin: 4px 6px;
+            }
+        """
 
     def _setup_ui(self):
-        # 1. Верхняя панель управления (Header Bar)
-        self.header_frame = QFrame(self)
-        self.header_frame.setStyleSheet("""
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.inner_frame = QFrame(self)
+        self.inner_frame.setStyleSheet("""
             QFrame {
                 background-color: rgba(18, 20, 28, 245);
                 border: 1px solid rgba(59, 130, 246, 180);
@@ -477,11 +472,11 @@ class TranslationFrameWindow(QWidget):
             }
         """)
 
-        header_layout = QHBoxLayout(self.header_frame)
-        header_layout.setContentsMargins(6, 4, 6, 4)
-        header_layout.setSpacing(6)
+        inner_layout = QHBoxLayout(self.inner_frame)
+        inner_layout.setContentsMargins(6, 3, 6, 3)
+        inner_layout.setSpacing(6)
 
-        # Объединенный чип заголовка и ручки перемещения (Title & Grip)
+        # 1. Заголовок и маркер перемещения всей системы
         self.title_container = QWidget()
         title_box = QHBoxLayout(self.title_container)
         title_box.setContentsMargins(4, 2, 6, 2)
@@ -499,64 +494,440 @@ class TranslationFrameWindow(QWidget):
 
         self.lbl_title = QLabel(tr("trans_frame_title", "Live Перевод"))
         title_box.addWidget(self.lbl_title)
-        header_layout.addWidget(self.title_container)
+        inner_layout.addWidget(self.title_container)
 
-        # Кнопка выбора языков (Компактная кнопка с выпадающим меню)
+        # 2. Кнопка выбора языков
         self.btn_lang = QPushButton()
+        self.btn_lang.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._update_lang_button_text()
         self.btn_lang.setToolTip(tr("trans_lang_tooltip", "Нажмите для выбора языков перевода"))
         self.btn_lang.clicked.connect(self._show_lang_menu)
-        header_layout.addWidget(self.btn_lang)
+        inner_layout.addWidget(self.btn_lang)
 
-        # Кнопка выбора режима (Субтитры / Поверх текста)
+        # 3. Кнопка выбора режима (Субтитры / Поверх текста)
         self.btn_mode = QPushButton()
+        self.btn_mode.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._update_mode_button_text()
         self.btn_mode.setToolTip(tr("trans_mode_tooltip", "Нажмите для переключения режима отображения"))
         self.btn_mode.clicked.connect(self._show_mode_menu)
-        header_layout.addWidget(self.btn_mode)
+        inner_layout.addWidget(self.btn_mode)
 
-        # Кнопка расширенных настроек (Фон, Прозрачность, Шрифт, Скорость, Цвета)
+        # 4. Кнопка переключения неосязаемости (Passthrough / Edit mode)
+        self.btn_passthrough = QPushButton()
+        self.btn_passthrough.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_passthrough.setFixedSize(26, 24)
+        self.btn_passthrough.clicked.connect(self._toggle_passthrough)
+        inner_layout.addWidget(self.btn_passthrough)
+        self.update_passthrough_ui()
+
+        # 5. Кнопка расширенных настроек
         self.btn_settings = QPushButton(tr("trans_settings_btn", "Настройки ▾"))
+        self.btn_settings.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_settings.setIcon(create_themed_icon("settings", is_dark=True, size=13))
         self.btn_settings.setToolTip(tr("trans_settings_tooltip", "Настройки прозрачности, темы, шрифта и цвета"))
         self.btn_settings.clicked.connect(self._show_settings_menu)
-        header_layout.addWidget(self.btn_settings)
+        inner_layout.addWidget(self.btn_settings)
 
-        # Пауза / Пуск
+        # 6. Пауза / Пуск
         self.btn_pause = QPushButton()
+        self.btn_pause.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_pause.setIcon(create_themed_icon("pause", is_dark=True, size=13))
         self.btn_pause.setToolTip(tr("trans_pause_tooltip", "Приостановить / возобновить сканирование"))
         self.btn_pause.setFixedSize(26, 24)
-        self.btn_pause.clicked.connect(self._toggle_pause)
-        header_layout.addWidget(self.btn_pause)
+        self.btn_pause.clicked.connect(self.frame_window._toggle_pause)
+        inner_layout.addWidget(self.btn_pause)
 
-        # Копировать перевод
+        # 7. Копировать перевод
         self.btn_copy = QPushButton()
+        self.btn_copy.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_copy.setIcon(create_themed_icon("copy", is_dark=True, size=13))
         self.btn_copy.setToolTip(tr("trans_copy_tooltip", "Скопировать текущий перевод в буфер"))
         self.btn_copy.setFixedSize(26, 24)
-        self.btn_copy.clicked.connect(self._copy_translation)
-        header_layout.addWidget(self.btn_copy)
+        self.btn_copy.clicked.connect(self.frame_window._copy_translation)
+        inner_layout.addWidget(self.btn_copy)
 
-        # Кнопка «Глазик» — переход в скрытый режим
+        # 8. Кнопка «Глазик» — переход в скрытый режим
         self.btn_eye = QPushButton()
+        self.btn_eye.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_eye.setIcon(create_themed_icon("eye", is_dark=True, size=14, custom_color="#38bdf8"))
         self.btn_eye.setToolTip(tr("trans_eye_tooltip", "Скрыть рамку и панель (оставить только значок глазика). Клики мыши будут проходить сквозь рамку."))
         self.btn_eye.setFixedSize(26, 24)
         self.btn_eye.setStyleSheet("QPushButton { border-color: rgba(56, 189, 248, 140); } QPushButton:hover { background-color: #0284c7; }")
-        self.btn_eye.clicked.connect(lambda: self.set_stealth_lock(True))
-        header_layout.addWidget(self.btn_eye)
+        self.btn_eye.clicked.connect(lambda: self.frame_window.set_stealth_lock(True))
+        inner_layout.addWidget(self.btn_eye)
 
-        # Закрыть
+        # 9. Закрыть
         self.btn_close = QPushButton()
+        self.btn_close.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_close.setIcon(create_themed_icon("close", is_dark=True, size=13))
         self.btn_close.setToolTip(tr("trans_close_tooltip", "Закрыть рамку перевода"))
         self.btn_close.setFixedSize(24, 24)
         self.btn_close.setStyleSheet("QPushButton:hover { background-color: #ef4444; border-color: #f87171; }")
-        self.btn_close.clicked.connect(self.close)
-        header_layout.addWidget(self.btn_close)
+        self.btn_close.clicked.connect(self.frame_window.close)
+        inner_layout.addWidget(self.btn_close)
 
-        # 2. Нижняя плашка HUD для субтитров
+        layout.addWidget(self.inner_frame)
+
+    def _toggle_passthrough(self):
+        new_state = not getattr(self.frame_window, "passthrough_enabled", True)
+        self.frame_window.set_passthrough(new_state)
+
+    def update_passthrough_ui(self):
+        if not hasattr(self, "btn_passthrough"):
+            return
+        is_pass = getattr(self.frame_window, "passthrough_enabled", True)
+        if is_pass:
+            self.btn_passthrough.setIcon(create_themed_icon("mouse_pointer", is_dark=True, size=13, custom_color="#38bdf8"))
+            self.btn_passthrough.setToolTip(tr("trans_pass_on_tip", "Рамка неосязаема (клики проходят сквозь неё в игру). Нажмите для режима настройки размера."))
+            self.btn_passthrough.setStyleSheet("QPushButton { border-color: rgba(56, 189, 248, 160); background-color: rgba(14, 165, 233, 40); }")
+        else:
+            self.btn_passthrough.setIcon(create_themed_icon("maximize_2", is_dark=True, size=13))
+            self.btn_passthrough.setToolTip(tr("trans_pass_off_tip", "Режим настройки: рамку можно изменять за края. Нажмите для включения неосязаемости."))
+            self.btn_passthrough.setStyleSheet("QPushButton { border-color: #eab308; background-color: rgba(234, 179, 8, 40); }")
+
+    def _update_lang_button_text(self):
+        s = self.frame_window.src_lang.upper() if self.frame_window.src_lang != "auto" else tr("lang_auto", "Auto")
+        t = self.frame_window.tgt_lang.upper()
+        self.btn_lang.setText(tr("trans_lang_btn", "Язык: {src} → {tgt} ▾").format(src=s, tgt=t))
+
+    def _update_mode_button_text(self):
+        if self.frame_window.current_mode == "inplace":
+            self.btn_mode.setText(tr("trans_mode_btn", "Режим: {mode} ▾").format(mode=tr("trans_mode_inplace", "Поверх текста")))
+            self.btn_mode.setIcon(create_themed_icon("scan_text", is_dark=True, size=13))
+        else:
+            self.btn_mode.setText(tr("trans_mode_btn", "Режим: {mode} ▾").format(mode=tr("trans_mode_hud", "Субтитры")))
+            self.btn_mode.setIcon(create_themed_icon("text", is_dark=True, size=13))
+
+    def _show_lang_menu(self):
+        menu = create_stealth_menu(self)
+        menu.setStyleSheet(self._menu_stylesheet())
+
+        pairs = [
+            ("Auto → RU", "auto", "ru", "Auto → Русский"),
+            ("EN → RU", "en", "ru", "English → Русский"),
+            ("JA → RU", "ja", "ru", "Japanese → Русский"),
+            ("ZH → RU", "zh-CN", "ru", "Chinese → Русский"),
+            ("DE → RU", "de", "ru", "German → Русский"),
+            ("FR → RU", "fr", "ru", "French → Русский"),
+            ("RU → EN", "ru", "en", "Русский → English"),
+        ]
+        for _, s, t, label in pairs:
+            act = menu.addAction(label)
+            act.triggered.connect(lambda ch, src=s, tgt=t: self.frame_window._set_languages(src, tgt))
+
+        menu.addSeparator()
+
+        src_menu = create_stealth_menu(menu)
+        src_menu.setTitle(tr("trans_menu_src", "Исходный язык"))
+        src_menu.setStyleSheet(self._menu_stylesheet())
+        all_src = [("auto", "Auto"), ("en", "English"), ("ja", "Japanese"), ("zh-CN", "Chinese"),
+                   ("de", "German"), ("fr", "French"), ("es", "Spanish"), ("ko", "Korean"), ("ru", "Русский")]
+        for tag, name in all_src:
+            act = src_menu.addAction(name)
+            act.triggered.connect(lambda ch, s=tag: self.frame_window._set_languages(s, self.frame_window.tgt_lang))
+        menu.addMenu(src_menu)
+
+        tgt_menu = create_stealth_menu(menu)
+        tgt_menu.setTitle(tr("trans_menu_tgt", "Язык перевода"))
+        tgt_menu.setStyleSheet(self._menu_stylesheet())
+        all_tgt = [("ru", "Русский"), ("en", "English"), ("de", "Deutsch"), ("fr", "Français"),
+                   ("es", "Español"), ("zh-CN", "中文"), ("ja", "日本語")]
+        for tag, name in all_tgt:
+            act = tgt_menu.addAction(name)
+            act.triggered.connect(lambda ch, t=tag: self.frame_window._set_languages(self.frame_window.src_lang, t))
+        menu.addMenu(tgt_menu)
+
+        was_paused = self.frame_window.is_paused
+        if hasattr(self.frame_window, "worker"):
+            self.frame_window.worker.set_paused(True)
+        try:
+            menu.exec(self.btn_lang.mapToGlobal(QPoint(0, self.btn_lang.height() + 2)))
+        finally:
+            if hasattr(self.frame_window, "worker"):
+                self.frame_window.worker.set_paused(was_paused)
+
+    def _show_mode_menu(self):
+        menu = create_stealth_menu(self)
+        menu.setStyleSheet(self._menu_stylesheet())
+
+        act_hud = menu.addAction(tr("trans_mode_hud", "Субтитры (HUD внизу)"))
+        act_hud.setIcon(create_themed_icon("text", is_dark=True, size=13))
+        act_hud.triggered.connect(lambda: self.frame_window._set_display_mode("hud"))
+
+        act_inplace = menu.addAction(tr("trans_mode_inplace", "Поверх текста (In-place)"))
+        act_inplace.setIcon(create_themed_icon("scan_text", is_dark=True, size=13))
+        act_inplace.triggered.connect(lambda: self.frame_window._set_display_mode("inplace"))
+
+        was_paused = self.frame_window.is_paused
+        if hasattr(self.frame_window, "worker"):
+            self.frame_window.worker.set_paused(True)
+        try:
+            menu.exec(self.btn_mode.mapToGlobal(QPoint(0, self.btn_mode.height() + 2)))
+        finally:
+            if hasattr(self.frame_window, "worker"):
+                self.frame_window.worker.set_paused(was_paused)
+
+    def _show_settings_menu(self):
+        menu = create_stealth_menu(self)
+        menu.setStyleSheet(self._menu_stylesheet())
+
+        # 1. Неосязаемая рамка (сквозные клики)
+        act_pass = menu.addAction(tr("trans_opt_passthrough", "Неосязаемая рамка (клики сквозь рамку)"))
+        act_pass.setCheckable(True)
+        act_pass.setChecked(self.frame_window.passthrough_enabled)
+        act_pass.setToolTip(tr("trans_opt_pass_tip", "Позволяет нажимать сквозь рамку прямо в игру или программу"))
+        act_pass.triggered.connect(lambda ch: self.frame_window.set_passthrough(ch))
+
+        menu.addSeparator()
+
+        # 2. Повторение цвета оригинального текста
+        act_color = menu.addAction(tr("trans_opt_match_color", "Повторять цвет текста оригинала"))
+        act_color.setCheckable(True)
+        act_color.setChecked(self.frame_window.match_text_color)
+        act_color.setToolTip(tr("trans_opt_match_color_tip", "Окрашивать переведенные слова в цвета оригинала с экрана"))
+        act_color.triggered.connect(self.frame_window._toggle_match_color)
+
+        # 3. Повторение шрифта и жирности оригинала
+        act_font = menu.addAction(tr("trans_opt_match_font", "Повторять шрифт и начертание оригинала"))
+        act_font.setCheckable(True)
+        act_font.setChecked(self.frame_window.match_font_family)
+        act_font.setToolTip(tr("trans_opt_match_font_tip", "Подбирать жирность и гарнитуру шрифта, как в исходном тексте"))
+        act_font.triggered.connect(self.frame_window._toggle_match_font)
+
+        menu.addSeparator()
+
+        # 4. Прозрачность фона
+        op_menu = create_stealth_menu(menu)
+        op_menu.setTitle(tr("trans_menu_opacity", "Прозрачность фона"))
+        op_menu.setStyleSheet(self._menu_stylesheet())
+        op_levels = [
+            (1.0, tr("trans_op_100", "100% (Непрозрачный)")),
+            (0.85, tr("trans_op_85", "85% (Оптимальный)")),
+            (0.60, tr("trans_op_60", "60% (Полупрозрачный)")),
+            (0.30, tr("trans_op_30", "30% (Слабый)")),
+            (0.0, tr("trans_op_0", "0% (Без фона)")),
+        ]
+        for val, label in op_levels:
+            act = op_menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(abs(self.frame_window.bg_opacity - val) < 0.05)
+            act.triggered.connect(lambda ch, v=val: self.frame_window._set_opacity(v))
+        menu.addMenu(op_menu)
+
+        # 5. Стиль / Цвет фона
+        theme_menu = create_stealth_menu(menu)
+        theme_menu.setTitle(tr("trans_menu_theme", "Цвет фона"))
+        theme_menu.setStyleSheet(self._menu_stylesheet())
+        themes = [
+            ("slate", tr("trans_theme_slate", "Тёмный сланец (Slate)")),
+            ("oled", tr("trans_theme_oled", "Глубокий чёрный (OLED)")),
+            ("cyber", tr("trans_theme_cyber", "Кибер-синий (Cyber)")),
+        ]
+        for key, name in themes:
+            act = theme_menu.addAction(name)
+            act.setCheckable(True)
+            act.setChecked(self.frame_window.bg_theme == key)
+            act.triggered.connect(lambda ch, k=key: self.frame_window._set_theme(k))
+        menu.addMenu(theme_menu)
+
+        # 6. Размер шрифта субтитров
+        font_menu = create_stealth_menu(menu)
+        font_menu.setTitle(tr("trans_menu_font_size", "Размер шрифта субтитров"))
+        font_menu.setStyleSheet(self._menu_stylesheet())
+        fonts = [
+            (0, tr("trans_font_auto", "Авто (по тексту)")),
+            (11, tr("trans_font_small", "Мелкий (11 px)")),
+            (14, tr("trans_font_medium", "Средний (14 px)")),
+            (18, tr("trans_font_large", "Крупный (18 px)")),
+            (22, tr("trans_font_xlarge", "Очень крупный (22 px)")),
+        ]
+        for sz, label in fonts:
+            act = font_menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(self.frame_window.hud_font_size == sz)
+            act.triggered.connect(lambda ch, s=sz: self.frame_window._set_font_size(s))
+        menu.addMenu(font_menu)
+
+        menu.addSeparator()
+
+        # 7. Скорость сканирования (FPS)
+        fps_menu = create_stealth_menu(menu)
+        fps_menu.setTitle(tr("trans_menu_fps", "Скорость сканирования"))
+        fps_menu.setStyleSheet(self._menu_stylesheet())
+        speeds = [
+            (150, tr("trans_fps_fast", "Быстро (150 мс)")),
+            (300, tr("trans_fps_opt", "Оптимально (300 мс)")),
+            (600, tr("trans_fps_eco", "Энергосбережение (600 мс)")),
+        ]
+        for ms, label in speeds:
+            act = fps_menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(self.frame_window.scan_interval == ms)
+            act.triggered.connect(lambda ch, m=ms: self.frame_window._set_scan_interval(m))
+        menu.addMenu(fps_menu)
+
+        # 8. Smart Diff (Оптимизация CPU)
+        act_diff = menu.addAction(tr("trans_menu_smart_diff", "Умная пауза при статичном кадре"))
+        act_diff.setCheckable(True)
+        act_diff.setChecked(self.frame_window.smart_diff_enabled)
+        act_diff.triggered.connect(self.frame_window._toggle_smart_diff)
+
+        was_paused = self.frame_window.is_paused
+        if hasattr(self.frame_window, "worker"):
+            self.frame_window.worker.set_paused(True)
+        try:
+            menu.exec(self.btn_settings.mapToGlobal(QPoint(0, self.btn_settings.height() + 2)))
+        finally:
+            if hasattr(self.frame_window, "worker"):
+                self.frame_window.worker.set_paused(was_paused)
+
+    # ------------------ Перемещение всей связки (панель + рамка) ------------------
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_dragging = True
+            self._drag_start = event.globalPosition().toPoint()
+            self._bar_start_pos = self.pos()
+            self._frame_start_pos = self.frame_window.pos()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self._is_dragging and (event.buttons() & Qt.MouseButton.LeftButton):
+            delta = event.globalPosition().toPoint() - self._drag_start
+            self.move(self._bar_start_pos + delta)
+            self.frame_window.move(self._frame_start_pos + delta)
+            if hasattr(self.frame_window, "worker") and self.frame_window.worker.isRunning():
+                self.frame_window.worker.update_geometry(self.frame_window.geometry())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_dragging = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+class TranslationFrameWindow(QWidget):
+    """
+    Интерактивное окно рамки живого перевода (Capture Region).
+    Поддерживает:
+    - Область захвата 1:1 без лишних элементов внутри (панель управления находится снаружи).
+    - Неосязаемый режим (Passthrough / WS_EX_TRANSPARENT) по умолчанию при переводе.
+    - Переключение в режим изменения размера и перемещения по кнопке или настройкам.
+    - Аппаратное исключение из захвата экрана (WDA_EXCLUDEFROMCAPTURE).
+    - Динамический расчет размера шрифта, цвета слов и гарнитуры оригинала.
+    - Адаптивный перенос и расчет многострочного текста без вылезания за границы.
+    - Автономный перетаскиваемый значок глазика (ЛКМ / ПКМ).
+    """
+    closed = pyqtSignal()
+    frame_closed = pyqtSignal()
+
+    HANDLE_SIZE = 8
+    HANDLE_NONE = 0
+    HANDLE_TL = 1
+    HANDLE_T = 2
+    HANDLE_TR = 3
+    HANDLE_R = 4
+    HANDLE_BR = 5
+    HANDLE_B = 6
+    HANDLE_BL = 7
+    HANDLE_L = 8
+
+    THEME_COLORS = {
+        "slate": (15, 23, 42),
+        "oled": (0, 0, 0),
+        "cyber": (10, 25, 47),
+    }
+
+    HEADER_OFFSET = 0
+    HEADER_BAR_HEIGHT = 32
+
+    def get_capture_rect(self) -> QRect:
+        """Возвращает прямоугольник захвата (в новой архитектуре вся область рамки является захватом)."""
+        return self.geometry()
+
+    def __init__(self, initial_rect: QRect | None = None, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setMouseTracking(True)
+        self.setMinimumSize(240, 100)
+
+        screen = QApplication.primaryScreen()
+        screen_geo = screen.geometry() if screen else QRect(0, 0, 1920, 1080)
+
+        if initial_rect is not None and initial_rect.isValid() and not initial_rect.isEmpty():
+            w = max(300, initial_rect.width())
+            h = max(120, initial_rect.height())
+            x = initial_rect.x()
+            y = initial_rect.y()
+            self.setGeometry(x, y, w, h)
+        else:
+            w, h = 520, 240
+            x = screen_geo.x() + (screen_geo.width() - w) // 2
+            y = screen_geo.y() + (screen_geo.height() - h) // 2
+            self.setGeometry(x, y, w, h)
+
+        # Конфигурация параметров оформления и работы
+        self.current_mode = "hud"  # "hud" (субтитры) или "inplace" (поверх слов)
+        self.src_lang = "auto"
+        self.tgt_lang = "ru"
+        self.is_paused = False
+        self.is_locked_stealth = False  # Режим скрытия по кнопке глазика
+        self.passthrough_enabled = True # Неосязаемая рамка (сквозные клики) ВКЛЮЧЕНА по умолчанию
+
+        self.bg_opacity = 0.85
+        self.bg_theme = "slate"
+        self.hud_font_size = 0   # 0 = Авто
+        self.scan_interval = 300
+        self.smart_diff_enabled = True
+
+        self.match_text_color = True    # Соответствие цвета слов
+        self.match_font_family = True   # Соответствие шрифта и начертания
+
+        self.translated_text = ""
+        self.original_text = ""
+        self.translated_blocks = []
+
+        # Состояния мыши для ресайза в режиме настройки
+        self.active_handle = self.HANDLE_NONE
+        self.is_resizing = False
+        self.is_moving_window = False
+        self.drag_start_pos = QPoint()
+        self.initial_geometry = QRect()
+
+        # Создаем HUD для субтитров внутри рамки
+        self._setup_hud_ui()
+
+        # Внешняя автономная панель управления (снаружи над рамкой)
+        self.control_bar = TranslationControlBar(self)
+        self.header_frame = self.control_bar  # Для обратной совместимости с тестами
+        self.control_bar.sync_to_frame()
+        self.control_bar.show()
+
+        # Автономная кнопка разблокировки глазика
+        self.unlock_pill = EyeUnlockPill(self)
+
+        # Рабочий поток OCR и перевода
+        self.worker = TranslationScannerWorker(self)
+        self.worker.set_mode(self.current_mode)
+        self.worker.translation_ready.connect(self._on_translation_ready)
+        self.worker.update_geometry(self.geometry())
+        self.worker.start()
+
+        # Применяем неосязаемость рамки
+        self.set_passthrough(self.passthrough_enabled)
+
+    def _setup_hud_ui(self):
         self.hud_frame = QFrame(self)
         hud_layout = QVBoxLayout(self.hud_frame)
         hud_layout.setContentsMargins(10, 8, 10, 8)
@@ -564,53 +935,14 @@ class TranslationFrameWindow(QWidget):
         self.lbl_hud_text.setWordWrap(True)
         self.lbl_hud_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         hud_layout.addWidget(self.lbl_hud_text)
-
         self._update_hud_style()
+        self._update_hud_geometry()
 
-        # Назначаем фильтр событий для перемещения рамки
-        for w in (self.header_frame, self.title_container, self.lbl_title, self.lbl_icon, self.drag_grip):
-            w.installEventFilter(self)
-
-        self._update_layout_positions()
-
-    def _menu_stylesheet(self) -> str:
-        return """
-            QMenu {
-                background-color: #18181b;
-                border: 1px solid #3f3f46;
-                border-radius: 6px;
-                padding: 4px;
-            }
-            QMenu::item {
-                color: #f4f4f5;
-                padding: 5px 14px;
-                border-radius: 4px;
-                font-size: 11px;
-                font-family: 'Segoe UI', sans-serif;
-            }
-            QMenu::item:selected {
-                background-color: #2563eb;
-                color: #ffffff;
-            }
-            QMenu::separator {
-                height: 1px;
-                background-color: #27272a;
-                margin: 4px 6px;
-            }
-        """
-
-    def _update_lang_button_text(self):
-        s = self.src_lang.upper() if self.src_lang != "auto" else tr("lang_auto", "Auto")
-        t = self.tgt_lang.upper()
-        self.btn_lang.setText(tr("trans_lang_btn", "Язык: {src} → {tgt} ▾").format(src=s, tgt=t))
-
-    def _update_mode_button_text(self):
-        if self.current_mode == "inplace":
-            self.btn_mode.setText(tr("trans_mode_btn", "Режим: {mode} ▾").format(mode=tr("trans_mode_inplace", "Поверх текста")))
-            self.btn_mode.setIcon(create_themed_icon("scan_text", is_dark=True, size=13))
-        else:
-            self.btn_mode.setText(tr("trans_mode_btn", "Режим: {mode} ▾").format(mode=tr("trans_mode_hud", "Субтитры")))
-            self.btn_mode.setIcon(create_themed_icon("text", is_dark=True, size=13))
+    def _update_hud_geometry(self):
+        w, h = self.width(), self.height()
+        hud_h = max(40, min(140, int(h * 0.40)))
+        self.hud_frame.setGeometry(8, max(4, h - hud_h - 8), max(100, w - 16), hud_h)
+        self.hud_frame.setVisible(self.current_mode == "hud")
 
     def _update_hud_style(self):
         r, g, b = self.THEME_COLORS.get(self.bg_theme, (15, 23, 42))
@@ -647,199 +979,92 @@ class TranslationFrameWindow(QWidget):
                 }}
             """)
 
-    def _show_lang_menu(self):
-        menu = create_stealth_menu(self)
-        menu.setStyleSheet(self._menu_stylesheet())
+    def set_passthrough(self, enabled: bool):
+        """
+        Включает или выключает неосязаемость рамки (WS_EX_TRANSPARENT).
+        При enabled=True клики мыши проходят сквозь рамку прямо в приложение или игру под ней.
+        При enabled=False рамку можно изменять за границы и перемещать.
+        """
+        self.passthrough_enabled = enabled
+        if sys.platform == "win32":
+            try:
+                hwnd = int(self.winId())
+                style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
+                if enabled:
+                    ctypes.windll.user32.SetWindowLongW(hwnd, -20, style | 0x00000020)  # WS_EX_TRANSPARENT
+                else:
+                    ctypes.windll.user32.SetWindowLongW(hwnd, -20, style & ~0x00000020)
+            except Exception:
+                pass
 
-        pairs = [
-            ("Auto → RU", "auto", "ru", "Auto → Русский"),
-            ("EN → RU", "en", "ru", "English → Русский"),
-            ("JA → RU", "ja", "ru", "Japanese → Русский"),
-            ("ZH → RU", "zh-CN", "ru", "Chinese → Русский"),
-            ("DE → RU", "de", "ru", "German → Русский"),
-            ("FR → RU", "fr", "ru", "French → Русский"),
-            ("RU → EN", "ru", "en", "Русский → English"),
-        ]
-        for _, s, t, label in pairs:
-            act = menu.addAction(label)
-            act.triggered.connect(lambda ch, src=s, tgt=t: self._set_languages(src, tgt))
+        if hasattr(self, "control_bar") and self.control_bar:
+            self.control_bar.update_passthrough_ui()
+        self.update()
 
-        menu.addSeparator()
+    def set_stealth_lock(self, locked: bool):
+        """
+        Включает или выключает режим маскировки по кнопке «Глазик».
+        В скрытом режиме тулбар скрыт, отображается только мини-глазик 16x16,
+        а клики проходят сквозь рамку.
+        """
+        self.is_locked_stealth = locked
+        if locked:
+            if hasattr(self, "control_bar"):
+                self.control_bar.hide()
+            self.unlock_pill.update_position()
+            self.unlock_pill.show()
+            self.unlock_pill.raise_()
+            self.set_passthrough(True)
+        else:
+            self.unlock_pill.hide()
+            if hasattr(self, "control_bar"):
+                self.control_bar.sync_to_frame()
+                self.control_bar.show()
+                self.control_bar.raise_()
+            self.set_passthrough(self.passthrough_enabled)
+        self.update()
 
-        src_menu = create_stealth_menu(menu)
-        src_menu.setTitle(tr("trans_menu_src", "Исходный язык"))
-        src_menu.setStyleSheet(self._menu_stylesheet())
-        all_src = [("auto", "Auto"), ("en", "English"), ("ja", "Japanese"), ("zh-CN", "Chinese"),
-                   ("de", "German"), ("fr", "French"), ("es", "Spanish"), ("ko", "Korean"), ("ru", "Русский")]
-        for tag, name in all_src:
-            act = src_menu.addAction(name)
-            act.triggered.connect(lambda ch, s=tag: self._set_languages(s, self.tgt_lang))
-        menu.addMenu(src_menu)
-
-        tgt_menu = create_stealth_menu(menu)
-        tgt_menu.setTitle(tr("trans_menu_tgt", "Язык перевода"))
-        tgt_menu.setStyleSheet(self._menu_stylesheet())
-        all_tgt = [("ru", "Русский"), ("en", "English"), ("de", "Deutsch"), ("fr", "Français"),
-                   ("es", "Español"), ("zh-CN", "中文"), ("ja", "日本語")]
-        for tag, name in all_tgt:
-            act = tgt_menu.addAction(name)
-            act.triggered.connect(lambda ch, t=tag: self._set_languages(self.src_lang, t))
-        menu.addMenu(tgt_menu)
-
-        was_paused = self.is_paused
-        if hasattr(self, "worker"):
-            self.worker.set_paused(True)
-        try:
-            menu.exec(self.btn_lang.mapToGlobal(QPoint(0, self.btn_lang.height() + 2)))
-        finally:
-            if hasattr(self, "worker"):
-                self.worker.set_paused(was_paused)
+    def unfold_controls(self):
+        """Разворачивает панель управления и снимает скрытие."""
+        self.set_stealth_lock(False)
 
     def _set_languages(self, src: str, tgt: str):
         self.src_lang = src
         self.tgt_lang = tgt
-        self._update_lang_button_text()
+        if hasattr(self, "control_bar"):
+            self.control_bar._update_lang_button_text()
         if hasattr(self, "worker") and self.worker.isRunning():
             self.worker.set_languages(src, tgt)
-
-    def _show_mode_menu(self):
-        menu = create_stealth_menu(self)
-        menu.setStyleSheet(self._menu_stylesheet())
-
-        act_hud = menu.addAction(tr("trans_mode_hud", "Субтитры (HUD внизу)"))
-        act_hud.setIcon(create_themed_icon("text", is_dark=True, size=13))
-        act_hud.triggered.connect(lambda: self._set_display_mode("hud"))
-
-        act_inplace = menu.addAction(tr("trans_mode_inplace", "Поверх текста (In-place)"))
-        act_inplace.setIcon(create_themed_icon("scan_text", is_dark=True, size=13))
-        act_inplace.triggered.connect(lambda: self._set_display_mode("inplace"))
-
-        was_paused = self.is_paused
-        if hasattr(self, "worker"):
-            self.worker.set_paused(True)
-        try:
-            menu.exec(self.btn_mode.mapToGlobal(QPoint(0, self.btn_mode.height() + 2)))
-        finally:
-            if hasattr(self, "worker"):
-                self.worker.set_paused(was_paused)
 
     def _set_display_mode(self, mode: str):
         self.current_mode = mode
         if hasattr(self, "worker") and self.worker.isRunning():
             self.worker.set_mode(mode)
-        self._update_mode_button_text()
-        self._update_layout_positions()
+        if hasattr(self, "control_bar"):
+            self.control_bar._update_mode_button_text()
+        self._update_hud_geometry()
         self.update()
 
     def _toggle_display_mode(self):
-        """Переключатель режима для совместимости с тестами и хоткеями."""
         new_mode = "inplace" if self.current_mode == "hud" else "hud"
         self._set_display_mode(new_mode)
 
-    def _show_settings_menu(self):
-        menu = create_stealth_menu(self)
-        menu.setStyleSheet(self._menu_stylesheet())
+    def _toggle_pause(self):
+        self.is_paused = not self.is_paused
+        self.worker.set_paused(self.is_paused)
+        if hasattr(self, "control_bar") and hasattr(self.control_bar, "btn_pause"):
+            if self.is_paused:
+                self.control_bar.btn_pause.setIcon(create_themed_icon("play", is_dark=True, size=13))
+                self.control_bar.btn_pause.setStyleSheet("background-color: #059669; border-color: #10b981; color: white;")
+            else:
+                self.control_bar.btn_pause.setIcon(create_themed_icon("pause", is_dark=True, size=13))
+                self.control_bar.btn_pause.setStyleSheet("")
 
-        # 1. Повторение цвета оригинального текста (Отдельная настройка, по умолчанию ВКЛ)
-        act_color = menu.addAction(tr("trans_opt_match_color", "Повторять цвет текста оригинала"))
-        act_color.setCheckable(True)
-        act_color.setChecked(self.match_text_color)
-        act_color.setToolTip(tr("trans_opt_match_color_tip", "Окрашивать переведенные слова в цвета оригинала с экрана"))
-        act_color.triggered.connect(self._toggle_match_color)
-
-        # 2. Повторение шрифта и жирности оригинала (Отдельная настройка, по умолчанию ВКЛ)
-        act_font = menu.addAction(tr("trans_opt_match_font", "Повторять шрифт и начертание оригинала"))
-        act_font.setCheckable(True)
-        act_font.setChecked(self.match_font_family)
-        act_font.setToolTip(tr("trans_opt_match_font_tip", "Подбирать жирность и гарнитуру шрифта, как в исходном тексте"))
-        act_font.triggered.connect(self._toggle_match_font)
-
-        menu.addSeparator()
-
-        # 3. Прозрачность фона
-        op_menu = create_stealth_menu(menu)
-        op_menu.setTitle(tr("trans_menu_opacity", "Прозрачность фона"))
-        op_menu.setStyleSheet(self._menu_stylesheet())
-        op_levels = [
-            (1.0, tr("trans_op_100", "100% (Непрозрачный)")),
-            (0.85, tr("trans_op_85", "85% (Оптимальный)")),
-            (0.60, tr("trans_op_60", "60% (Полупрозрачный)")),
-            (0.30, tr("trans_op_30", "30% (Слабый)")),
-            (0.0, tr("trans_op_0", "0% (Без фона)")),
-        ]
-        for val, label in op_levels:
-            act = op_menu.addAction(label)
-            act.setCheckable(True)
-            act.setChecked(abs(self.bg_opacity - val) < 0.05)
-            act.triggered.connect(lambda ch, v=val: self._set_opacity(v))
-        menu.addMenu(op_menu)
-
-        # 4. Стиль / Цвет фона
-        theme_menu = create_stealth_menu(menu)
-        theme_menu.setTitle(tr("trans_menu_theme", "Цвет фона"))
-        theme_menu.setStyleSheet(self._menu_stylesheet())
-        themes = [
-            ("slate", tr("trans_theme_slate", "Тёмный сланец (Slate)")),
-            ("oled", tr("trans_theme_oled", "Глубокий чёрный (OLED)")),
-            ("cyber", tr("trans_theme_cyber", "Кибер-синий (Cyber)")),
-        ]
-        for key, name in themes:
-            act = theme_menu.addAction(name)
-            act.setCheckable(True)
-            act.setChecked(self.bg_theme == key)
-            act.triggered.connect(lambda ch, k=key: self._set_theme(k))
-        menu.addMenu(theme_menu)
-
-        # 5. Размер шрифта субтитров
-        font_menu = create_stealth_menu(menu)
-        font_menu.setTitle(tr("trans_menu_font_size", "Размер шрифта субтитров"))
-        font_menu.setStyleSheet(self._menu_stylesheet())
-        fonts = [
-            (0, tr("trans_font_auto", "Авто (по тексту)")),
-            (11, tr("trans_font_small", "Мелкий (11 px)")),
-            (14, tr("trans_font_medium", "Средний (14 px)")),
-            (18, tr("trans_font_large", "Крупный (18 px)")),
-            (22, tr("trans_font_xlarge", "Очень крупный (22 px)")),
-        ]
-        for sz, label in fonts:
-            act = font_menu.addAction(label)
-            act.setCheckable(True)
-            act.setChecked(self.hud_font_size == sz)
-            act.triggered.connect(lambda ch, s=sz: self._set_font_size(s))
-        menu.addMenu(font_menu)
-
-        menu.addSeparator()
-
-        # 6. Скорость сканирования (FPS)
-        fps_menu = create_stealth_menu(menu)
-        fps_menu.setTitle(tr("trans_menu_fps", "Скорость сканирования"))
-        fps_menu.setStyleSheet(self._menu_stylesheet())
-        speeds = [
-            (150, tr("trans_fps_fast", "Быстро (150 мс)")),
-            (300, tr("trans_fps_opt", "Оптимально (300 мс)")),
-            (600, tr("trans_fps_eco", "Энергосбережение (600 мс)")),
-        ]
-        for ms, label in speeds:
-            act = fps_menu.addAction(label)
-            act.setCheckable(True)
-            act.setChecked(self.scan_interval == ms)
-            act.triggered.connect(lambda ch, m=ms: self._set_scan_interval(m))
-        menu.addMenu(fps_menu)
-
-        # 7. Smart Diff (Оптимизация CPU)
-        act_diff = menu.addAction(tr("trans_menu_smart_diff", "Умная пауза при статичном кадре"))
-        act_diff.setCheckable(True)
-        act_diff.setChecked(self.smart_diff_enabled)
-        act_diff.triggered.connect(self._toggle_smart_diff)
-
-        was_paused = self.is_paused
-        if hasattr(self, "worker"):
-            self.worker.set_paused(True)
-        try:
-            menu.exec(self.btn_settings.mapToGlobal(QPoint(0, self.btn_settings.height() + 2)))
-        finally:
-            if hasattr(self, "worker"):
-                self.worker.set_paused(was_paused)
+    def _copy_translation(self):
+        txt = self.translated_text.strip()
+        if txt:
+            QApplication.clipboard().setText(txt)
+            QToolTip.showText(QCursor.pos(), tr("trans_copied", "Перевод скопирован в буфер!"), self)
 
     def _toggle_match_color(self, checked: bool):
         self.match_text_color = checked
@@ -874,85 +1099,6 @@ class TranslationFrameWindow(QWidget):
         if hasattr(self, "worker"):
             self.worker.set_smart_diff(checked)
 
-    def set_stealth_lock(self, locked: bool):
-        """
-        Включает или выключает режим маскировки по кнопке «Глазик».
-        В заблокированном режиме:
-        - Шапка и контур рамки полностью скрываются.
-        - Отображается только мини-иконка глазика в углу (16x16 px).
-        - Наведение и клики мыши по области рамки проходят насквозь в фоновое окно/игру (WS_EX_TRANSPARENT).
-        - Единственный элемент, реагирующий на клик — иконка глазика.
-        """
-        self.is_locked_stealth = locked
-        if sys.platform == "win32":
-            try:
-                hwnd = int(self.winId())
-                style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
-                if locked:
-                    ctypes.windll.user32.SetWindowLongW(hwnd, -20, style | 0x00000020)  # WS_EX_TRANSPARENT
-                else:
-                    ctypes.windll.user32.SetWindowLongW(hwnd, -20, style & ~0x00000020)
-            except Exception:
-                pass
-
-        if locked:
-            self.header_frame.hide()
-            self.unlock_pill.update_position()
-            self.unlock_pill.show()
-            self.unlock_pill.raise_()
-        else:
-            self.unlock_pill.hide()
-            self.header_frame.show()
-            self.header_frame.raise_()
-        self.update()
-
-    def unfold_controls(self):
-        """Разворачивает панель управления и снимает скрытие (для хоткеев и меню)."""
-        self.set_stealth_lock(False)
-
-    def _update_layout_positions(self):
-        w, h = self.width(), self.height()
-        hdr_h = self.HEADER_BAR_HEIGHT
-        # Панель управления располагается сверху над областью захвата
-        self.header_frame.setGeometry(0, 0, w, hdr_h)
-
-        # Область HUD (субтитров) внизу области захвата
-        cap_h = max(20, h - self.HEADER_OFFSET)
-        hud_h = max(42, min(140, int(cap_h * 0.40)))
-        self.hud_frame.setGeometry(8, max(self.HEADER_OFFSET + 8, h - hud_h - 8), max(100, w - 16), hud_h)
-        self.hud_frame.setVisible(self.current_mode == "hud")
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._update_layout_positions()
-        if hasattr(self, "unlock_pill") and self.unlock_pill.isVisible():
-            self.unlock_pill.update_position()
-        if hasattr(self, "worker") and self.worker.isRunning():
-            self.worker.update_geometry(self.get_capture_rect())
-
-    def moveEvent(self, event):
-        super().moveEvent(event)
-        if hasattr(self, "unlock_pill") and self.unlock_pill.isVisible():
-            self.unlock_pill.update_position()
-        if hasattr(self, "worker") and self.worker.isRunning():
-            self.worker.update_geometry(self.get_capture_rect())
-
-    def _toggle_pause(self):
-        self.is_paused = not self.is_paused
-        self.worker.set_paused(self.is_paused)
-        if self.is_paused:
-            self.btn_pause.setIcon(create_themed_icon("play", is_dark=True, size=13))
-            self.btn_pause.setStyleSheet("background-color: #059669; border-color: #10b981; color: white;")
-        else:
-            self.btn_pause.setIcon(create_themed_icon("pause", is_dark=True, size=13))
-            self.btn_pause.setStyleSheet("")
-
-    def _copy_translation(self):
-        txt = self.translated_text.strip()
-        if txt:
-            QApplication.clipboard().setText(txt)
-            QToolTip.showText(QCursor.pos(), tr("trans_copied", "Перевод скопирован в буфер!"), self)
-
     @pyqtSlot(str, str, list)
     def _on_translation_ready(self, original: str, translated: str, blocks: list):
         self.original_text = original
@@ -965,38 +1111,35 @@ class TranslationFrameWindow(QWidget):
             self.lbl_hud_text.setText(tr("trans_no_text", "Текст не обнаружен"))
         self.update()
 
-    # ------------------ Обработка событий мыши и перемещения ------------------
+    # ------------------ Обработка перемещения и изменения размера ------------------
 
-    def _start_system_move(self) -> bool:
-        """Инициирует нативное аппаратное перемещение окна Windows (Aero Snap, multi-monitor, 0 lag)."""
-        if sys.platform == "win32":
-            try:
-                ctypes.windll.user32.ReleaseCapture()
-                ctypes.windll.user32.SendMessageW(int(self.winId()), 0x00A1, 0x02, 0)  # WM_NCLBUTTONDOWN, HTCAPTION
-                return True
-            except Exception:
-                pass
-        return False
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_hud_geometry()
+        if hasattr(self, "control_bar") and self.control_bar:
+            self.control_bar.sync_to_frame()
+        if hasattr(self, "unlock_pill") and self.unlock_pill.isVisible():
+            self.unlock_pill.update_position()
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.update_geometry(self.geometry())
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        if hasattr(self, "control_bar") and self.control_bar:
+            self.control_bar.sync_to_frame()
+        if hasattr(self, "unlock_pill") and self.unlock_pill.isVisible():
+            self.unlock_pill.update_position()
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.update_geometry(self.geometry())
 
     def _hit_test(self, pos: QPoint) -> int:
         margin = self.HANDLE_SIZE
         w, h = self.width(), self.height()
         x, y = pos.x(), pos.y()
-        hdr = self.HEADER_OFFSET
-
-        # Зона верхней панели управления (перемещение окна, без случайного ресайза)
-        if y < hdr:
-            if y <= 2:
-                if x <= margin:
-                    return self.HANDLE_TL
-                if x >= w - margin:
-                    return self.HANDLE_TR
-                return self.HANDLE_T
-            return self.HANDLE_NONE
 
         on_left = x <= margin
         on_right = x >= w - margin
-        on_top = y <= hdr + margin
+        on_top = y <= margin
         on_bottom = y >= h - margin
 
         if on_top and on_left:
@@ -1018,6 +1161,9 @@ class TranslationFrameWindow(QWidget):
         return self.HANDLE_NONE
 
     def _update_cursor(self, handle: int):
+        if self.passthrough_enabled:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            return
         cursors = {
             self.HANDLE_TL: Qt.CursorShape.SizeFDiagCursor,
             self.HANDLE_BR: Qt.CursorShape.SizeFDiagCursor,
@@ -1032,7 +1178,7 @@ class TranslationFrameWindow(QWidget):
         self.setCursor(cursors.get(handle, Qt.CursorShape.ArrowCursor))
 
     def mousePressEvent(self, event: QMouseEvent):
-        if self.is_locked_stealth:
+        if self.passthrough_enabled or self.is_locked_stealth:
             return
 
         if event.button() == Qt.MouseButton.LeftButton:
@@ -1045,27 +1191,21 @@ class TranslationFrameWindow(QWidget):
                 event.accept()
                 return
 
-            # Клик по свободной области рамки начинает перемещение
-            if self._start_system_move():
-                event.accept()
-                return
-
             self.is_moving_window = True
             self.drag_start_pos = event.globalPosition().toPoint()
             self.initial_geometry = self.geometry()
             event.accept()
             return
-
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        if self.is_locked_stealth:
+        if self.passthrough_enabled or self.is_locked_stealth:
             return
 
         if self.is_resizing:
             delta = event.globalPosition().toPoint() - self.drag_start_pos
             rect = QRect(self.initial_geometry)
-            min_w, min_h = 240, 120 + self.HEADER_OFFSET
+            min_w, min_h = 240, 100
 
             if self.active_handle in (self.HANDLE_TL, self.HANDLE_L, self.HANDLE_BL):
                 new_w = max(min_w, rect.width() - delta.x())
@@ -1086,8 +1226,6 @@ class TranslationFrameWindow(QWidget):
         if self.is_moving_window:
             delta = event.globalPosition().toPoint() - self.drag_start_pos
             self.move(self.initial_geometry.topLeft() + delta)
-            if hasattr(self, "worker") and self.worker.isRunning():
-                self.worker.update_geometry(self.get_capture_rect())
             event.accept()
             return
 
@@ -1105,24 +1243,6 @@ class TranslationFrameWindow(QWidget):
             return
         super().mouseReleaseEvent(event)
 
-    def eventFilter(self, watched, event):
-        if watched in (self.header_frame, self.title_container, self.lbl_title, self.lbl_icon, self.drag_grip):
-            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
-                if self._start_system_move():
-                    return True
-                self.is_moving_window = True
-                self.drag_start_pos = event.globalPosition().toPoint()
-                self.initial_geometry = self.geometry()
-                return True
-            elif event.type() == QEvent.Type.MouseMove and self.is_moving_window:
-                delta = event.globalPosition().toPoint() - self.drag_start_pos
-                self.move(self.initial_geometry.topLeft() + delta)
-                return True
-            elif event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
-                self.is_moving_window = False
-                return True
-        return super().eventFilter(watched, event)
-
     # ------------------ Отрисовка рамки и In-place текста ------------------
 
     def paintEvent(self, event: QPaintEvent):
@@ -1130,46 +1250,57 @@ class TranslationFrameWindow(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         w, h = self.width(), self.height()
-        cap_y = self.HEADER_OFFSET
-        cap_h = max(20, h - cap_y)
 
-        # 1. Отрисовка границ рамки захвата (ниже шапки управления, если не активен режим Глазика)
+        # 1. Отрисовка границы рамки
         if not self.is_locked_stealth:
-            pen = QPen(QColor(59, 130, 246, 210), 1.8, Qt.PenStyle.SolidLine)
-            painter.setPen(pen)
-            painter.setBrush(QColor(15, 23, 42, 20))  # Легчайшее затемнение центра
-            painter.drawRoundedRect(1, cap_y + 1, w - 2, cap_h - 2, 6, 6)
+            if not self.passthrough_enabled:
+                # Режим настройки: яркая граница с маркерами ресайза
+                pen = QPen(QColor(234, 179, 8, 230), 2.0, Qt.PenStyle.SolidLine)
+                painter.setPen(pen)
+                painter.setBrush(QColor(15, 23, 42, 25))
+                painter.drawRoundedRect(1, 1, w - 2, h - 2, 6, 6)
 
-            # Маркеры по углам области захвата
-            painter.setBrush(QColor(96, 165, 250))
-            painter.setPen(Qt.PenStyle.NoPen)
-            m = 6
-            painter.drawRect(0, cap_y, m, m)
-            painter.drawRect(w - m, cap_y, m, m)
-            painter.drawRect(0, h - m, m, m)
-            painter.drawRect(w - m, h - m, m, m)
+                painter.setBrush(QColor(250, 204, 21))
+                painter.setPen(Qt.PenStyle.NoPen)
+                m = 6
+                painter.drawRect(0, 0, m, m)
+                painter.drawRect(w - m, 0, m, m)
+                painter.drawRect(0, h - m, m, m)
+                painter.drawRect(w - m, h - m, m, m)
+            else:
+                # Неосязаемый режим перевода: аккуратная стильная рамка
+                pen = QPen(QColor(59, 130, 246, 200), 1.8, Qt.PenStyle.SolidLine)
+                painter.setPen(pen)
+                painter.setBrush(QColor(15, 23, 42, 15))
+                painter.drawRoundedRect(1, 1, w - 2, h - 2, 6, 6)
 
-        # 2. Режим In-place: отрисовка перевода прямо поверх оригинального текста с адаптивным кеглем, цветом и шрифтом
+                painter.setBrush(QColor(96, 165, 250))
+                painter.setPen(Qt.PenStyle.NoPen)
+                m = 6
+                painter.drawRect(0, 0, m, m)
+                painter.drawRect(w - m, 0, m, m)
+                painter.drawRect(0, h - m, m, m)
+                painter.drawRect(w - m, h - m, m, m)
+
+        # 2. Режим In-place: отрисовка перевода прямо поверх текста
         if self.current_mode == "inplace" and self.translated_blocks:
             r, g, b = self.THEME_COLORS.get(self.bg_theme, (15, 23, 42))
             alpha = int(self.bg_opacity * 255)
 
             for item in self.translated_blocks:
                 bx = float(item.get("x", 0))
-                by = float(self.HEADER_OFFSET + item.get("y", 0))
+                by = float(item.get("y", 0))
                 bw = float(item.get("width", 50))
                 bh = float(item.get("height", 20))
                 txt = item.get("translated", "")
                 if not txt:
                     continue
 
-                # Вычисляем размер шрифта строго пропорционально высоте оригинального блока текста
                 if self.hud_font_size > 0:
                     base_pixel_size = self.hud_font_size
                 else:
                     base_pixel_size = max(10, int(round(bh * 0.72)))
 
-                # Выбор гарнитуры и жирности (если включена настройка соответствия оригиналу)
                 if self.match_font_family:
                     family = item.get("font_family", "Segoe UI")
                     is_bold = item.get("is_bold", True)
@@ -1178,7 +1309,6 @@ class TranslationFrameWindow(QWidget):
                     family = "Segoe UI"
                     weight = QFont.Weight.DemiBold
 
-                # Доступная ширина до правого края рамки
                 max_avail_w = max(40.0, float(w - bx - 8))
 
                 font = QFont(family, 10, weight)
@@ -1189,7 +1319,6 @@ class TranslationFrameWindow(QWidget):
                 preferred_w = max(bw, float(text_w + 12))
                 eff_w = min(max_avail_w, preferred_w)
 
-                # Если перевод длиннее доступной ширины, динамически масштабируем шрифт до 72%
                 cur_pixel_size = base_pixel_size
                 if text_w > eff_w and self.hud_font_size == 0:
                     scale = eff_w / max(1.0, float(text_w))
@@ -1197,7 +1326,6 @@ class TranslationFrameWindow(QWidget):
                     font.setPixelSize(cur_pixel_size)
                     fm = QFontMetrics(font)
 
-                # Вычисляем точные границы с учетом переноса слов (WordWrap)
                 calc_rect = fm.boundingRect(
                     QRect(0, 0, int(eff_w), 9999),
                     int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap),
@@ -1205,9 +1333,8 @@ class TranslationFrameWindow(QWidget):
                 )
                 eff_h = max(bh, float(calc_rect.height() + 4))
 
-                # Если переведённый блок выходит за нижний край окна, аккуратно приподнимаем его
                 if by + eff_h > h - 4:
-                    by = max(float(self.HEADER_OFFSET + 2), float(h - eff_h - 4))
+                    by = max(2.0, float(h - eff_h - 4))
 
                 painter.setFont(font)
 
@@ -1215,13 +1342,11 @@ class TranslationFrameWindow(QWidget):
                 pad_y = 2.0
                 bg_rect = QRectF(bx - pad_x, by - pad_y, eff_w + pad_x * 2, eff_h + pad_y * 2)
 
-                # Подложка под переведённый текст с учетом настроек прозрачности
                 if self.bg_opacity > 0.05:
                     painter.setBrush(QColor(r, g, b, alpha))
                     painter.setPen(QPen(QColor(59, 130, 246, min(200, alpha + 30)), 1.0))
                     painter.drawRoundedRect(bg_rect, 4.0, 4.0)
 
-                # Выбор цвета текста (если включено повторение цвета оригинала)
                 if self.match_text_color and "color_rgb" in item:
                     cr, cg, cb = item["color_rgb"]
                     text_color = QColor(cr, cg, cb)
@@ -1238,11 +1363,17 @@ class TranslationFrameWindow(QWidget):
                 ctypes.windll.user32.SetWindowDisplayAffinity(int(self.winId()), 0x00000011)
             except Exception:
                 pass
+        if hasattr(self, "control_bar") and self.control_bar:
+            self.control_bar.sync_to_frame()
+            self.control_bar.show()
+            self.control_bar.raise_()
         self.raise_()
         self.activateWindow()
 
     def closeEvent(self, event):
-        if hasattr(self, "unlock_pill"):
+        if hasattr(self, "control_bar") and self.control_bar:
+            self.control_bar.close()
+        if hasattr(self, "unlock_pill") and self.unlock_pill:
             self.unlock_pill.close()
         if hasattr(self, "worker") and self.worker.isRunning():
             self.worker.stop()
