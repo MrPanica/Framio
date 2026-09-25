@@ -96,10 +96,42 @@ def get_blurred_pixmap(source_pixmap: QPixmap, blur_radius: int = 15) -> QPixmap
     return result
 
 
+def get_magnified_pixmap(source_pixmap: QPixmap, intensity: int = 20) -> QPixmap:
+    """
+    Увеличивает изображение (эффект лупы / оптического зума).
+    intensity: от 12 до 50 (соответствует зуму от 1.2x до 5.0x, по умолчанию 20 = 2.0x).
+    """
+    if source_pixmap is None or source_pixmap.isNull():
+        return None
+    w, h = source_pixmap.width(), source_pixmap.height()
+    if w <= 4 or h <= 4:
+        return source_pixmap
+    zoom = max(1.2, min(5.0, intensity / 10.0))
+    cache_key = (source_pixmap.cacheKey(), "magnifier", int(round(zoom * 10)))
+    with _EFFECT_CACHE_LOCK:
+        cached = _FILTERED_CACHE.get(cache_key)
+        if cached is not None and not cached.isNull():
+            return cached
+
+    crop_w = max(2, int(round(w / zoom)))
+    crop_h = max(2, int(round(h / zoom)))
+    crop_x = max(0, (w - crop_w) // 2)
+    crop_y = max(0, (h - crop_h) // 2)
+
+    cropped = source_pixmap.copy(crop_x, crop_y, crop_w, crop_h)
+    result = cropped.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+
+    with _EFFECT_CACHE_LOCK:
+        if len(_FILTERED_CACHE) >= _MAX_EFFECT_CACHE:
+            _FILTERED_CACHE.pop(next(iter(_FILTERED_CACHE)), None)
+        _FILTERED_CACHE[cache_key] = result
+    return result
+
+
 def get_filtered_pixmap(source_pixmap: QPixmap, filter_type: str, intensity: int = 10) -> QPixmap:
     """
     Применяет указанный эффект к фрагменту изображения:
-    'mosaic'/'pixelate', 'blur', 'grayscale', 'invert', 'vibrant', 'sepia'.
+    'mosaic'/'pixelate', 'blur', 'magnifier', 'grayscale', 'invert', 'vibrant', 'sepia'.
     """
     if source_pixmap is None or source_pixmap.isNull():
         return None
@@ -111,6 +143,8 @@ def get_filtered_pixmap(source_pixmap: QPixmap, filter_type: str, intensity: int
         return get_pixelated_pixmap(source_pixmap, intensity)
     elif ft == "blur":
         return get_blurred_pixmap(source_pixmap, intensity)
+    elif ft in ("magnifier", "zoom", "loupe"):
+        return get_magnified_pixmap(source_pixmap, intensity)
     else:
         cache_key = (source_pixmap.cacheKey(), ft, intensity)
         with _EFFECT_CACHE_LOCK:
@@ -1056,7 +1090,9 @@ class RegionalEffectShape(BaseShape):
             "grayscale": tr("obj_grayscale", "Чёрно-белый (Область)"),
             "invert": tr("obj_invert", "Инверсия (Область)"),
             "vibrant": tr("obj_vibrant", "Насыщенность (Область)"),
-            "sepia": tr("obj_sepia", "Сепия (Область)")
+            "sepia": tr("obj_sepia", "Сепия (Область)"),
+            "magnifier": tr("obj_magnifier", "Увеличение (Лупа)"),
+            "zoom": tr("obj_magnifier", "Увеличение (Лупа)")
         }
         return names.get(etype, f"Effect: {etype}")
 
@@ -1117,7 +1153,11 @@ class RegionalEffectShape(BaseShape):
         return new_shape
 
     def set_intensity(self, intensity: int, background_pixmap: QPixmap = None):
-        self.intensity = max(2, min(50, intensity))
+        if self.effect_type in ("magnifier", "zoom"):
+            self.intensity = max(12, min(50, intensity))
+            self.zoom_factor = self.intensity / 10.0
+        else:
+            self.intensity = max(2, min(50, intensity))
         self.cached_pixmap = None
         self._cached_rect = None
         self._cached_needed_rect = None
@@ -1244,8 +1284,15 @@ class RegionalEffectShape(BaseShape):
             painter.restore()
         elif source_pixmap is None:
             painter.save()
-            pen_color = QColor(147, 197, 253, 200) if self.effect_type == "blur" else QColor(56, 189, 248, 200)
-            brush_color = QColor(30, 41, 59, 140) if self.effect_type == "blur" else QColor(15, 23, 42, 160)
+            if self.effect_type == "blur":
+                pen_color = QColor(147, 197, 253, 200)
+                brush_color = QColor(30, 41, 59, 140)
+            elif self.effect_type in ("magnifier", "zoom"):
+                pen_color = QColor(52, 211, 153, 220)
+                brush_color = QColor(16, 185, 129, 30)
+            else:
+                pen_color = QColor(56, 189, 248, 200)
+                brush_color = QColor(15, 23, 42, 160)
             painter.setPen(QPen(pen_color, 1.5, Qt.PenStyle.DashLine))
             painter.setBrush(brush_color)
             painter.drawPolygon(canvas_poly)
@@ -1321,4 +1368,30 @@ class BlurShape(RegionalEffectShape):
     def clone(self):
         new_shape = super().clone()
         new_shape.blur_radius = self.blur_radius
+        return new_shape
+
+
+class MagnifierShape(RegionalEffectShape):
+    """
+    Инструмент оптического увеличения фрагмента экрана (лупа / масштаб).
+    """
+    def __init__(self, rect: QRectF, zoom_factor: float = 2.0, cached_pixmap: QPixmap = None):
+        intensity = int(round(max(1.2, min(5.0, zoom_factor)) * 10.0))
+        super().__init__(rect, effect_type="magnifier", intensity=intensity, cached_pixmap=cached_pixmap)
+        self.zoom_factor = zoom_factor
+        self.name = tr("obj_magnifier", "Увеличение (Лупа)")
+
+    def set_zoom_factor(self, factor: float, background_pixmap: QPixmap = None):
+        self.zoom_factor = max(1.2, min(5.0, factor))
+        self.intensity = int(round(self.zoom_factor * 10.0))
+        self.cached_pixmap = None
+        self._cached_rect = None
+        self._cached_needed_rect = None
+        self._cache_key = None
+        if background_pixmap is not None:
+            self.update_effect(background_pixmap)
+
+    def clone(self):
+        new_shape = super().clone()
+        new_shape.zoom_factor = getattr(self, "zoom_factor", 2.0)
         return new_shape

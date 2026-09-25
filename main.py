@@ -32,7 +32,7 @@ from PyQt6.QtGui import (
 )
 
 from datetime import datetime
-from config import ConfigManager, DEFAULT_HOTKEY_SCREENSHOT
+from config import ConfigManager, DEFAULT_HOTKEY_SCREENSHOT, DEFAULT_HOTKEY_LIVE_TRANSLATOR
 from ui.overlay import OverlayWindow
 from ui.recording_window import RecordingFrameWindow
 from ui.settings_dialog import SettingsDialog
@@ -426,13 +426,15 @@ class FramioApp(QObject):
             hotkey_quick_fullscreen=getattr(self.cfg, "hotkey_quick_fullscreen", "Ctrl+Print Screen"),
             hotkey_screenshot=getattr(self.cfg, "hotkey_screenshot", DEFAULT_HOTKEY_SCREENSHOT),
             hotkey_record_fullscreen=getattr(self.cfg, "hotkey_record_fullscreen", "Ctrl+Shift+F9"),
-            hotkey_stop_recording=getattr(self.cfg, "hotkey_stop_recording", "Ctrl+Shift+F10")
+            hotkey_stop_recording=getattr(self.cfg, "hotkey_stop_recording", "Ctrl+Shift+F10"),
+            hotkey_live_translator=getattr(self.cfg, "hotkey_live_translator", DEFAULT_HOTKEY_LIVE_TRANSLATOR)
         )
         self.hotkey_mgr.capture_triggered.connect(self.trigger_capture)
         self.hotkey_mgr.quick_fullscreen_triggered.connect(self.quick_fullscreen_capture)
         self.hotkey_mgr.screenshot_triggered.connect(self.quick_fullscreen_capture)
         self.hotkey_mgr.record_fullscreen_triggered.connect(self.start_fullscreen_recording)
         self.hotkey_mgr.stop_recording_triggered.connect(self.stop_all_recordings)
+        self.hotkey_mgr.live_translator_triggered.connect(self.start_translation_frame)
         self.hotkey_mgr.start()
 
         # Клик по трею и по уведомлениям
@@ -448,6 +450,18 @@ class FramioApp(QObject):
             rec_window.recording_closed.connect(lambda path, w=rec_window: self._on_recording_saved(w, path))
             rec_window.save_progress.connect(self._on_recording_progress)
             self._update_tray_state()
+
+    def start_translation_frame(self, rect=None):
+        """Открывает или выводит на передний план плавающую рамку динамического перевода."""
+        from ui.translation_window import TranslationFrameWindow
+        if not hasattr(self, "_active_translation_windows"):
+            self._active_translation_windows = []
+        win = TranslationFrameWindow(initial_rect=rect)
+        self._active_translation_windows.append(win)
+        win.frame_closed.connect(lambda w=win: self._active_translation_windows.remove(w) if hasattr(self, "_active_translation_windows") and w in self._active_translation_windows else None)
+        win.show()
+        win.raise_()
+        win.activateWindow()
 
     def add_recent_media(self, path: str = None, image: QImage = None, label: str = None, refresh: bool = True):
         """Добавляет материал в историю последних файлов и снимков."""
@@ -921,6 +935,11 @@ class FramioApp(QObject):
         act_gif = QAction(tr("tray_menu_rec_gif"), menu)
         act_gif.triggered.connect(lambda: self.trigger_capture("gif"))
         menu.addAction(act_gif)
+
+        trans_key = getattr(self.cfg, "hotkey_live_translator", DEFAULT_HOTKEY_LIVE_TRANSLATOR)
+        act_translator = QAction(tr("tray_menu_live_translator", "Плавающая рамка перевода ({key})", key=trans_key), menu)
+        act_translator.triggered.connect(self.start_translation_frame)
+        menu.addAction(act_translator)
 
         menu.addSeparator()
         self._recent_media_menu(menu)

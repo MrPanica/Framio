@@ -422,3 +422,49 @@ def _extract_with_winocr(bgr: np.ndarray, lang: str = "auto") -> tuple[str, str]
     full_result = "\n".join(final_lines).strip()
     return full_result, "ru+en"
 
+
+def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "auto") -> list[dict]:
+    """
+    Распознаёт текст и возвращает блоки с точными экранными координатами
+    для динамического наложения перевода прямо поверх текста (In-place).
+    Каждый элемент: {"text": "...", "x": float, "y": float, "width": float, "height": float}
+    """
+    bgr = _convert_to_bgr(image)
+    if bgr is None or bgr.size == 0 or not _WINOCR_AVAILABLE:
+        return []
+
+    target_lang = "en-US" if lang in ("auto", "en") else lang
+    installed = get_available_ocr_languages()
+    for item in installed:
+        if item["tag"].lower().startswith(target_lang.lower()[:2]):
+            target_lang = item["tag"]
+            break
+
+    try:
+        prep_img, _ = _preprocess_image_for_ocr(bgr, scale=2.0)
+        res = winocr.recognize_cv2_sync(prep_img, lang=target_lang)
+        blocks = []
+        for l in res.get("lines", []):
+            ltxt = l.get("text", "").strip()
+            words = l.get("words", [])
+            if not ltxt or not words:
+                continue
+            xs = [float(w.get("bounding_rect", {}).get("x", 0.0)) for w in words]
+            ys = [float(w.get("bounding_rect", {}).get("y", 0.0)) for w in words]
+            ws = [float(w.get("bounding_rect", {}).get("width", 0.0)) for w in words]
+            hs = [float(w.get("bounding_rect", {}).get("height", 0.0)) for w in words]
+            min_x = min(xs) / 2.0
+            min_y = min(ys) / 2.0
+            max_r = max(x + w for x, w in zip(xs, ws)) / 2.0
+            max_b = max(y + h for y, h in zip(ys, hs)) / 2.0
+            blocks.append({
+                "text": ltxt,
+                "x": min_x,
+                "y": min_y,
+                "width": max_r - min_x,
+                "height": max_b - min_y
+            })
+        return blocks
+    except Exception:
+        return []
+

@@ -82,6 +82,7 @@ class GlobalHotkeyManager(QObject):
     screenshot_triggered = pyqtSignal()
     record_fullscreen_triggered = pyqtSignal()
     stop_recording_triggered = pyqtSignal()
+    live_translator_triggered = pyqtSignal()
     hotkey_triggered = pyqtSignal()  # Псевдоним для совместимости с кодом захвата области
 
     ID_CAPTURE = 101
@@ -89,18 +90,21 @@ class GlobalHotkeyManager(QObject):
     ID_STOP_RECORDING = 103
     ID_QUICK_FULLSCREEN = 104
     ID_SCREENSHOT = 105
+    ID_LIVE_TRANSLATOR = 106
 
     def __init__(self, hotkey_capture="Ctrl+Shift+Print Screen",
                  hotkey_quick_fullscreen="Ctrl+Print Screen",
                  hotkey_record_fullscreen="Ctrl+Shift+F9",
                  hotkey_stop_recording="Ctrl+Shift+F10", parent=None,
-                 hotkey_screenshot="Print Screen"):
+                 hotkey_screenshot="Print Screen",
+                 hotkey_live_translator="Ctrl+Shift+T"):
         super().__init__(parent)
         self.hotkey_capture = hotkey_capture
         self.hotkey_quick_fullscreen = hotkey_quick_fullscreen
         self.hotkey_screenshot = hotkey_screenshot
         self.hotkey_record_fullscreen = hotkey_record_fullscreen
         self.hotkey_stop_recording = hotkey_stop_recording
+        self.hotkey_live_translator = hotkey_live_translator
         self.hotkey_str = hotkey_capture
 
         self._thread = None
@@ -176,6 +180,7 @@ class GlobalHotkeyManager(QObject):
             (self.ID_SCREENSHOT, self.hotkey_screenshot, self.screenshot_triggered),
             (self.ID_RECORD_FULLSCREEN, self.hotkey_record_fullscreen, self.record_fullscreen_triggered),
             (self.ID_STOP_RECORDING, self.hotkey_stop_recording, self.stop_recording_triggered),
+            (self.ID_LIVE_TRANSLATOR, self.hotkey_live_translator, self.live_translator_triggered),
         ]
 
         signal_map = {}

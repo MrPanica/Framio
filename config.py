@@ -18,6 +18,7 @@ DEFAULT_HOTKEY_SCREENSHOT = "Print Screen"
 DEFAULT_HOTKEY_RECORD_FULLSCREEN = "Ctrl+Shift+F9"
 DEFAULT_HOTKEY_STOP_RECORDING = "Ctrl+Shift+F10"
 DEFAULT_HOTKEY_HIGHLIGHT_OBJECTS = "Alt"
+DEFAULT_HOTKEY_LIVE_TRANSLATOR = "Ctrl+Shift+T"
 
 def get_base_dir() -> Path:
     """Возвращает базовую директорию приложения (папку с .exe или скриптом)."""
@@ -80,6 +81,7 @@ class AppConfig:
     hotkey_record_fullscreen: str = DEFAULT_HOTKEY_RECORD_FULLSCREEN
     hotkey_stop_recording: str = DEFAULT_HOTKEY_STOP_RECORDING
     hotkey_highlight_objects: str = DEFAULT_HOTKEY_HIGHLIGHT_OBJECTS
+    hotkey_live_translator: str = DEFAULT_HOTKEY_LIVE_TRANSLATOR
     
     # Видео настройки
     video_fps: int = 30

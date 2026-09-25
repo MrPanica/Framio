@@ -1316,25 +1316,30 @@ class ToolPropertiesFlyout(QFrame):
 
         self.layout.addWidget(self.color_widget)
 
-        # Выбор режима цензуры: Мозаика vs Блюр (для ToolType.MOSAIC)
+        # Выбор режима цензуры: Мозаика vs Блюр vs Увеличение (для ToolType.MOSAIC)
         self.censor_type_widget = QWidget()
         censor_type_layout = QHBoxLayout(self.censor_type_widget)
         censor_type_layout.setContentsMargins(0, 0, 0, 0)
         censor_type_layout.setSpacing(6)
         self.btn_mode_mosaic = QPushButton(tr("prop_censor_mosaic", "Мозаика"))
-        self.btn_mode_mosaic.setFixedSize(78, 24)
+        self.btn_mode_mosaic.setFixedSize(70, 24)
         self.btn_mode_mosaic.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_mode_mosaic.clicked.connect(lambda: self._set_censor_mode("mosaic"))
         self.btn_mode_blur = QPushButton(tr("prop_censor_blur", "Блюр"))
-        self.btn_mode_blur.setFixedSize(78, 24)
+        self.btn_mode_blur.setFixedSize(62, 24)
         self.btn_mode_blur.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_mode_blur.clicked.connect(lambda: self._set_censor_mode("blur"))
+        self.btn_mode_magnifier = QPushButton(tr("prop_censor_magnifier", "Лупа"))
+        self.btn_mode_magnifier.setFixedSize(62, 24)
+        self.btn_mode_magnifier.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_mode_magnifier.clicked.connect(lambda: self._set_censor_mode("magnifier"))
         censor_type_layout.addWidget(self.btn_mode_mosaic)
         censor_type_layout.addWidget(self.btn_mode_blur)
+        censor_type_layout.addWidget(self.btn_mode_magnifier)
         censor_type_layout.addStretch()
         self.layout.addWidget(self.censor_type_widget)
 
-        # 7. Сгруппированный контейнер для ползунков (толщина, зернистость, блюр)
+        # 7. Сгруппированный контейнер для ползунков (толщина, зернистость, блюр, масштаб)
         self.slider_card = QFrame()
         self.slider_card.setStyleSheet("""
             QFrame {
@@ -1372,6 +1377,14 @@ class ToolPropertiesFlyout(QFrame):
         self.slider_blur.valueChanged.connect(self._on_blur_slider_changed)
         slider_card_layout.addWidget(self.slider_blur)
 
+        self.lbl_zoom = QLabel(tr("prop_zoom_factor", "Масштаб: {val:.1f}x", val=2.0))
+        slider_card_layout.addWidget(self.lbl_zoom)
+        self.slider_zoom = QSlider(Qt.Orientation.Horizontal)
+        self.slider_zoom.setRange(12, 50)
+        self.slider_zoom.setValue(20)
+        self.slider_zoom.valueChanged.connect(self._on_zoom_slider_changed)
+        slider_card_layout.addWidget(self.slider_zoom)
+
         self.layout.addWidget(self.slider_card)
 
     def load_tool(self, tool_type: str, tool_data: dict):
@@ -1405,6 +1418,8 @@ class ToolPropertiesFlyout(QFrame):
         self.lbl_grain.hide()
         self.slider_blur.hide()
         self.lbl_blur.hide()
+        self.slider_zoom.hide()
+        self.lbl_zoom.hide()
 
         if tool_type == ToolType.SHAPES:
             self.shapes_type_widget.show()
@@ -1610,7 +1625,17 @@ class ToolPropertiesFlyout(QFrame):
             cmode = tool_data.get("censor_mode", "mosaic")
             style_toggle_btn(self.btn_mode_mosaic, cmode == "mosaic", self.is_dark)
             style_toggle_btn(self.btn_mode_blur, cmode == "blur", self.is_dark)
-            if cmode == "blur":
+            style_toggle_btn(self.btn_mode_magnifier, cmode in ("magnifier", "zoom"), self.is_dark)
+            if cmode in ("magnifier", "zoom"):
+                z_val = tool_data.get("zoom_factor", 2.0)
+                int_val = int(round(z_val * 10))
+                self.slider_zoom.blockSignals(True)
+                self.slider_zoom.setValue(int_val)
+                self.slider_zoom.blockSignals(False)
+                self.lbl_zoom.setText(tr("prop_zoom_factor", "Масштаб: {val:.1f}x", val=z_val))
+                self.lbl_zoom.show()
+                self.slider_zoom.show()
+            elif cmode == "blur":
                 b_val = tool_data.get("blur_radius", 15)
                 self.slider_blur.blockSignals(True)
                 self.slider_blur.setValue(b_val)
@@ -1741,6 +1766,12 @@ class ToolPropertiesFlyout(QFrame):
     def _on_blur_slider_changed(self, val: int):
         self.lbl_blur.setText(tr("prop_blur_radius", "Степень размытия: {val} px", val=val))
         self.tool_data["blur_radius"] = val
+        self.settings_updated.emit()
+
+    def _on_zoom_slider_changed(self, val: int):
+        z_val = val / 10.0
+        self.lbl_zoom.setText(tr("prop_zoom_factor", "Масштаб: {val:.1f}x", val=z_val))
+        self.tool_data["zoom_factor"] = z_val
         self.settings_updated.emit()
 
     def _highlight_color(self, current_color):
@@ -1932,6 +1963,7 @@ class CensorEffectsFlyoutWidget(QFrame):
             ("normal", "layers", tr("censor_normal", "Обычный — убирает эффекты нижних слоёв в этой области")),
             ("mosaic", "mosaic", tr("censor_mosaic", "Мозаика (Пикселизация области)")),
             ("blur", "blur", tr("censor_blur", "Размытие (Блюр области)")),
+            ("magnifier", "search", tr("censor_magnifier", "Увеличение (Лупа / Масштаб области)")),
             ("grayscale", "grayscale", tr("censor_grayscale", "Чёрно-белый (Grayscale области)")),
             ("invert", "invert", tr("censor_invert", "Инверсия цветов (Область)")),
             ("vibrant", "vibrant", tr("censor_vibrant", "Повышенная контрастность / Насыщенность (Область)")),
@@ -2008,7 +2040,7 @@ class RightDrawingToolbar(QFrame):
                 "bg_color": "#000000",
                 "bg_alpha": 180
             },
-            ToolType.MOSAIC: {"size": 8, "censor_mode": "mosaic", "blur_radius": 15},
+            ToolType.MOSAIC: {"size": 8, "censor_mode": "mosaic", "blur_radius": 15, "zoom_factor": 2.0},
             ToolType.CAPTURE_MASK: {"mask_kind": "freeform"},
         }
 
@@ -2460,6 +2492,7 @@ class RegionActionHeader(QFrame):
     save_clicked = pyqtSignal(str)
     copy_clicked = pyqtSignal(str)
     copy_text_clicked = pyqtSignal(str)
+    live_translate_clicked = pyqtSignal()
     record_video_started = pyqtSignal(dict)
     record_gif_started = pyqtSignal(dict)
     mass_filter_selected = pyqtSignal(str)
@@ -2529,6 +2562,11 @@ class RegionActionHeader(QFrame):
         self.btn_mass_copy_text.clicked.connect(self._show_ocr_popup)
         layout.addWidget(self.btn_mass_copy_text)
 
+        self.btn_mass_translate = ModernButton(tr("region_mass_translate_short", "Перевод"), tr("action_all_translate", "Открыть рамку динамического перевода для зоны [Ctrl+Shift+T]"))
+        self.btn_mass_translate.setIcon(create_themed_icon("translate", self.is_dark, size=14))
+        self.btn_mass_translate.clicked.connect(self.live_translate_clicked.emit)
+        layout.addWidget(self.btn_mass_translate)
+
         self.btn_mass_video = ModernButton(tr("region_mass_video_short", "Видео"), tr("action_all_video", "Записывать видео всех зон"))
         self.btn_mass_video.setIcon(create_themed_icon("video", self.is_dark, size=14))
         self.btn_mass_video.clicked.connect(self._show_video_popup)
@@ -2579,7 +2617,7 @@ class RegionActionHeader(QFrame):
                 tr("region_header_title_count", "Зоны · массовые действия ({available}/{total})", available=available_count, total=total_count)
             )
         enabled = available_count > 0
-        for button in (self.btn_mass_save, self.btn_mass_copy, self.btn_mass_copy_text, self.btn_mass_video, self.btn_mass_gif, self.btn_mass_filter, self.btn_ui_snapshot):
+        for button in (self.btn_mass_save, self.btn_mass_copy, self.btn_mass_copy_text, self.btn_mass_translate, self.btn_mass_video, self.btn_mass_gif, self.btn_mass_filter, self.btn_ui_snapshot):
             button.setEnabled(enabled)
         self.setVisible(bool(add_mode or total_count > 1))
 
@@ -2761,6 +2799,7 @@ class BottomActionToolbar(QFrame):
     save_clicked = pyqtSignal(str)
     copy_clicked = pyqtSignal(str)
     copy_text_clicked = pyqtSignal(str)
+    live_translate_clicked = pyqtSignal()
     scrolling_screenshot_requested = pyqtSignal()
     search_image_requested = pyqtSignal(str)
     record_video_started = pyqtSignal(dict)
@@ -2826,6 +2865,14 @@ class BottomActionToolbar(QFrame):
         self.btn_copy_text.setIconSize(QSize(16, 16))
         self.btn_copy_text.clicked.connect(self._show_ocr_popup)
         layout.addWidget(self.btn_copy_text)
+
+        # 2.2 Перманентная рамка динамического перевода экрана
+        self.btn_translate = ModernButton("", tr("action_translate_tip", "Динамический перевод текста в рамке (плавающая рамка перевода) [Ctrl+Shift+T]"))
+        self.btn_translate.setFixedSize(28, 28)
+        self.btn_translate.setIcon(create_themed_icon("translate", self.is_dark, size=16))
+        self.btn_translate.setIconSize(QSize(16, 16))
+        self.btn_translate.clicked.connect(self.live_translate_clicked.emit)
+        layout.addWidget(self.btn_translate)
 
         self.popup_ocr = OcrLanguagePopup(self)
         self.popup_ocr.language_selected.connect(self.copy_text_clicked.emit)

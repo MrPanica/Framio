@@ -29,7 +29,7 @@ from PyQt6.QtGui import (
 from config import ConfigManager
 from models.shapes import (
     BaseShape, PenShape, LineShape, ArrowShape,
-    RectangleShape, CircleShape, TextShape, MosaicShape, BlurShape, RegionalEffectShape, CaptureMaskShape
+    RectangleShape, CircleShape, TextShape, MosaicShape, BlurShape, RegionalEffectShape, CaptureMaskShape, MagnifierShape
 )
 from models.layers import LayerManager
 from models.history import HistoryManager, HistoryCommand
@@ -252,6 +252,7 @@ class OverlayWindow(QWidget):
         self.bottom_toolbar.save_clicked.connect(self.save_screenshot)
         self.bottom_toolbar.copy_clicked.connect(self.copy_screenshot)
         self.bottom_toolbar.copy_text_clicked.connect(self.copy_ocr_text)
+        self.bottom_toolbar.live_translate_clicked.connect(self.open_translation_frame)
         self.bottom_toolbar.scrolling_screenshot_requested.connect(self.start_scrolling_screenshot)
         self.bottom_toolbar.search_image_requested.connect(self.search_image)
         self.bottom_toolbar.record_video_started.connect(lambda p: self.start_recording("video", p))
@@ -271,6 +272,7 @@ class OverlayWindow(QWidget):
         self.region_header.save_clicked.connect(lambda fmt: self.save_screenshot(fmt, all_regions=True))
         self.region_header.copy_clicked.connect(lambda fmt: self.copy_screenshot(fmt, all_regions=True))
         self.region_header.copy_text_clicked.connect(lambda lang: self.copy_ocr_text(lang, all_regions=True))
+        self.region_header.live_translate_clicked.connect(self.open_translation_frame)
         self.region_header.record_video_started.connect(lambda p: self.start_recording("video", p, all_regions=True))
         self.region_header.record_gif_started.connect(lambda p: self.start_recording("gif", p, all_regions=True))
         self.region_header.mass_filter_selected.connect(self._on_mass_filter_changed)
@@ -2897,11 +2899,14 @@ class OverlayWindow(QWidget):
         elif self.current_tool == ToolType.CIRCLE:
             self.temp_shape = CircleShape(QRectF(pos, pos), color=col, stroke_width=size, filled=False)
         elif self.current_tool == ToolType.MOSAIC:
-            # Инструмент региональных эффектов и цензуры: мозаика, блюр, ч/б, инверсия, насыщенность, сепия
+            # Инструмент региональных эффектов и цензуры: мозаика, блюр, лупа/увеличение, ч/б, инверсия, насыщенность, сепия
             if censor_mode == "blur":
                 self.temp_shape = BlurShape(QRectF(pos, pos), blur_radius=blur_r)
             elif censor_mode in ("mosaic", "pixelate"):
                 self.temp_shape = MosaicShape(QRectF(pos, pos), pixel_size=grain if grain else size)
+            elif censor_mode in ("magnifier", "zoom"):
+                zoom_f = cfg.get("zoom_factor", 2.0)
+                self.temp_shape = MagnifierShape(QRectF(pos, pos), zoom_factor=zoom_f)
             else:
                 self.temp_shape = RegionalEffectShape(QRectF(pos, pos), effect_type=censor_mode, intensity=size)
             if self.background_pixmap is not None:
@@ -5024,6 +5029,28 @@ class OverlayWindow(QWidget):
             self._restore_single_recording_overlay_after_action()
         else:
             self.close_overlay()
+
+    def open_translation_frame(self, target_rect=None):
+        """
+        Открывает перманентную плавающую рамку динамического перевода экрана.
+        """
+        if target_rect is None or not isinstance(target_rect, QRect):
+            sel = self.selection_rect.toRect()
+            if sel.isValid() and sel.width() > 30 and sel.height() > 20:
+                target_rect = sel
+            else:
+                target_rect = None
+
+        self.close_overlay()
+
+        from ui.translation_window import TranslationFrameWindow
+        app_inst = QApplication.instance()
+        if not hasattr(app_inst, "_active_translation_windows"):
+            app_inst._active_translation_windows = []
+        win = TranslationFrameWindow(initial_rect=target_rect)
+        app_inst._active_translation_windows.append(win)
+        win.frame_closed.connect(lambda w=win: app_inst._active_translation_windows.remove(w) if hasattr(app_inst, "_active_translation_windows") and w in app_inst._active_translation_windows else None)
+        win.show()
 
     def grab_ui_snapshot_image(self) -> QImage:
         """

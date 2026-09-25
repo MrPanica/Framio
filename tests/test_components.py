@@ -4462,6 +4462,98 @@ def test_ocr_copy_text_tool_and_speedup():
     print("  -> Кнопка OCR справа от копирования, текст извлекается локально, оверлей скрывается мгновенно, постобработка чистит артефакты.")
 
 
+def test_magnifier_tool_and_filter():
+    """Проверка инструмента увеличения (лупы/масштабирования) в цензуре и фильтрах."""
+    print("[TEST] Проверка инструмента увеличения (лупа/масштаб) в цензуре и фильтрах...")
+    from utils.image_filters import apply_filter, FilterType
+    from models.shapes import MagnifierShape, RegionalEffectShape, get_magnified_pixmap
+    from PyQt6.QtGui import QPixmap, QColor, QPainter
+
+    # 1. Проверка функции apply_filter с FilterType.MAGNIFIER
+    img = np.zeros((100, 100, 3), dtype=np.uint8)
+    img[40:60, 40:60] = [255, 200, 100]
+    filtered = apply_filter(img, FilterType.MAGNIFIER, {"zoom_factor": 2.5})
+    assert filtered.shape == (100, 100, 3)
+
+    # 2. Проверка get_magnified_pixmap
+    pix = QPixmap(100, 100)
+    pix.fill(QColor("#102030"))
+    painter = QPainter(pix)
+    painter.fillRect(40, 40, 20, 20, QColor("#ffffff"))
+    painter.end()
+
+    mag_pix = get_magnified_pixmap(pix, 2.0)
+    assert not mag_pix.isNull()
+    assert mag_pix.width() == 100 and mag_pix.height() == 100
+
+    # 3. Проверка класса MagnifierShape
+    m_shape = MagnifierShape(QRectF(10, 10, 80, 80), zoom_factor=2.5)
+    assert m_shape.zoom_factor == 2.5
+    assert m_shape.effect_type == "magnifier"
+
+    m_shape.set_zoom_factor(3.5, pix)
+    assert m_shape.zoom_factor == 3.5
+
+    m_shape.set_intensity(40, pix)
+    assert abs(m_shape.zoom_factor - 4.0) < 0.01
+
+    clone = m_shape.clone()
+    assert isinstance(clone, MagnifierShape)
+    assert clone.zoom_factor == m_shape.zoom_factor
+
+    # 4. Проверка отрисовки MagnifierShape
+    canvas = QPixmap(120, 120)
+    canvas.fill(Qt.GlobalColor.transparent)
+    p = QPainter(canvas)
+    m_shape.draw(p)
+    p.end()
+
+    print("  -> Инструмент увеличения (лупа) масштабирует область, сохраняет коэффициент и отрисовывается без ошибок.")
+
+
+def test_translation_frame_and_translator():
+    """Проверка локального переводчика и перманентной плавающей рамки перевода."""
+    print("[TEST] Проверка модуля перевода и окна плавающей рамки перевода...")
+    from utils.translator import translate_text, clear_translation_cache, get_cache_size
+    from ui.translation_window import TranslationFrameWindow
+
+    # 1. Проверка перевода текста
+    clear_translation_cache()
+    res = translate_text("Hello world", src_lang="en", dest_lang="ru")
+    assert isinstance(res, str) and len(res) > 0
+    # Проверка кэширования (мгновенный возврат)
+    t0 = time.perf_counter()
+    res2 = translate_text("Hello world", src_lang="en", dest_lang="ru")
+    t1 = time.perf_counter()
+    assert res2 == res
+    assert (t1 - t0) < 0.05, "Cache hit must take < 50 ms"
+    assert get_cache_size() >= 1
+
+    # 2. Проверка TranslationFrameWindow
+    frame_win = TranslationFrameWindow(initial_rect=QRectF(100, 100, 450, 220).toRect())
+    assert frame_win.isWindow()
+    assert frame_win.width() >= 300
+    assert frame_win.height() >= 120
+    assert frame_win.worker is not None
+
+    # Переключение режимов (HUD vs In-place)
+    frame_win._toggle_display_mode()
+    assert frame_win.current_mode == "inplace"
+    frame_win._toggle_display_mode()
+    assert frame_win.current_mode == "hud"
+
+    # Пауза / возобновление
+    frame_win._toggle_pause()
+    assert frame_win.is_paused
+    assert frame_win.worker._paused
+    frame_win._toggle_pause()
+    assert not frame_win.is_paused
+    assert not frame_win.worker._paused
+
+    frame_win.close()
+    print("  -> Плавающая рамка перевода создаётся, управляется динамически, поддерживает кэш и разные режимы отображения.")
+
+
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
@@ -4561,6 +4653,8 @@ if __name__ == "__main__":
         test_ui_snapshot_in_mass_actions()
         test_censor_placement_bounds_and_dpr()
         test_ocr_copy_text_tool_and_speedup()
+        test_magnifier_tool_and_filter()
+        test_translation_frame_and_translator()
         import time
         time.sleep(0.5)
         QApplication.processEvents()

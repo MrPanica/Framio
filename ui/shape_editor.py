@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QColor, QFont
 
 from models.shapes import (
-    BaseShape, LineShape, ArrowShape, RectangleShape, CircleShape, TextShape, PenShape, MosaicShape, BlurShape, RegionalEffectShape
+    BaseShape, LineShape, ArrowShape, RectangleShape, CircleShape, TextShape, PenShape, MosaicShape, BlurShape, RegionalEffectShape, MagnifierShape
 )
 from .toolbars import get_theme_styles, style_toggle_btn, show_smart_popup
 from .icons import create_themed_icon, create_style_preview_icon
@@ -68,7 +68,7 @@ class ShapeEditPopup(QFrame):
         if isinstance(shape, TextShape):
             self._init_text_controls()
 
-        is_censor_box = isinstance(shape, (RegionalEffectShape, MosaicShape, BlurShape))
+        is_censor_box = isinstance(shape, (RegionalEffectShape, MosaicShape, BlurShape, MagnifierShape))
 
         # 2. Цвет контура / основной цвет (для векторных фигур)
         if not is_censor_box:
@@ -104,7 +104,8 @@ class ShapeEditPopup(QFrame):
             "stroke_width": getattr(s, "stroke_width", 4),
             "visible": getattr(s, "visible", True),
             "pixel_size": getattr(s, "pixel_size", 8),
-            "blur_radius": getattr(s, "blur_radius", 15)
+            "blur_radius": getattr(s, "blur_radius", 15),
+            "zoom_factor": getattr(s, "zoom_factor", 2.0)
         }
         if isinstance(s, ArrowShape):
             props["arrow_style"] = s.arrow_style
@@ -254,6 +255,21 @@ class ShapeEditPopup(QFrame):
             self.lbl_blur.hide()
             self.slider_blur.hide()
 
+        # 4. Степень увеличения (для MagnifierShape или эффекта magnifier)
+        is_mag = isinstance(self.shape, MagnifierShape) or getattr(self.shape, "effect_type", "") == "magnifier"
+        cur_zoom = getattr(self.shape, "zoom_factor", 2.0)
+        self.lbl_zoom = QLabel(tr("prop_zoom_factor", "Масштаб: {val:.1f}x", val=cur_zoom))
+        self.slider_zoom = QSlider(Qt.Orientation.Horizontal)
+        self.slider_zoom.setRange(12, 50)
+        self.slider_zoom.setValue(int(round(cur_zoom * 10)))
+        self.slider_zoom.valueChanged.connect(self._on_zoom_changed)
+
+        sliders_layout.addWidget(self.lbl_zoom)
+        sliders_layout.addWidget(self.slider_zoom)
+        if not is_mag:
+            self.lbl_zoom.hide()
+            self.slider_zoom.hide()
+
         self.layout.addWidget(self.sliders_frame)
 
     def _on_grain_changed(self, val: int):
@@ -274,6 +290,17 @@ class ShapeEditPopup(QFrame):
             self.shape.set_blur_radius(val, bg_pix)
         elif hasattr(self.shape, "update_blur") and bg_pix is not None:
             self.shape.update_blur(bg_pix)
+        self.shape_modified.emit()
+
+    def _on_zoom_changed(self, val: int):
+        z_val = val / 10.0
+        self.shape.zoom_factor = z_val
+        self.lbl_zoom.setText(tr("prop_zoom_factor", "Масштаб: {val:.1f}x", val=z_val))
+        bg_pix = getattr(self.parent(), "background_pixmap", None)
+        if hasattr(self.shape, "set_zoom_factor"):
+            self.shape.set_zoom_factor(z_val, bg_pix)
+        elif hasattr(self.shape, "set_intensity"):
+            self.shape.set_intensity(int(round(z_val * 10)), bg_pix)
         self.shape_modified.emit()
 
     def _init_arrow_controls(self):
