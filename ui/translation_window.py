@@ -335,6 +335,9 @@ class TranslationScannerWorker(QThread):
                     crop = frame_bgr[by:by+bh, bx:bx+bw]
                     visual = extract_visual_props(crop)
 
+                    lines_cnt = max(1, b.get("lines_count", 1))
+                    single_line_h = float(bh) / float(lines_cnt)
+
                     translated_blocks.append({
                         "original": b.get("text", "").strip(),
                         "translated": b_tr,
@@ -342,6 +345,8 @@ class TranslationScannerWorker(QThread):
                         "y": by,
                         "width": bw,
                         "height": bh,
+                        "lines_count": lines_cnt,
+                        "line_height": single_line_h,
                         "color_rgb": visual["color_rgb"],
                         "is_bold": visual["is_bold"],
                         "font_family": visual["font_family"]
@@ -827,11 +832,11 @@ class TranslationControlBar(QWidget):
             return
         is_pass = getattr(self.frame_window, "passthrough_enabled", True)
         if is_pass:
-            self.btn_passthrough.setIcon(create_themed_icon("mouse_pointer", is_dark=True, size=13, custom_color="#38bdf8"))
+            self.btn_passthrough.setIcon(create_themed_icon("passthrough", is_dark=True, size=14, custom_color="#38bdf8"))
             self.btn_passthrough.setToolTip(tr("trans_pass_on_tip", "Сквозной клик ВКЛЮЧЕН (рамка неосязаема, клики проходят в игру). Нажмите для режима настройки размера."))
             self.btn_passthrough.setStyleSheet("QPushButton { border-color: rgba(56, 189, 248, 160); background-color: rgba(14, 165, 233, 40); }")
         else:
-            self.btn_passthrough.setIcon(create_themed_icon("maximize_2", is_dark=True, size=13))
+            self.btn_passthrough.setIcon(create_themed_icon("maximize_2", is_dark=True, size=13, custom_color="#eab308"))
             self.btn_passthrough.setToolTip(tr("trans_pass_off_tip", "Режим настройки ВКЛЮЧЕН (рамку можно двигать и растягивать). Нажмите для включения сквозного клика."))
             self.btn_passthrough.setStyleSheet("QPushButton { border-color: #eab308; background-color: rgba(234, 179, 8, 40); }")
 
@@ -923,6 +928,7 @@ class TranslationControlBar(QWidget):
 
         # 1. Неосязаемая рамка (сквозные клики)
         act_pass = menu.addAction(tr("trans_opt_passthrough", "Неосязаемая рамка (клики сквозь рамку)"))
+        act_pass.setIcon(create_themed_icon("passthrough", is_dark=True, size=13))
         act_pass.setCheckable(True)
         act_pass.setChecked(self.frame_window.passthrough_enabled)
         act_pass.setToolTip(tr("trans_opt_pass_tip", "Позволяет нажимать сквозь рамку прямо в игру или программу"))
@@ -1212,6 +1218,8 @@ class TranslationFrameWindow(QWidget):
                     ctypes.windll.user32.SetWindowLongW(hwnd, -20, style | 0x00000020)  # WS_EX_TRANSPARENT
                 else:
                     ctypes.windll.user32.SetWindowLongW(hwnd, -20, style & ~0x00000020)
+                # SWP_NOSIZE (1) | SWP_NOMOVE (2) | SWP_NOZORDER (4) | SWP_NOACTIVATE (0x10) | SWP_FRAMECHANGED (0x20) = 0x37
+                ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0037)
             except Exception:
                 pass
 
@@ -1471,6 +1479,8 @@ class TranslationFrameWindow(QWidget):
             self.is_moving_window = False
             self.active_handle = self.HANDLE_NONE
             self.setCursor(Qt.CursorShape.ArrowCursor)
+            if hasattr(self, "worker") and self.worker.isRunning():
+                self.worker.update_geometry(self.geometry())
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -1528,10 +1538,13 @@ class TranslationFrameWindow(QWidget):
                 if not txt:
                     continue
 
+                lines_cnt = max(1, int(item.get("lines_count", 1)))
+                line_h = float(item.get("line_height", bh / lines_cnt))
+
                 if self.hud_font_size > 0:
                     base_pixel_size = self.hud_font_size
                 else:
-                    base_pixel_size = max(10, int(round(bh * 0.72)))
+                    base_pixel_size = max(10, min(24, int(round(line_h * 0.70))))
 
                 if self.match_font_family:
                     family = item.get("font_family", "Segoe UI")
@@ -1548,11 +1561,14 @@ class TranslationFrameWindow(QWidget):
                 fm = QFontMetrics(font)
 
                 text_w = fm.horizontalAdvance(txt)
-                preferred_w = max(bw, float(text_w + 12))
+                if lines_cnt > 1:
+                    preferred_w = min(max_avail_w, max(float(bw * 1.15), 100.0))
+                else:
+                    preferred_w = min(max_avail_w, max(float(bw), float(text_w + 12)))
                 eff_w = min(max_avail_w, preferred_w)
 
                 cur_pixel_size = base_pixel_size
-                if text_w > eff_w and self.hud_font_size == 0:
+                if lines_cnt == 1 and text_w > eff_w and self.hud_font_size == 0:
                     scale = eff_w / max(1.0, float(text_w))
                     cur_pixel_size = max(9, int(round(base_pixel_size * max(0.72, scale))))
                     font.setPixelSize(cur_pixel_size)
@@ -1594,10 +1610,9 @@ class TranslationFrameWindow(QWidget):
             try:
                 wid = int(self.winId())
                 ctypes.windll.user32.SetWindowDisplayAffinity(wid, 0x00000011)
-                style = ctypes.windll.user32.GetWindowLongW(wid, -20)
-                ctypes.windll.user32.SetWindowLongW(wid, -20, style | 0x08000000)
             except Exception:
                 pass
+        self.set_passthrough(self.passthrough_enabled)
         if hasattr(self, "control_bar") and self.control_bar:
             self.control_bar.sync_to_frame()
             self.control_bar.show()

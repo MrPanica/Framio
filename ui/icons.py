@@ -10,6 +10,19 @@ from PyQt6.QtGui import QPixmap, QPainter, QIcon, QColor, QPen, QBrush, QPolygon
 from PyQt6.QtSvg import QSvgRenderer
 
 SVG_ICONS = {
+    # --- Инструменты управления и указателей ---
+    "mouse_pointer": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
+        <path d="m13 13 6 6"/>
+    </svg>""",
+
+    "maximize_2": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 3 21 3 21 9"/>
+        <polyline points="9 21 3 21 3 15"/>
+        <line x1="21" y1="3" x2="14" y2="10"/>
+        <line x1="3" y1="21" x2="10" y2="14"/>
+    </svg>""",
+
     # --- Инструменты рисования (Правая панель) ---
     "chevron_up": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="18 15 12 9 6 15"/>
