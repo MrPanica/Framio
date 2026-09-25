@@ -4517,7 +4517,7 @@ def test_translation_frame_and_translator():
     from utils.translator import translate_text, clear_translation_cache, get_cache_size
     from ui.translation_window import TranslationFrameWindow
 
-    # 1. Проверка перевода текста
+    # 1. Проверка перевода текста и пакетного перевода (translate_batch)
     clear_translation_cache()
     res = translate_text("Hello world", src_lang="en", dest_lang="ru")
     assert isinstance(res, str) and len(res) > 0
@@ -4529,6 +4529,11 @@ def test_translation_frame_and_translator():
     assert (t1 - t0) < 0.05, "Cache hit must take < 50 ms"
     assert get_cache_size() >= 1
 
+    from utils.translator import translate_batch
+    batch_res = translate_batch(["Start Game", "Options", "Quit"], source_lang="en", target_lang="ru")
+    assert len(batch_res) == 3
+    assert all(isinstance(s, str) and len(s) > 0 for s in batch_res)
+
     # 2. Проверка TranslationFrameWindow
     frame_win = TranslationFrameWindow(initial_rect=QRectF(100, 100, 450, 220).toRect())
     assert frame_win.isWindow()
@@ -4536,11 +4541,19 @@ def test_translation_frame_and_translator():
     assert frame_win.height() >= 120
     assert frame_win.worker is not None
 
+    # Проверка внешней верхней шапки и области захвата
+    cap_rect = frame_win.get_capture_rect()
+    assert cap_rect.y() == frame_win.geometry().y() + frame_win.HEADER_OFFSET
+    assert cap_rect.height() == frame_win.geometry().height() - frame_win.HEADER_OFFSET
+    assert frame_win.header_frame.y() == 0
+
     # Переключение режимов (HUD vs In-place)
     frame_win._toggle_display_mode()
     assert frame_win.current_mode == "inplace"
+    assert frame_win.worker._mode == "inplace"
     frame_win._toggle_display_mode()
     assert frame_win.current_mode == "hud"
+    assert frame_win.worker._mode == "hud"
 
     # Пауза / возобновление
     frame_win._toggle_pause()
@@ -4549,6 +4562,14 @@ def test_translation_frame_and_translator():
     frame_win._toggle_pause()
     assert not frame_win.is_paused
     assert not frame_win.worker._paused
+
+    # Проверка скрытия в режим глазика (Stealth mode)
+    frame_win.set_stealth_lock(True)
+    assert frame_win.is_locked_stealth
+    assert frame_win.header_frame.isHidden()
+    frame_win.set_stealth_lock(False)
+    assert not frame_win.is_locked_stealth
+    assert not frame_win.header_frame.isHidden()
 
     frame_win.close()
     print("  -> Плавающая рамка перевода создаётся, управляется динамически, поддерживает кэш и разные режимы отображения.")

@@ -40,7 +40,7 @@ from PyQt6.QtGui import (
 
 from utils.screen_lock import safe_grab_screen_bgr, user32
 from utils.ocr_helper import extract_text_and_blocks, extract_text_from_image
-from utils.translator import translate_text, get_available_translation_languages
+from utils.translator import translate_text, translate_batch, get_available_translation_languages
 from utils.i18n import tr
 from .icons import create_themed_icon, get_svg_pixmap
 
@@ -48,6 +48,17 @@ from .icons import create_themed_icon, get_svg_pixmap
 if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
+
+
+def create_stealth_menu(parent=None) -> QMenu:
+    """Создает QMenu с аппаратным исключением из захвата экрана (WDA_EXCLUDEFROMCAPTURE)."""
+    menu = QMenu(parent)
+    if sys.platform == "win32":
+        try:
+            ctypes.windll.user32.SetWindowDisplayAffinity(int(menu.winId()), 0x00000011)
+        except Exception:
+            pass
+    return menu
 
 
 def extract_visual_props(crop_bgr: np.ndarray) -> dict:
@@ -123,8 +134,14 @@ class TranslationScannerWorker(QThread):
         self._rect = QRect(100, 100, 480, 240)
         self._src_lang = "auto"
         self._tgt_lang = "ru"
+        self._mode = "hud"
         self._last_frame_small = None
         self._last_ocr_text = ""
+
+    def set_mode(self, mode: str):
+        with QMutexLocker(self._mutex):
+            self._mode = mode
+            self._last_ocr_text = ""
 
     def update_geometry(self, rect: QRect):
         with QMutexLocker(self._mutex):
@@ -165,6 +182,7 @@ class TranslationScannerWorker(QThread):
                 tgt = self._tgt_lang
                 interval = self._interval_ms
                 use_diff = self._smart_diff
+                mode = self._mode
 
             if paused or r.width() < 30 or r.height() < 30:
                 self.msleep(200)
@@ -212,16 +230,28 @@ class TranslationScannerWorker(QThread):
 
             self._last_ocr_text = full_text
 
-            # Перевод общего текста
-            translated_full = translate_text(full_text, source_lang=src, target_lang=tgt)
+            if mode == "hud":
+                # В режиме субтитров HUD переводим только общий текст одним быстрым вызовом (~50-150 мс)
+                translated_full = translate_text(full_text, source_lang=src, target_lang=tgt)
+                self.translation_ready.emit(full_text, translated_full, [])
+            else:
+                # В режиме In-place собираем все непустые блоки и переводим ПАКЕТОМ за 1 сетевой запрос
+                valid_blocks = []
+                block_texts = []
+                for b in blocks:
+                    b_text = b.get("text", "").strip()
+                    if b_text:
+                        valid_blocks.append(b)
+                        block_texts.append(b_text)
 
-            # Перевод каждого блока для режима In-place с извлечением цвета и характеристик шрифта
-            translated_blocks = []
-            f_h, f_w = frame_bgr.shape[:2]
-            for b in blocks:
-                b_text = b.get("text", "").strip()
-                if b_text:
-                    b_tr = translate_text(b_text, source_lang=src, target_lang=tgt)
+                if block_texts:
+                    translated_list = translate_batch(block_texts, source_lang=src, target_lang=tgt)
+                else:
+                    translated_list = []
+
+                translated_blocks = []
+                f_h, f_w = frame_bgr.shape[:2]
+                for b, b_tr in zip(valid_blocks, translated_list):
                     bx = int(max(0, min(f_w - 2, b.get("x", 0))))
                     by = int(max(0, min(f_h - 2, b.get("y", 0))))
                     bw = int(max(10, min(f_w - bx, b.get("width", 50))))
@@ -231,7 +261,7 @@ class TranslationScannerWorker(QThread):
                     visual = extract_visual_props(crop)
 
                     translated_blocks.append({
-                        "original": b_text,
+                        "original": b.get("text", "").strip(),
                         "translated": b_tr,
                         "x": bx,
                         "y": by,
@@ -242,7 +272,9 @@ class TranslationScannerWorker(QThread):
                         "font_family": visual["font_family"]
                     })
 
-            self.translation_ready.emit(full_text, translated_full, translated_blocks)
+                translated_full = " ".join(translated_list) if translated_list else translate_text(full_text, source_lang=src, target_lang=tgt)
+                self.translation_ready.emit(full_text, translated_full, translated_blocks)
+
             self.msleep(interval)
 
 
@@ -288,7 +320,8 @@ class EyeUnlockPill(QPushButton):
     def update_position(self):
         if self.target_window and self.target_window.isVisible():
             geo = self.target_window.geometry()
-            self.move(geo.right() - 20, geo.top() + 4)
+            hdr = getattr(self.target_window, "HEADER_OFFSET", 38)
+            self.move(geo.right() - 20, geo.top() + hdr + 4)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -303,14 +336,20 @@ class TranslationFrameWindow(QWidget):
     """
     Интерактивное окно рамки живого перевода.
     Поддерживает:
+    - Внешняя верхняя панель управления над областью захвата (Header Bar снаружи)
     - Компактный заголовок с объединенными кнопками настроек (Язык, Режим, Настройки оформления)
     - Режим скрытия и сквозного клика по кнопке «Глазик» (остается мини-глазик 16x16)
+    - Аппаратное исключение из захвата экрана (WDA_EXCLUDEFROMCAPTURE) для окна и всех выпадающих меню
     - Плавное перемещение и изменение размера
     - Динамический расчет размера шрифта, цвета слов и гарнитуры оригинала
+    - Адаптивный перенос и расчет многострочного текста без вылезания за границы
     - Пользовательские параметры фона, прозрачности и оптимизации
     """
     closed = pyqtSignal()
     frame_closed = pyqtSignal()
+
+    HEADER_OFFSET = 38
+    HEADER_BAR_HEIGHT = 32
 
     HANDLE_SIZE = 8
     HANDLE_NONE = 0
@@ -338,19 +377,19 @@ class TranslationFrameWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
-        self.setMinimumSize(320, 140)
+        self.setMinimumSize(320, 140 + self.HEADER_OFFSET)
 
         screen = QApplication.primaryScreen()
         screen_geo = screen.geometry() if screen else QRect(0, 0, 1920, 1080)
 
         if initial_rect is not None and initial_rect.isValid() and not initial_rect.isEmpty():
             w = max(340, initial_rect.width())
-            h = max(160, initial_rect.height())
+            h = max(160 + self.HEADER_OFFSET, initial_rect.height() + self.HEADER_OFFSET)
             x = initial_rect.x()
-            y = initial_rect.y()
+            y = max(0, initial_rect.y() - self.HEADER_OFFSET)
             self.setGeometry(x, y, w, h)
         else:
-            w, h = 540, 260
+            w, h = 540, 260 + self.HEADER_OFFSET
             x = screen_geo.x() + (screen_geo.width() - w) // 2
             y = screen_geo.y() + (screen_geo.height() - h) // 2
             self.setGeometry(x, y, w, h)
@@ -391,9 +430,20 @@ class TranslationFrameWindow(QWidget):
 
         # Рабочий поток
         self.worker = TranslationScannerWorker(self)
+        self.worker.set_mode(self.current_mode)
         self.worker.translation_ready.connect(self._on_translation_ready)
-        self.worker.update_geometry(self.geometry())
+        self.worker.update_geometry(self.get_capture_rect())
         self.worker.start()
+
+    def get_capture_rect(self) -> QRect:
+        """Возвращает прямоугольник сканирования экрана строго под внешней шапкой управления."""
+        geo = self.geometry()
+        return QRect(
+            geo.x(),
+            geo.y() + self.HEADER_OFFSET,
+            geo.width(),
+            max(30, geo.height() - self.HEADER_OFFSET)
+        )
 
     def _setup_ui(self):
         # 1. Верхняя панель управления (Header Bar)
@@ -598,7 +648,7 @@ class TranslationFrameWindow(QWidget):
             """)
 
     def _show_lang_menu(self):
-        menu = QMenu(self)
+        menu = create_stealth_menu(self)
         menu.setStyleSheet(self._menu_stylesheet())
 
         pairs = [
@@ -616,23 +666,34 @@ class TranslationFrameWindow(QWidget):
 
         menu.addSeparator()
 
-        src_menu = menu.addMenu(tr("trans_menu_src", "Исходный язык"))
+        src_menu = create_stealth_menu(menu)
+        src_menu.setTitle(tr("trans_menu_src", "Исходный язык"))
         src_menu.setStyleSheet(self._menu_stylesheet())
         all_src = [("auto", "Auto"), ("en", "English"), ("ja", "Japanese"), ("zh-CN", "Chinese"),
                    ("de", "German"), ("fr", "French"), ("es", "Spanish"), ("ko", "Korean"), ("ru", "Русский")]
         for tag, name in all_src:
             act = src_menu.addAction(name)
             act.triggered.connect(lambda ch, s=tag: self._set_languages(s, self.tgt_lang))
+        menu.addMenu(src_menu)
 
-        tgt_menu = menu.addMenu(tr("trans_menu_tgt", "Язык перевода"))
+        tgt_menu = create_stealth_menu(menu)
+        tgt_menu.setTitle(tr("trans_menu_tgt", "Язык перевода"))
         tgt_menu.setStyleSheet(self._menu_stylesheet())
         all_tgt = [("ru", "Русский"), ("en", "English"), ("de", "Deutsch"), ("fr", "Français"),
                    ("es", "Español"), ("zh-CN", "中文"), ("ja", "日本語")]
         for tag, name in all_tgt:
             act = tgt_menu.addAction(name)
             act.triggered.connect(lambda ch, t=tag: self._set_languages(self.src_lang, t))
+        menu.addMenu(tgt_menu)
 
-        menu.exec(self.btn_lang.mapToGlobal(QPoint(0, self.btn_lang.height() + 2)))
+        was_paused = self.is_paused
+        if hasattr(self, "worker"):
+            self.worker.set_paused(True)
+        try:
+            menu.exec(self.btn_lang.mapToGlobal(QPoint(0, self.btn_lang.height() + 2)))
+        finally:
+            if hasattr(self, "worker"):
+                self.worker.set_paused(was_paused)
 
     def _set_languages(self, src: str, tgt: str):
         self.src_lang = src
@@ -642,7 +703,7 @@ class TranslationFrameWindow(QWidget):
             self.worker.set_languages(src, tgt)
 
     def _show_mode_menu(self):
-        menu = QMenu(self)
+        menu = create_stealth_menu(self)
         menu.setStyleSheet(self._menu_stylesheet())
 
         act_hud = menu.addAction(tr("trans_mode_hud", "Субтитры (HUD внизу)"))
@@ -653,10 +714,19 @@ class TranslationFrameWindow(QWidget):
         act_inplace.setIcon(create_themed_icon("scan_text", is_dark=True, size=13))
         act_inplace.triggered.connect(lambda: self._set_display_mode("inplace"))
 
-        menu.exec(self.btn_mode.mapToGlobal(QPoint(0, self.btn_mode.height() + 2)))
+        was_paused = self.is_paused
+        if hasattr(self, "worker"):
+            self.worker.set_paused(True)
+        try:
+            menu.exec(self.btn_mode.mapToGlobal(QPoint(0, self.btn_mode.height() + 2)))
+        finally:
+            if hasattr(self, "worker"):
+                self.worker.set_paused(was_paused)
 
     def _set_display_mode(self, mode: str):
         self.current_mode = mode
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.set_mode(mode)
         self._update_mode_button_text()
         self._update_layout_positions()
         self.update()
@@ -667,7 +737,7 @@ class TranslationFrameWindow(QWidget):
         self._set_display_mode(new_mode)
 
     def _show_settings_menu(self):
-        menu = QMenu(self)
+        menu = create_stealth_menu(self)
         menu.setStyleSheet(self._menu_stylesheet())
 
         # 1. Повторение цвета оригинального текста (Отдельная настройка, по умолчанию ВКЛ)
@@ -687,7 +757,8 @@ class TranslationFrameWindow(QWidget):
         menu.addSeparator()
 
         # 3. Прозрачность фона
-        op_menu = menu.addMenu(tr("trans_menu_opacity", "Прозрачность фона"))
+        op_menu = create_stealth_menu(menu)
+        op_menu.setTitle(tr("trans_menu_opacity", "Прозрачность фона"))
         op_menu.setStyleSheet(self._menu_stylesheet())
         op_levels = [
             (1.0, tr("trans_op_100", "100% (Непрозрачный)")),
@@ -701,9 +772,11 @@ class TranslationFrameWindow(QWidget):
             act.setCheckable(True)
             act.setChecked(abs(self.bg_opacity - val) < 0.05)
             act.triggered.connect(lambda ch, v=val: self._set_opacity(v))
+        menu.addMenu(op_menu)
 
         # 4. Стиль / Цвет фона
-        theme_menu = menu.addMenu(tr("trans_menu_theme", "Цвет фона"))
+        theme_menu = create_stealth_menu(menu)
+        theme_menu.setTitle(tr("trans_menu_theme", "Цвет фона"))
         theme_menu.setStyleSheet(self._menu_stylesheet())
         themes = [
             ("slate", tr("trans_theme_slate", "Тёмный сланец (Slate)")),
@@ -715,9 +788,11 @@ class TranslationFrameWindow(QWidget):
             act.setCheckable(True)
             act.setChecked(self.bg_theme == key)
             act.triggered.connect(lambda ch, k=key: self._set_theme(k))
+        menu.addMenu(theme_menu)
 
         # 5. Размер шрифта субтитров
-        font_menu = menu.addMenu(tr("trans_menu_font_size", "Размер шрифта субтитров"))
+        font_menu = create_stealth_menu(menu)
+        font_menu.setTitle(tr("trans_menu_font_size", "Размер шрифта субтитров"))
         font_menu.setStyleSheet(self._menu_stylesheet())
         fonts = [
             (0, tr("trans_font_auto", "Авто (по тексту)")),
@@ -731,11 +806,13 @@ class TranslationFrameWindow(QWidget):
             act.setCheckable(True)
             act.setChecked(self.hud_font_size == sz)
             act.triggered.connect(lambda ch, s=sz: self._set_font_size(s))
+        menu.addMenu(font_menu)
 
         menu.addSeparator()
 
         # 6. Скорость сканирования (FPS)
-        fps_menu = menu.addMenu(tr("trans_menu_fps", "Скорость сканирования"))
+        fps_menu = create_stealth_menu(menu)
+        fps_menu.setTitle(tr("trans_menu_fps", "Скорость сканирования"))
         fps_menu.setStyleSheet(self._menu_stylesheet())
         speeds = [
             (150, tr("trans_fps_fast", "Быстро (150 мс)")),
@@ -747,6 +824,7 @@ class TranslationFrameWindow(QWidget):
             act.setCheckable(True)
             act.setChecked(self.scan_interval == ms)
             act.triggered.connect(lambda ch, m=ms: self._set_scan_interval(m))
+        menu.addMenu(fps_menu)
 
         # 7. Smart Diff (Оптимизация CPU)
         act_diff = menu.addAction(tr("trans_menu_smart_diff", "Умная пауза при статичном кадре"))
@@ -754,7 +832,14 @@ class TranslationFrameWindow(QWidget):
         act_diff.setChecked(self.smart_diff_enabled)
         act_diff.triggered.connect(self._toggle_smart_diff)
 
-        menu.exec(self.btn_settings.mapToGlobal(QPoint(0, self.btn_settings.height() + 2)))
+        was_paused = self.is_paused
+        if hasattr(self, "worker"):
+            self.worker.set_paused(True)
+        try:
+            menu.exec(self.btn_settings.mapToGlobal(QPoint(0, self.btn_settings.height() + 2)))
+        finally:
+            if hasattr(self, "worker"):
+                self.worker.set_paused(was_paused)
 
     def _toggle_match_color(self, checked: bool):
         self.match_text_color = checked
@@ -827,11 +912,14 @@ class TranslationFrameWindow(QWidget):
 
     def _update_layout_positions(self):
         w, h = self.width(), self.height()
-        hdr_h = 34
-        self.header_frame.setGeometry(6, 6, max(100, w - 12), hdr_h)
+        hdr_h = self.HEADER_BAR_HEIGHT
+        # Панель управления располагается сверху над областью захвата
+        self.header_frame.setGeometry(0, 0, w, hdr_h)
 
-        hud_h = max(42, min(110, int(h * 0.35)))
-        self.hud_frame.setGeometry(8, max(hdr_h + 10, h - hud_h - 8), max(100, w - 16), hud_h)
+        # Область HUD (субтитров) внизу области захвата
+        cap_h = max(20, h - self.HEADER_OFFSET)
+        hud_h = max(42, min(140, int(cap_h * 0.40)))
+        self.hud_frame.setGeometry(8, max(self.HEADER_OFFSET + 8, h - hud_h - 8), max(100, w - 16), hud_h)
         self.hud_frame.setVisible(self.current_mode == "hud")
 
     def resizeEvent(self, event):
@@ -840,14 +928,14 @@ class TranslationFrameWindow(QWidget):
         if hasattr(self, "unlock_pill") and self.unlock_pill.isVisible():
             self.unlock_pill.update_position()
         if hasattr(self, "worker") and self.worker.isRunning():
-            self.worker.update_geometry(self.geometry())
+            self.worker.update_geometry(self.get_capture_rect())
 
     def moveEvent(self, event):
         super().moveEvent(event)
         if hasattr(self, "unlock_pill") and self.unlock_pill.isVisible():
             self.unlock_pill.update_position()
         if hasattr(self, "worker") and self.worker.isRunning():
-            self.worker.update_geometry(self.geometry())
+            self.worker.update_geometry(self.get_capture_rect())
 
     def _toggle_pause(self):
         self.is_paused = not self.is_paused
@@ -894,10 +982,21 @@ class TranslationFrameWindow(QWidget):
         margin = self.HANDLE_SIZE
         w, h = self.width(), self.height()
         x, y = pos.x(), pos.y()
+        hdr = self.HEADER_OFFSET
+
+        # Зона верхней панели управления (перемещение окна, без случайного ресайза)
+        if y < hdr:
+            if y <= 2:
+                if x <= margin:
+                    return self.HANDLE_TL
+                if x >= w - margin:
+                    return self.HANDLE_TR
+                return self.HANDLE_T
+            return self.HANDLE_NONE
 
         on_left = x <= margin
         on_right = x >= w - margin
-        on_top = y <= margin
+        on_top = y <= hdr + margin
         on_bottom = y >= h - margin
 
         if on_top and on_left:
@@ -966,7 +1065,7 @@ class TranslationFrameWindow(QWidget):
         if self.is_resizing:
             delta = event.globalPosition().toPoint() - self.drag_start_pos
             rect = QRect(self.initial_geometry)
-            min_w, min_h = 240, 140
+            min_w, min_h = 240, 120 + self.HEADER_OFFSET
 
             if self.active_handle in (self.HANDLE_TL, self.HANDLE_L, self.HANDLE_BL):
                 new_w = max(min_w, rect.width() - delta.x())
@@ -988,7 +1087,7 @@ class TranslationFrameWindow(QWidget):
             delta = event.globalPosition().toPoint() - self.drag_start_pos
             self.move(self.initial_geometry.topLeft() + delta)
             if hasattr(self, "worker") and self.worker.isRunning():
-                self.worker.update_geometry(self.geometry())
+                self.worker.update_geometry(self.get_capture_rect())
             event.accept()
             return
 
@@ -1031,20 +1130,22 @@ class TranslationFrameWindow(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         w, h = self.width(), self.height()
+        cap_y = self.HEADER_OFFSET
+        cap_h = max(20, h - cap_y)
 
-        # 1. Отрисовка границ рамки (только если не активен режим маскировки Глазика)
+        # 1. Отрисовка границ рамки захвата (ниже шапки управления, если не активен режим Глазика)
         if not self.is_locked_stealth:
             pen = QPen(QColor(59, 130, 246, 210), 1.8, Qt.PenStyle.SolidLine)
             painter.setPen(pen)
             painter.setBrush(QColor(15, 23, 42, 20))  # Легчайшее затемнение центра
-            painter.drawRoundedRect(1, 1, w - 2, h - 2, 6, 6)
+            painter.drawRoundedRect(1, cap_y + 1, w - 2, cap_h - 2, 6, 6)
 
-            # Маркеры по углам
+            # Маркеры по углам области захвата
             painter.setBrush(QColor(96, 165, 250))
             painter.setPen(Qt.PenStyle.NoPen)
             m = 6
-            painter.drawRect(0, 0, m, m)
-            painter.drawRect(w - m, 0, m, m)
+            painter.drawRect(0, cap_y, m, m)
+            painter.drawRect(w - m, cap_y, m, m)
             painter.drawRect(0, h - m, m, m)
             painter.drawRect(w - m, h - m, m, m)
 
@@ -1055,7 +1156,7 @@ class TranslationFrameWindow(QWidget):
 
             for item in self.translated_blocks:
                 bx = float(item.get("x", 0))
-                by = float(item.get("y", 0))
+                by = float(self.HEADER_OFFSET + item.get("y", 0))
                 bw = float(item.get("width", 50))
                 bh = float(item.get("height", 20))
                 txt = item.get("translated", "")
@@ -1064,9 +1165,9 @@ class TranslationFrameWindow(QWidget):
 
                 # Вычисляем размер шрифта строго пропорционально высоте оригинального блока текста
                 if self.hud_font_size > 0:
-                    target_pixel_size = self.hud_font_size
+                    base_pixel_size = self.hud_font_size
                 else:
-                    target_pixel_size = max(10, int(round(bh * 0.72)))
+                    base_pixel_size = max(10, int(round(bh * 0.72)))
 
                 # Выбор гарнитуры и жирности (если включена настройка соответствия оригиналу)
                 if self.match_font_family:
@@ -1077,26 +1178,42 @@ class TranslationFrameWindow(QWidget):
                     family = "Segoe UI"
                     weight = QFont.Weight.DemiBold
 
+                # Доступная ширина до правого края рамки
+                max_avail_w = max(40.0, float(w - bx - 8))
+
                 font = QFont(family, 10, weight)
-                font.setPixelSize(target_pixel_size)
+                font.setPixelSize(base_pixel_size)
                 fm = QFontMetrics(font)
 
                 text_w = fm.horizontalAdvance(txt)
-                eff_w = max(bw, float(text_w + 12))
-                max_avail_w = max(35.0, float(w - bx - 8))
-                if eff_w > max_avail_w:
-                    eff_w = max_avail_w
-                    if text_w > eff_w and self.hud_font_size == 0:
-                        scale_factor = eff_w / max(1.0, float(text_w))
-                        adj_size = max(9, int(round(target_pixel_size * max(0.70, scale_factor))))
-                        font.setPixelSize(adj_size)
-                        fm = QFontMetrics(font)
+                preferred_w = max(bw, float(text_w + 12))
+                eff_w = min(max_avail_w, preferred_w)
+
+                # Если перевод длиннее доступной ширины, динамически масштабируем шрифт до 72%
+                cur_pixel_size = base_pixel_size
+                if text_w > eff_w and self.hud_font_size == 0:
+                    scale = eff_w / max(1.0, float(text_w))
+                    cur_pixel_size = max(9, int(round(base_pixel_size * max(0.72, scale))))
+                    font.setPixelSize(cur_pixel_size)
+                    fm = QFontMetrics(font)
+
+                # Вычисляем точные границы с учетом переноса слов (WordWrap)
+                calc_rect = fm.boundingRect(
+                    QRect(0, 0, int(eff_w), 9999),
+                    int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap),
+                    txt
+                )
+                eff_h = max(bh, float(calc_rect.height() + 4))
+
+                # Если переведённый блок выходит за нижний край окна, аккуратно приподнимаем его
+                if by + eff_h > h - 4:
+                    by = max(float(self.HEADER_OFFSET + 2), float(h - eff_h - 4))
 
                 painter.setFont(font)
 
                 pad_x = 4.0
                 pad_y = 2.0
-                bg_rect = QRectF(bx - pad_x, by - pad_y, eff_w + pad_x * 2, bh + pad_y * 2)
+                bg_rect = QRectF(bx - pad_x, by - pad_y, eff_w + pad_x * 2, eff_h + pad_y * 2)
 
                 # Подложка под переведённый текст с учетом настроек прозрачности
                 if self.bg_opacity > 0.05:

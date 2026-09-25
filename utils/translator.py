@@ -213,6 +213,84 @@ def translate_text(
     return final_result
 
 
+def translate_batch(
+    texts: list[str],
+    source_lang: str = "auto",
+    target_lang: str = "ru",
+    *,
+    src_lang: str | None = None,
+    dest_lang: str | None = None
+) -> list[str]:
+    """
+    Пакетный высокоскоростной перевод списка строк за один сетевой запрос.
+    1. Проверяет кэш для каждого элемента (0 мс).
+    2. Все ненайденные в кэше фразы объединяет через безопасный разделитель '\\n---\\n'
+       и переводит одним запросом.
+    3. При несовпадении количества частей переводит недостающие индивидуально.
+    4. Сохраняет результаты в кэш.
+    """
+    if src_lang is not None:
+        source_lang = src_lang
+    if dest_lang is not None:
+        target_lang = dest_lang
+
+    if not texts:
+        return []
+
+    results: list[str | None] = [None] * len(texts)
+    uncached_indices: list[int] = []
+    uncached_texts: list[str] = []
+
+    for idx, raw in enumerate(texts):
+        s = raw.strip()
+        if not s:
+            results[idx] = raw
+            continue
+        if not re.search(r"[a-zA-Z\u0400-\u04FF\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]", s):
+            results[idx] = raw
+            continue
+
+        cache_key = (s.lower(), source_lang, target_lang)
+        with _CACHE_LOCK:
+            if cache_key in _TRANSLATION_CACHE:
+                results[idx] = _TRANSLATION_CACHE[cache_key]
+                continue
+
+        uncached_indices.append(idx)
+        uncached_texts.append(s)
+
+    if not uncached_texts:
+        return [r if r is not None else "" for r in results]
+
+    if len(uncached_texts) == 1:
+        res = translate_text(uncached_texts[0], source_lang=source_lang, target_lang=target_lang)
+        results[uncached_indices[0]] = res
+        return [r if r is not None else "" for r in results]
+
+    delimiter = "\n---\n"
+    joined = delimiter.join(uncached_texts)
+    batch_res = translate_text(joined, source_lang=source_lang, target_lang=target_lang)
+
+    parts = [p.strip() for p in batch_res.split(delimiter)]
+    if len(parts) == len(uncached_texts):
+        for idx_u, part in enumerate(parts):
+            target_idx = uncached_indices[idx_u]
+            orig_s = uncached_texts[idx_u]
+            results[target_idx] = part
+            cache_key = (orig_s.lower(), source_lang, target_lang)
+            with _CACHE_LOCK:
+                if len(_TRANSLATION_CACHE) >= _MAX_CACHE_ENTRIES:
+                    _TRANSLATION_CACHE.pop(next(iter(_TRANSLATION_CACHE)), None)
+                _TRANSLATION_CACHE[cache_key] = part
+    else:
+        for idx_u, orig_s in enumerate(uncached_texts):
+            target_idx = uncached_indices[idx_u]
+            res_item = translate_text(orig_s, source_lang=source_lang, target_lang=target_lang)
+            results[target_idx] = res_item
+
+    return [r if r is not None else "" for r in results]
+
+
 def clear_translation_cache():
     """Очищает кэш переводов в памяти."""
     with _CACHE_LOCK:
