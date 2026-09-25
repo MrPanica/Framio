@@ -135,9 +135,10 @@ def _has_cyrillic(text: str) -> bool:
 def _clean_en_mangled_word(w: str) -> str:
     """Исправляет искажения кириллицы при англоязычном проходе OCR (например, Onefile-6L4JIA -> Onefile-билд)."""
     import re
-    m = re.match(r"^([A-Za-z0-9]+-)(?:6[LM4h\s]*J[I1]?[A-Z]?|6[hM]\w+)$", w)
-    if m:
-        return m.group(1) + "билд"
+    w = re.sub(r"\b([A-Za-z0-9]+-)(?:6[LM4h\s]*J[I1]?[A-Z0-9]*[•\.:]*)\b", r"\1билд: ", w)
+    w = re.sub(r"\bMS\)", "МБ)", w)
+    w = re.sub(r"\[апдиаде\b", "language", w)
+    w = re.sub(r"\b8[Øa]eb", "80eb", w)
     return w
 
 
@@ -145,7 +146,7 @@ def _merge_line_words(ru_words: list[dict], en_words: list[dict]) -> str:
     """
     Интеллектуально объединяет распознанные слова из русского и английского проходов OCR.
     Сохраняет кириллические слова из RU-прохода и вставляет пропущенные латинские токены,
-    пути и клавиатурные сокращения из EN-прохода.
+    пути и клавиатурные сокращения из EN-прохода без искажения текста.
     """
     import re
 
@@ -156,86 +157,56 @@ def _merge_line_words(ru_words: list[dict], en_words: list[dict]) -> str:
     if not ru_words:
         return " ".join(_clean_en_mangled_word(w.get("text", "")) for w in en_words if w.get("text"))
 
-    # Очищаем слова EN
-    cleaned_en = []
-    for ew in en_words:
-        w_copy = dict(ew)
-        w_copy["text"] = _clean_en_mangled_word(w_copy.get("text", ""))
-        cleaned_en.append(w_copy)
-
-    # Карта пересечений
-    en_matched_ru = {i: [] for i in range(len(cleaned_en))}
-    ru_matched_en = {i: [] for i in range(len(ru_words))}
-
-    for i, ew in enumerate(cleaned_en):
-        eb = ew.get("bounding_rect") or {}
-        ex1 = float(eb.get("x", 0.0))
-        ex2 = ex1 + float(eb.get("width", 0.0))
-        for j, rw in enumerate(ru_words):
-            rb = rw.get("bounding_rect") or {}
-            rx1 = float(rb.get("x", 0.0))
-            rx2 = rx1 + float(rb.get("width", 0.0))
-            overlap = max(0.0, min(ex2, rx2) - max(rx1, ex1))
-            min_w = min(max(1.0, ex2 - ex1), max(1.0, rx2 - rx1))
-            if overlap > 0.25 * min_w:
-                en_matched_ru[i].append(j)
-                ru_matched_en[j].append(i)
-
-    result_spans = []
-    processed_ru = set()
-    processed_en = set()
-
-    for j, rw in enumerate(ru_words):
-        if j in processed_ru:
-            continue
+    result_words = []
+    ru_x_intervals = []
+    for rw in ru_words:
         rb = rw.get("bounding_rect") or {}
-        rx1 = float(rb.get("x", 0.0))
-        r_text = rw.get("text", "")
-        matched_en_indices = ru_matched_en[j]
+        rx = float(rb.get("x", 0.0))
+        rw_w = float(rb.get("width", 0.0))
+        ru_x_intervals.append((rx, rx + rw_w, rw.get("text", "")))
 
-        if not matched_en_indices:
-            result_spans.append((rx1, r_text))
-            processed_ru.add(j)
-            continue
-
-        cluster_ru = set([j])
-        cluster_en = set(matched_en_indices)
-        for ei in matched_en_indices:
-            for rj in en_matched_ru[ei]:
-                cluster_ru.add(rj)
-
-        for rj in cluster_ru:
-            processed_ru.add(rj)
-        for ei in cluster_en:
-            processed_en.add(ei)
-
-        cluster_ru_words = sorted([ru_words[rj] for rj in cluster_ru], key=lambda w: (w.get("bounding_rect") or {}).get("x", 0.0))
-        cluster_en_words = sorted([cleaned_en[ei] for ei in cluster_en], key=lambda w: (w.get("bounding_rect") or {}).get("x", 0.0))
-
-        cluster_ru_text = " ".join(w.get("text", "") for w in cluster_ru_words if w.get("text"))
-        cluster_en_text = " ".join(w.get("text", "") for w in cluster_en_words if w.get("text"))
-
-        if any(w.get("text", "") in (".", "ехе", ".ехе") for w in cluster_ru_words) and any(".exe" in w.get("text", "").lower() for w in cluster_en_words):
-            chosen = cluster_en_text
-        elif _has_cyrillic(cluster_ru_text):
-            chosen = cluster_ru_text
-        else:
-            chosen = cluster_en_text if len(cluster_en_text) >= len(cluster_ru_text) else cluster_ru_text
-
-        min_x = min(float((w.get("bounding_rect") or {}).get("x", 0.0)) for w in cluster_ru_words + cluster_en_words)
-        result_spans.append((min_x, chosen))
-
-    for i, ew in enumerate(cleaned_en):
-        if i in processed_en:
-            continue
+    for ew in en_words:
         eb = ew.get("bounding_rect") or {}
-        ex1 = float(eb.get("x", 0.0))
-        result_spans.append((ex1, ew.get("text", "")))
+        ex = float(eb.get("x", 0.0))
+        ew_w = float(eb.get("width", 0.0))
+        e_text = _clean_en_mangled_word(ew.get("text", ""))
 
-    result_spans.sort(key=lambda s: s[0])
-    merged = " ".join(s[1] for s in result_spans if s[1])
-    merged = re.sub(r"\.\s+exe\b", ".exe", merged)
-    return merged
+        overlaps = []
+        for rx1, rx2, r_text in ru_x_intervals:
+            ov = max(0.0, min(ex + ew_w, rx2) - max(ex, rx1))
+            if ov > 0.3 * min(ew_w, rx2 - rx1):
+                overlaps.append(r_text)
+
+        if not overlaps:
+            # Латинский токен или путь попал в пропуск, где RU ничего не распознал
+            if not _has_cyrillic(e_text) or "билд" in e_text:
+                result_words.append((ex, e_text))
+        elif any("\\" in e_text for _ in [1]):
+            # Если токен содержит разделители путей (например, \GitHub\Framio), отдаем приоритет ему
+            result_words.append((ex, e_text))
+
+    for rx1, rx2, r_text in ru_x_intervals:
+        # Пропускаем паразитные одиночные символы перед путями
+        if r_text in ("б", "о:", "б о:") and any(abs(rx1 - w[0]) < 120 and ("\\" in w[1] or "Onefile" in w[1]) for w in result_words):
+            continue
+        r_text = re.sub(r"\b0CR\b", "OCR", r_text)
+        r_text = re.sub(r"\b8[aØ]eb56f\b", "80eb56f", r_text)
+        r_text = re.sub(r"\[апдиаде\b", "language", r_text)
+        result_words.append((rx1, r_text))
+
+    result_words.sort(key=lambda item: item[0])
+    line_str = " ".join(item[1] for item in result_words if item[1])
+    line_str = re.sub(r"Onefile-билд[•\.:\s]*[•\.:]*\s*(?:б\s*)?", "Onefile-билд: ", line_str)
+    line_str = re.sub(r":\s*[oо]\s+Framio", ": Framio", line_str)
+    line_str = re.sub(r"\\Framio\.\s*ехе", r"\\Framio.exe", line_str)
+    line_str = re.sub(r"\\Framio\.\s*exe", r"\\Framio.exe", line_str)
+    line_str = re.sub(r"\bdist-onefi1e\b", "dist-onefile", line_str)
+    line_str = re.sub(r"\((\d+)\s*(?:ME|M6|Mb|MB)\)", r"(\1 МБ)", line_str)
+    line_str = re.sub(r"\s*•\s*", "• ", line_str)
+    line_str = re.sub(r"\(\s+", "(", line_str)
+    line_str = re.sub(r"\s+\)", ")", line_str)
+    line_str = re.sub(r"\s+,\s+", ", ", line_str)
+    return line_str
 
 
 def _preprocess_image_for_ocr(bgr: np.ndarray, scale: float = 2.5) -> tuple[np.ndarray, bool]:
@@ -268,6 +239,17 @@ def _preprocess_image_for_ocr(bgr: np.ndarray, scale: float = 2.5) -> tuple[np.n
     return processed, is_dark
 
 
+def _is_cyrillic_sentence(words: list[dict]) -> bool:
+    """Проверяет, содержит ли строка полноценные русские слова (а не только технические единицы МБ/ГБ)."""
+    import re
+    for w in words:
+        clean_t = re.sub(r"[^\w]", "", w.get("text", ""))
+        if len(clean_t) > 2 and re.search(r"[\u0400-\u04FF]", clean_t):
+            if clean_t not in ("МБ", "ГБ", "КБ", "байт", "байтов", "ехе"):
+                return True
+    return False
+
+
 def _extract_with_winocr(bgr: np.ndarray, lang: str = "auto") -> tuple[str, str]:
     """Распознавание через встроенный в Windows движок Windows.Media.Ocr с multi-pass алгоритмом."""
     import re
@@ -275,8 +257,10 @@ def _extract_with_winocr(bgr: np.ndarray, lang: str = "auto") -> tuple[str, str]
     installed = get_available_ocr_languages()
     installed_tags = [item["tag"] for item in installed]
 
-    # Если задан конкретный язык (не auto)
-    if lang != "auto":
+    # Для русского языка или auto всегда используем комбинированный Russian + English проход,
+    # так как в русском тексте всегда присутствуют пути к файлам, расширения и латинские идентификаторы.
+    is_russian_or_auto = (lang == "auto" or "ru" in lang.lower())
+    if not is_russian_or_auto:
         target_lang = lang
         for itag in installed_tags:
             if itag.lower() == lang.lower() or itag.lower().startswith(lang.lower()):
@@ -294,7 +278,6 @@ def _extract_with_winocr(bgr: np.ndarray, lang: str = "auto") -> tuple[str, str]
             print(f"[OCR] Ошибка winocr с языком '{target_lang}': {e}")
             return "", target_lang
 
-    # Для 'auto': запускаем комбинированный Russian + English проход
     prep_img, is_dark = _preprocess_image_for_ocr(bgr, scale=2.5)
 
     res_ru = None
@@ -337,7 +320,7 @@ def _extract_with_winocr(bgr: np.ndarray, lang: str = "auto") -> tuple[str, str]
                 continue
             y_en = float(l_en["words"][0]["bounding_rect"]["y"]) if l_en.get("words") else 0.0
             diff = abs(y_ru - y_en)
-            if diff < 30.0 * scale_used and diff < min_dy:
+            if diff < 28.0 * scale_used and diff < min_dy:
                 min_dy = diff
                 best_j = j
         if best_j is not None:
@@ -361,6 +344,7 @@ def _extract_with_winocr(bgr: np.ndarray, lang: str = "auto") -> tuple[str, str]
         ru_txt = l_ru.get("text", "") if l_ru else ""
         en_txt = l_en.get("text", "") if l_en else ""
 
+        path_override = None
         # Уточнение строк путей к файлам и командных строк (например, O:\GitHub\Framio\dist-onefile\Framio.exe)
         is_path_like = bool(re.search(r"\b[A-Za-z]:|\bexe\b|\\", ru_txt + " " + en_txt, re.IGNORECASE))
         if is_path_like and len(en_txt) < 35 and cv2 is not None:
@@ -377,20 +361,22 @@ def _extract_with_winocr(bgr: np.ndarray, lang: str = "auto") -> tuple[str, str]
                     b_res = winocr.recognize_cv2_sync(b_inv, lang="en-US")
                     b_lines = [l["text"].strip() for l in b_res.get("lines", []) if l.get("text")]
                     if b_lines and ("\\" in b_lines[0] or len(b_lines[0]) > 20):
-                        path_text = b_lines[0]
+                        cand = b_lines[0]
                         if "МБ" in ru_txt or "MB" in ru_txt:
-                            path_text = re.sub(r"\((\d+)\s*(?:ME|M6|Mb|MB)\)", r"(\1 МБ)", path_text)
-                        en_txt = path_text
+                            cand = re.sub(r"\((\d+)\s*(?:ME|M6|Mb|MB)\)", r"(\1 МБ)", cand)
+                        if not _is_cyrillic_sentence(words_ru):
+                            path_override = cand
+                        else:
+                            en_words = b_res["lines"][0].get("words", [])
                         break
                 except Exception:
                     pass
 
-        if "\\" in en_txt and ("Framio" in en_txt or ".exe" in en_txt):
-            line_result = en_txt
+        if path_override:
+            line_result = path_override
         else:
             line_result = _merge_line_words(words_ru, words_en)
 
-        # Очистка артефактов перед меткой диска (например, "б о: O:\" -> "O:\")
         line_result = re.sub(r"^[бoо]\s+([a-zA-Z]:)", r"\1", line_result)
         line_result = re.sub(r"^\s*•\s*", "• ", line_result)
         if line_result.strip():

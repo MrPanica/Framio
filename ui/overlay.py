@@ -1040,8 +1040,17 @@ class OverlayWindow(QWidget):
         # По умолчанию инструмент перемещения (как в Lightshot)
         self.right_toolbar.select_tool(ToolType.MOVE, show_options=False)
 
-        # Ставим пустую маску перед show, чтобы Windows DWM не отображал старый буфер backing store
-        self.setMask(QRegion())
+        # Полностью исключаем мелькание старого буфера DWM/backing store:
+        # 1. Устанавливаем opacity=0 и Win32 0x0 clipping region перед show()
+        self.setWindowOpacity(0.0)
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hrgn = ctypes.windll.gdi32.CreateRectRgn(0, 0, 0, 0)
+                ctypes.windll.user32.SetWindowRgn(int(self.winId()), hrgn, False)
+            except Exception:
+                pass
+
         self.show()
         if sys.platform == "win32":
             try:
@@ -1053,16 +1062,20 @@ class OverlayWindow(QWidget):
         force_foreground_window(int(self.winId()))
         self.activateWindow()
         self.setFocus()
-        # Сначала принудительно перерисовываем backing store свежим кадром экрана,
-        # и только после завершения отрисовки снимаем маску — исключает фантомное мелькание старого кадра
+
+        # 2. Принудительно отрисовываем новый снимок экрана в backing store окна
         self.repaint()
-        self.clearMask()
+
+        # 3. Восстанавливаем полный регион окна и видимость только после завершения отрисовки
         if sys.platform == "win32":
             try:
                 import ctypes
+                ctypes.windll.user32.SetWindowRgn(int(self.winId()), None, False)
                 ctypes.windll.dwmapi.DwmFlush()
             except Exception:
                 pass
+        self.clearMask()
+        self.setWindowOpacity(1.0)
 
         # Снимаем любые принудительные глобальные оверрайд-курсоры, чтобы виджет мог сам динамически менять курсор
         while QApplication.overrideCursor():
@@ -4873,6 +4886,7 @@ class OverlayWindow(QWidget):
         images = self.get_cropped_images(all_regions=all_regions)
         if not preserve_selection:
             # Мгновенно скрываем оверлей и очищаем зоны: нулевая задержка закрытия зоны на экране
+            self.setWindowOpacity(0.0)
             self.clear_regions()
             self._clear_interactive_selection()
             self._hide_toolbars()
@@ -4948,6 +4962,7 @@ class OverlayWindow(QWidget):
         images = self.get_cropped_images(all_regions=all_regions)
         if not preserve_selection:
             # Мгновенно скрываем оверлей и очищаем зоны: нулевая задержка закрытия зоны на экране
+            self.setWindowOpacity(0.0)
             self.clear_regions()
             self._clear_interactive_selection()
             self._hide_toolbars()
@@ -5912,6 +5927,7 @@ class OverlayWindow(QWidget):
                 self.repaint()
             except Exception:
                 pass
+        self.setWindowOpacity(0.0)
         self.hide()
         try:
             import ctypes
