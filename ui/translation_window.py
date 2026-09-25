@@ -284,6 +284,7 @@ class EyeUnlockPill(QPushButton):
     Сделана сверхкомпактной (16x16 px, ровно в 2 раза меньше обычной 28x28 px).
     Свободно перемещается по экрану как ЛЕВОЙ, так и ПРАВОЙ кнопкой мыши.
     Одиночный клик левой кнопкой (без перемещения) возвращает панель управления.
+    Одиночный клик правой кнопкой (без перемещения) отключает/включает режим перевода (зачеркнутый глазик).
     """
     def __init__(self, target_window: TranslationFrameWindow):
         super().__init__()
@@ -291,31 +292,54 @@ class EyeUnlockPill(QPushButton):
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.Tool
+            Qt.WindowType.Tool |
+            Qt.WindowType.WindowDoesNotAcceptFocus
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setFixedSize(16, 16)
-        self.setIcon(create_themed_icon("eye", is_dark=True, size=10, custom_color="#38bdf8"))
         self.setIconSize(QSize(10, 10))
         self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
-        self.setToolTip(tr("trans_unlock_tooltip", "Перетащите ЛКМ/ПКМ в любое место. Кликните ЛКМ, чтобы вернуть настройки."))
-        self.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(15, 23, 42, 235);
-                border: 1px solid rgba(56, 189, 248, 220);
-                border-radius: 3px;
-                padding: 0px;
-                margin: 0px;
-            }
-            QPushButton:hover {
-                background-color: #0284c7;
-                border-color: #7dd3fc;
-            }
-        """)
+        self.update_state()
 
         self._drag_start = QPoint()
         self._start_pos = QPoint()
         self._has_dragged = False
+
+    def update_state(self):
+        """Обновляет иконку и стиль в зависимости от активности функции перевода."""
+        is_paused = getattr(self.target_window, "is_paused", False)
+        if is_paused:
+            self.setIcon(create_themed_icon("eye_off", is_dark=True, size=10, custom_color="#f87171"))
+            self.setToolTip(tr("trans_unlock_disabled_tooltip", "Перевод отключен. Кликните ПКМ для включения, ЛКМ для возврата настроек, зажмите для перемещения."))
+            self.setStyleSheet("""
+                QPushButton {
+                    background-color: rgba(15, 23, 42, 245);
+                    border: 1px solid rgba(248, 113, 113, 230);
+                    border-radius: 3px;
+                    padding: 0px;
+                    margin: 0px;
+                }
+                QPushButton:hover {
+                    background-color: #991b1b;
+                    border-color: #fca5a5;
+                }
+            """)
+        else:
+            self.setIcon(create_themed_icon("eye", is_dark=True, size=10, custom_color="#38bdf8"))
+            self.setToolTip(tr("trans_unlock_tooltip", "Перетащите ЛКМ/ПКМ в любое место. Кликните ЛКМ для возврата настроек, ПКМ для отключения перевода."))
+            self.setStyleSheet("""
+                QPushButton {
+                    background-color: rgba(15, 23, 42, 235);
+                    border: 1px solid rgba(56, 189, 248, 220);
+                    border-radius: 3px;
+                    padding: 0px;
+                    margin: 0px;
+                }
+                QPushButton:hover {
+                    background-color: #0284c7;
+                    border-color: #7dd3fc;
+                }
+            """)
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
@@ -343,6 +367,8 @@ class EyeUnlockPill(QPushButton):
             event.accept()
             return
         elif event.button() == Qt.MouseButton.RightButton:
+            if not self._has_dragged:
+                self._on_right_clicked()
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -352,6 +378,11 @@ class EyeUnlockPill(QPushButton):
         if self.target_window:
             self.target_window.set_stealth_lock(False)
 
+    def _on_right_clicked(self):
+        """Отключает или возобновляет функцию перевода с отображением перечеркнутого глазика."""
+        if self.target_window:
+            self.target_window._toggle_pause()
+
     def update_position(self):
         if self.target_window and self.target_window.isVisible():
             geo = self.target_window.geometry()
@@ -359,9 +390,13 @@ class EyeUnlockPill(QPushButton):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self.update_state()
         if sys.platform == "win32":
             try:
-                ctypes.windll.user32.SetWindowDisplayAffinity(int(self.winId()), 0x00000011)
+                wid = int(self.winId())
+                ctypes.windll.user32.SetWindowDisplayAffinity(wid, 0x00000011)
+                style = ctypes.windll.user32.GetWindowLongW(wid, -20)
+                ctypes.windll.user32.SetWindowLongW(wid, -20, style | 0x08000000)
             except Exception:
                 pass
 
@@ -379,7 +414,8 @@ class TranslationControlBar(QWidget):
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.Tool
+            Qt.WindowType.Tool |
+            Qt.WindowType.WindowDoesNotAcceptFocus
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setFixedHeight(32)
@@ -395,7 +431,10 @@ class TranslationControlBar(QWidget):
         super().showEvent(event)
         if sys.platform == "win32":
             try:
-                ctypes.windll.user32.SetWindowDisplayAffinity(int(self.winId()), 0x00000011)
+                wid = int(self.winId())
+                ctypes.windll.user32.SetWindowDisplayAffinity(wid, 0x00000011)
+                style = ctypes.windll.user32.GetWindowLongW(wid, -20)
+                ctypes.windll.user32.SetWindowLongW(wid, -20, style | 0x08000000)
             except Exception:
                 pass
 
@@ -856,7 +895,8 @@ class TranslationFrameWindow(QWidget):
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.Tool
+            Qt.WindowType.Tool |
+            Qt.WindowType.WindowDoesNotAcceptFocus
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
@@ -990,6 +1030,7 @@ class TranslationFrameWindow(QWidget):
             try:
                 hwnd = int(self.winId())
                 style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
+                style |= 0x08000000  # WS_EX_NOACTIVATE: не забирать фокус у полноэкранных игр/видео
                 if enabled:
                     ctypes.windll.user32.SetWindowLongW(hwnd, -20, style | 0x00000020)  # WS_EX_TRANSPARENT
                 else:
@@ -1012,6 +1053,7 @@ class TranslationFrameWindow(QWidget):
             if hasattr(self, "control_bar"):
                 self.control_bar.hide()
             self.unlock_pill.update_position()
+            self.unlock_pill.update_state()
             self.unlock_pill.show()
             self.unlock_pill.raise_()
             self.set_passthrough(True)
@@ -1052,6 +1094,11 @@ class TranslationFrameWindow(QWidget):
     def _toggle_pause(self):
         self.is_paused = not self.is_paused
         self.worker.set_paused(self.is_paused)
+        if self.is_paused:
+            self.hud_frame.setVisible(False)
+        else:
+            self.hud_frame.setVisible(self.current_mode == "hud")
+
         if hasattr(self, "control_bar") and hasattr(self.control_bar, "btn_pause"):
             if self.is_paused:
                 self.control_bar.btn_pause.setIcon(create_themed_icon("play", is_dark=True, size=13))
@@ -1059,6 +1106,11 @@ class TranslationFrameWindow(QWidget):
             else:
                 self.control_bar.btn_pause.setIcon(create_themed_icon("pause", is_dark=True, size=13))
                 self.control_bar.btn_pause.setStyleSheet("")
+
+        if hasattr(self, "unlock_pill") and self.unlock_pill:
+            self.unlock_pill.update_state()
+
+        self.update()
 
     def _copy_translation(self):
         txt = self.translated_text.strip()
@@ -1283,7 +1335,7 @@ class TranslationFrameWindow(QWidget):
                 painter.drawRect(w - m, h - m, m, m)
 
         # 2. Режим In-place: отрисовка перевода прямо поверх текста
-        if self.current_mode == "inplace" and self.translated_blocks:
+        if self.current_mode == "inplace" and self.translated_blocks and not self.is_paused:
             r, g, b = self.THEME_COLORS.get(self.bg_theme, (15, 23, 42))
             alpha = int(self.bg_opacity * 255)
 
@@ -1360,7 +1412,10 @@ class TranslationFrameWindow(QWidget):
         super().showEvent(event)
         if sys.platform == "win32":
             try:
-                ctypes.windll.user32.SetWindowDisplayAffinity(int(self.winId()), 0x00000011)
+                wid = int(self.winId())
+                ctypes.windll.user32.SetWindowDisplayAffinity(wid, 0x00000011)
+                style = ctypes.windll.user32.GetWindowLongW(wid, -20)
+                ctypes.windll.user32.SetWindowLongW(wid, -20, style | 0x08000000)
             except Exception:
                 pass
         if hasattr(self, "control_bar") and self.control_bar:
@@ -1368,7 +1423,6 @@ class TranslationFrameWindow(QWidget):
             self.control_bar.show()
             self.control_bar.raise_()
         self.raise_()
-        self.activateWindow()
 
     def closeEvent(self, event):
         if hasattr(self, "control_bar") and self.control_bar:

@@ -3190,10 +3190,18 @@ def test_recent_media_history():
         assert writer.isOpened(), "Тестовый MP4 не открылся для проверки превью"
         writer.write(np.full((24, 32, 3), 180, dtype=np.uint8))
         writer.release()
-        assert RecentMediaPanel._load_preview({"path": video_path}) is not None
     FramioApp._copy_recent_media(app, {"path": "O:/captures/example.mp4"})
+    QApplication.processEvents()
     recent_mime = QApplication.clipboard().mimeData()
-    assert recent_mime.urls()[0].toLocalFile().endswith("example.mp4")
+    urls = recent_mime.urls()
+    for _ in range(5):
+        if urls:
+            break
+        time.sleep(0.02)
+        QApplication.processEvents()
+        recent_mime = QApplication.clipboard().mimeData()
+        urls = recent_mime.urls()
+    assert urls and urls[0].toLocalFile().endswith("example.mp4")
     # Qt закономерно предоставляет text/uri-list и как URL, и как text;
     # главным контрактом для видео остаётся передача файла, а не картинки.
     assert not recent_mime.hasImage()
@@ -4567,13 +4575,33 @@ def test_translation_frame_and_translator():
     assert not frame_win.is_paused
     assert not frame_win.worker._paused
 
-    # Проверка скрытия в режим глазика (Stealth mode)
+    # Проверка скрытия в режим глазика (Stealth mode) и управление через ПКМ/ЛКМ
     frame_win.set_stealth_lock(True)
     assert frame_win.is_locked_stealth
     assert frame_win.header_frame.isHidden()
-    frame_win.set_stealth_lock(False)
+    assert frame_win.unlock_pill is not None
+
+    # Проверка клика ПКМ по глазику: отключает функцию перевода (пауза) и включает eye_off
+    frame_win.unlock_pill._on_right_clicked()
+    assert frame_win.is_paused
+    assert frame_win.worker._paused
+    assert frame_win.hud_frame.isHidden()
+
+    # Повторный клик ПКМ по зачеркнутому глазику: возобновляет перевод
+    frame_win.unlock_pill._on_right_clicked()
+    assert not frame_win.is_paused
+    assert not frame_win.worker._paused
+    assert not frame_win.hud_frame.isHidden()
+
+    # Клик ЛКМ по глазику: возвращает панель настроек обратно
+    frame_win.unlock_pill._on_clicked()
     assert not frame_win.is_locked_stealth
     assert not frame_win.header_frame.isHidden()
+
+    # Проверка флагов неперехвата фокуса (WindowDoesNotAcceptFocus)
+    assert frame_win.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
+    assert frame_win.control_bar.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
+    assert frame_win.unlock_pill.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
 
     frame_win.close()
     print("  -> Плавающая рамка перевода создаётся, управляется динамически, поддерживает кэш и разные режимы отображения.")

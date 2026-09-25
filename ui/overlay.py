@@ -971,6 +971,14 @@ class OverlayWindow(QWidget):
     def start_capture(self, preselected_recording_mode: str = None):
         """Захватывает экран и открывает оверлей без артефактов и задержек."""
         import time
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                self._prev_active_hwnd = ctypes.windll.user32.GetForegroundWindow()
+            except Exception:
+                self._prev_active_hwnd = None
+        else:
+            self._prev_active_hwnd = None
         self.preselected_recording_mode = preselected_recording_mode
         self.clearMask()
         self.is_passthrough = False
@@ -5044,7 +5052,15 @@ class OverlayWindow(QWidget):
             if sel.isValid() and sel.width() > 10 and sel.height() > 10:
                 rect_to_use = sel
 
+        prev_hwnd = getattr(self, "_prev_active_hwnd", None)
         self.close_overlay()
+
+        if prev_hwnd and sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.user32.SetForegroundWindow(prev_hwnd)
+            except Exception:
+                pass
 
         try:
             from ui.translation_window import TranslationFrameWindow
@@ -5062,7 +5078,6 @@ class OverlayWindow(QWidget):
             win.frame_closed.connect(_on_closed)
             win.show()
             win.raise_()
-            win.activateWindow()
         except Exception:
             import traceback
             traceback.print_exc()
@@ -5987,4 +6002,11 @@ class OverlayWindow(QWidget):
             pass
         for _ in range(3):
             QApplication.processEvents()
+        if getattr(self, "_prev_active_hwnd", None):
+            try:
+                import ctypes
+                ctypes.windll.user32.SetForegroundWindow(self._prev_active_hwnd)
+            except Exception:
+                pass
+            self._prev_active_hwnd = None
         self.capture_closed.emit()

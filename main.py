@@ -464,7 +464,6 @@ class FramioApp(QObject):
                     win.unfold_controls()
                 win.show()
                 win.raise_()
-                win.activateWindow()
             return
 
         win = TranslationFrameWindow(initial_rect=rect)
@@ -472,7 +471,6 @@ class FramioApp(QObject):
         win.frame_closed.connect(lambda w=win: self._active_translation_windows.remove(w) if hasattr(self, "_active_translation_windows") and w in self._active_translation_windows else None)
         win.show()
         win.raise_()
-        win.activateWindow()
 
     def add_recent_media(self, path: str = None, image: QImage = None, label: str = None, refresh: bool = True):
         """Добавляет материал в историю последних файлов и снимков."""
