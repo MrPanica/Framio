@@ -10,7 +10,7 @@
 - Полностью векторный интерфейс (Lucide / SVG), без эмодзи и смайликов.
 - Компактные кнопки настроек с выпадающими списками (Язык, Режим, Настройки оформления).
 - Режим полной маскировки (Глазик): скрывает всю рамку и шапку, оставляя лишь крошечную
-  иконку глазика. Клики и наведение мыши проходят сквозь рамку прямо в игру (WM_NCHITTEST -> HTTRANSPARENT),
+  иконку глазика. Клики и наведение мыши проходят сквозь рамку прямо в игру (WS_EX_TRANSPARENT),
   пока снова не будет нажат глазик.
 - Настройки прозрачности фона, стиля подложки, размера шрифта и частоты сканирования.
 - Плавное перемещение как за заголовок, так и за любую область рамки (Win32 SendMessageW).
@@ -177,6 +177,58 @@ class TranslationScannerWorker(QThread):
             self.msleep(interval)
 
 
+class EyeUnlockPill(QPushButton):
+    """
+    Автономная миниатюрная плавающая кнопка разблокировки глазика.
+    Отображается в углу экрана поверх всех окон, когда рамка находится в режиме маскировки.
+    Поскольку сама рамка переводится в сквозной режим кликов (WS_EX_TRANSPARENT),
+    отдельное окно кнопки гарантирует 100% отклик на клик без необходимости перехватывать
+    низкоуровневые сообщения Windows или рисковать сбоем SIP в PyQt6.
+    """
+    def __init__(self, target_window: TranslationFrameWindow):
+        super().__init__()
+        self.target_window = target_window
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setFixedSize(28, 28)
+        self.setIcon(create_themed_icon("eye", is_dark=True, size=15, custom_color="#38bdf8"))
+        self.setToolTip(tr("trans_unlock_tooltip", "Нажмите на глазик, чтобы вернуть настройки"))
+        self.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(15, 23, 42, 235);
+                border: 1.5px solid #38bdf8;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #0284c7;
+                border-color: #7dd3fc;
+            }
+        """)
+        self.clicked.connect(self._on_clicked)
+
+    def _on_clicked(self):
+        self.hide()
+        if self.target_window:
+            self.target_window.set_stealth_lock(False)
+
+    def update_position(self):
+        if self.target_window and self.target_window.isVisible():
+            geo = self.target_window.geometry()
+            self.move(geo.right() - 32, geo.top() + 6)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if sys.platform == "win32":
+            try:
+                ctypes.windll.user32.SetWindowDisplayAffinity(int(self.winId()), 0x00000011)
+            except Exception:
+                pass
+
+
 class TranslationFrameWindow(QWidget):
     """
     Интерактивное окно рамки живого перевода.
@@ -257,6 +309,9 @@ class TranslationFrameWindow(QWidget):
         self.is_moving_window = False
         self.drag_start_pos = QPoint()
         self.initial_geometry = QRect()
+
+        # Автономная плавающая кнопка разблокировки глазика
+        self.unlock_pill = EyeUnlockPill(self)
 
         self._setup_ui()
 
@@ -377,26 +432,7 @@ class TranslationFrameWindow(QWidget):
         self.btn_close.clicked.connect(self.close)
         header_layout.addWidget(self.btn_close)
 
-        # 2. Плавающая иконка разблокировки глазика (появляется только в режиме маскировки)
-        self.btn_eye_unlock = QPushButton(self)
-        self.btn_eye_unlock.setIcon(create_themed_icon("eye", is_dark=True, size=14, custom_color="#38bdf8"))
-        self.btn_eye_unlock.setToolTip(tr("trans_unlock_tooltip", "Нажмите на глазик, чтобы вернуть настройки"))
-        self.btn_eye_unlock.setFixedSize(26, 26)
-        self.btn_eye_unlock.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(15, 23, 42, 235);
-                border: 1.5px solid #38bdf8;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #0284c7;
-                border-color: #7dd3fc;
-            }
-        """)
-        self.btn_eye_unlock.clicked.connect(lambda: self.set_stealth_lock(False))
-        self.btn_eye_unlock.hide()
-
-        # 3. Нижняя плашка HUD для субтитров
+        # 2. Нижняя плашка HUD для субтитров
         self.hud_frame = QFrame(self)
         hud_layout = QVBoxLayout(self.hud_frame)
         hud_layout.setContentsMargins(10, 8, 10, 8)
@@ -664,16 +700,28 @@ class TranslationFrameWindow(QWidget):
         В заблокированном режиме:
         - Шапка и контур рамки полностью скрываются.
         - Отображается только мини-иконка глазика в углу.
-        - Наведение и клики мыши по области рамки проходят насквозь в фоновое окно/игру.
+        - Наведение и клики мыши по области рамки проходят насквозь в фоновое окно/игру (WS_EX_TRANSPARENT).
         - Единственный элемент, реагирующий на клик — иконка глазика.
         """
         self.is_locked_stealth = locked
+        if sys.platform == "win32":
+            try:
+                hwnd = int(self.winId())
+                style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
+                if locked:
+                    ctypes.windll.user32.SetWindowLongW(hwnd, -20, style | 0x00000020)  # WS_EX_TRANSPARENT
+                else:
+                    ctypes.windll.user32.SetWindowLongW(hwnd, -20, style & ~0x00000020)
+            except Exception:
+                pass
+
         if locked:
             self.header_frame.hide()
-            self.btn_eye_unlock.show()
-            self.btn_eye_unlock.raise_()
+            self.unlock_pill.update_position()
+            self.unlock_pill.show()
+            self.unlock_pill.raise_()
         else:
-            self.btn_eye_unlock.hide()
+            self.unlock_pill.hide()
             self.header_frame.show()
             self.header_frame.raise_()
         self.update()
@@ -686,7 +734,6 @@ class TranslationFrameWindow(QWidget):
         w, h = self.width(), self.height()
         hdr_h = 34
         self.header_frame.setGeometry(6, 6, max(100, w - 12), hdr_h)
-        self.btn_eye_unlock.setGeometry(w - 32, 6, 26, 26)
 
         hud_h = max(42, min(110, int(h * 0.35)))
         self.hud_frame.setGeometry(8, max(hdr_h + 10, h - hud_h - 8), max(100, w - 16), hud_h)
@@ -695,11 +742,15 @@ class TranslationFrameWindow(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_layout_positions()
+        if hasattr(self, "unlock_pill") and self.unlock_pill.isVisible():
+            self.unlock_pill.update_position()
         if hasattr(self, "worker") and self.worker.isRunning():
             self.worker.update_geometry(self.geometry())
 
     def moveEvent(self, event):
         super().moveEvent(event)
+        if hasattr(self, "unlock_pill") and self.unlock_pill.isVisible():
+            self.unlock_pill.update_position()
         if hasattr(self, "worker") and self.worker.isRunning():
             self.worker.update_geometry(self.geometry())
 
@@ -732,25 +783,6 @@ class TranslationFrameWindow(QWidget):
         self.update()
 
     # ------------------ Обработка событий мыши и перемещения ------------------
-
-    def nativeEvent(self, eventType, message):
-        """
-        В режиме маскировки (Глазик) перенаправляет все клики и движения мыши сквозь рамку
-        в лежащее под ней окно (HTTRANSPARENT), за исключением координат кнопки разблокировки глазика.
-        """
-        if sys.platform == "win32" and self.is_locked_stealth:
-            try:
-                msg = wintypes.MSG.from_address(int(message))
-                if msg.message == 0x0084:  # WM_NCHITTEST
-                    x = ctypes.c_short(msg.lParam & 0xFFFF).value
-                    y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
-                    local_pt = self.mapFromGlobal(QPoint(x, y))
-                    if self.btn_eye_unlock.isVisible() and self.btn_eye_unlock.geometry().contains(local_pt):
-                        return True, 1  # HTCLIENT
-                    return True, -1  # HTTRANSPARENT: клики идут в игру/приложение
-            except Exception:
-                pass
-        return super().nativeEvent(eventType, message)
 
     def _start_system_move(self) -> bool:
         """Инициирует нативное аппаратное перемещение окна Windows (Aero Snap, multi-monitor, 0 lag)."""
@@ -984,6 +1016,8 @@ class TranslationFrameWindow(QWidget):
         self.activateWindow()
 
     def closeEvent(self, event):
+        if hasattr(self, "unlock_pill"):
+            self.unlock_pill.close()
         if hasattr(self, "worker") and self.worker.isRunning():
             self.worker.stop()
         self.closed.emit()
