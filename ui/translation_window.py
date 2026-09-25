@@ -117,6 +117,80 @@ def extract_visual_props(crop_bgr: np.ndarray) -> dict:
         return {"color_rgb": (248, 250, 252), "is_bold": False, "font_family": "Segoe UI"}
 
 
+def group_multiline_blocks(raw_blocks: list[dict]) -> list[dict]:
+    """
+    Интеллектуально объединяет строки OCR, принадлежащие одному абзацу/предложению,
+    в единые смысловые блоки с общим контекстом перевода.
+    Предотвращает потерю смысла при переносе строк (например, 'favorite / talk show host').
+    """
+    if not raw_blocks:
+        return []
+
+    # Сортируем блоки сверху вниз, затем слева направо
+    sorted_blocks = sorted(raw_blocks, key=lambda b: (float(b.get("y", 0)), float(b.get("x", 0))))
+    merged = []
+
+    for b in sorted_blocks:
+        txt = b.get("text", "").strip()
+        if not txt:
+            continue
+        bx = float(b.get("x", 0))
+        by = float(b.get("y", 0))
+        bw = float(b.get("width", 50))
+        bh = float(b.get("height", 20))
+
+        if not merged:
+            merged.append({
+                "text": txt,
+                "x": bx,
+                "y": by,
+                "width": bw,
+                "height": bh,
+                "lines_count": 1
+            })
+            continue
+
+        prev = merged[-1]
+        prev_bottom = prev["y"] + prev["height"]
+        prev_h = prev["height"] / max(1, prev.get("lines_count", 1))
+        gap_y = by - prev_bottom
+
+        # Проверяем горизонтальное перекрытие или выравнивание
+        h_overlap = (bx < (prev["x"] + prev["width"])) and ((bx + bw) > prev["x"])
+        left_aligned = abs(bx - prev["x"]) < 40.0
+        prev_center = prev["x"] + prev["width"] / 2.0
+        curr_center = bx + bw / 2.0
+        center_aligned = abs(curr_center - prev_center) < 50.0
+
+        # Условие объединения:
+        # 1. Строка находится прямо под предыдущей (межстрочный интервал абзаца или субтитров)
+        # 2. Выровнена по горизонтали, левому краю или центру
+        is_subsequent_line = (-10.0 <= gap_y <= max(22.0, prev_h * 1.45)) and (h_overlap or left_aligned or center_aligned)
+
+        if is_subsequent_line:
+            new_x = min(prev["x"], bx)
+            new_y = min(prev["y"], by)
+            new_r = max(prev["x"] + prev["width"], bx + bw)
+            new_b = max(prev_bottom, by + bh)
+            prev["text"] = prev["text"] + " " + txt
+            prev["x"] = new_x
+            prev["y"] = new_y
+            prev["width"] = new_r - new_x
+            prev["height"] = new_b - new_y
+            prev["lines_count"] = prev.get("lines_count", 1) + 1
+        else:
+            merged.append({
+                "text": txt,
+                "x": bx,
+                "y": by,
+                "width": bw,
+                "height": bh,
+                "lines_count": 1
+            })
+
+    return merged
+
+
 class TranslationScannerWorker(QThread):
     """
     Фоновый рабочий поток сканирования и перевода.
@@ -136,7 +210,7 @@ class TranslationScannerWorker(QThread):
         self._rect = QRect(100, 100, 480, 240)
         self._src_lang = "auto"
         self._tgt_lang = "ru"
-        self._mode = "hud"
+        self._mode = "inplace"
         self._last_frame_small = None
         self._last_ocr_text = ""
 
@@ -214,7 +288,8 @@ class TranslationScannerWorker(QThread):
                 self._last_frame_small = small_gray
 
             # Запуск OCR
-            blocks = extract_text_and_blocks(frame_bgr, lang=src)
+            raw_blocks = extract_text_and_blocks(frame_bgr, lang=src)
+            blocks = group_multiline_blocks(raw_blocks)
             full_text = " ".join(b["text"] for b in blocks if b.get("text")).strip()
 
             if not full_text:
@@ -391,6 +466,140 @@ class EyeUnlockPill(QPushButton):
     def showEvent(self, event):
         super().showEvent(event)
         self.update_state()
+        if sys.platform == "win32":
+            try:
+                wid = int(self.winId())
+                ctypes.windll.user32.SetWindowDisplayAffinity(wid, 0x00000011)
+                style = ctypes.windll.user32.GetWindowLongW(wid, -20)
+                ctypes.windll.user32.SetWindowLongW(wid, -20, style | 0x08000000)
+            except Exception:
+                pass
+
+
+class TranslationHudWindow(QWidget):
+    """
+    Автономное плавающее окно HUD-субтитров живого перевода.
+    Размещается поверх экрана, свободно перемещается мышью по всему экрану (на любой монитор),
+    не обрезается границами рамки захвата, не перехватывает фокус (WS_EX_NOACTIVATE).
+    """
+    def __init__(self, frame_window: TranslationFrameWindow):
+        super().__init__()
+        self.frame_window = frame_window
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool |
+            Qt.WindowType.WindowDoesNotAcceptFocus
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setMinimumSize(220, 48)
+        self.resize(460, 84)
+
+        self._user_moved = False
+        self._is_dragging = False
+        self._drag_start = QPoint()
+        self._win_start_pos = QPoint()
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.hud_frame = QFrame(self)
+        hud_layout = QVBoxLayout(self.hud_frame)
+        hud_layout.setContentsMargins(12, 8, 12, 8)
+
+        self.lbl_hud_text = QLabel(tr("trans_waiting_text", "Ожидание текста в рамке..."), self.hud_frame)
+        self.lbl_hud_text.setWordWrap(True)
+        self.lbl_hud_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        hud_layout.addWidget(self.lbl_hud_text)
+
+        main_layout.addWidget(self.hud_frame)
+
+        self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+        self.setToolTip(tr("trans_hud_move_tooltip", "Субтитры перевода. Зажмите ЛКМ для свободного перемещения по всему экрану."))
+
+        self.sync_style()
+        self.sync_to_frame()
+
+    def sync_to_frame(self):
+        """Синхронизирует начальное положение под рамкой перевода, если пользователь еще не перемещал HUD вручную."""
+        if self._user_moved or not self.frame_window:
+            return
+        geo = self.frame_window.geometry()
+        w = max(340, min(640, geo.width()))
+        h = max(50, self.height())
+        x = geo.x() + (geo.width() - w) // 2
+        y = geo.bottom() + 8
+        screen = QApplication.primaryScreen()
+        screen_geo = screen.geometry() if screen else QRect(0, 0, 1920, 1080)
+        if y + h > screen_geo.bottom() - 20:
+            y = max(10, geo.y() - h - 40)
+        self.setGeometry(x, y, w, h)
+
+    def sync_style(self):
+        if not self.frame_window:
+            return
+        r, g, b = self.frame_window.THEME_COLORS.get(self.frame_window.bg_theme, (15, 23, 42))
+        alpha = int(self.frame_window.bg_opacity * 255)
+        font_px = self.frame_window.hud_font_size if self.frame_window.hud_font_size > 0 else 13
+
+        if self.frame_window.bg_opacity <= 0.05:
+            self.hud_frame.setStyleSheet(f"""
+                QFrame {{
+                    background-color: transparent;
+                    border: none;
+                }}
+                QLabel {{
+                    color: #ffffff;
+                    font-family: 'Segoe UI', sans-serif;
+                    font-size: {font_px}px;
+                    font-weight: 600;
+                    line-height: 1.35;
+                }}
+            """)
+        else:
+            self.hud_frame.setStyleSheet(f"""
+                QFrame {{
+                    background-color: rgba({r}, {g}, {b}, {alpha});
+                    border: 1px solid rgba(59, 130, 246, {min(220, alpha + 40)});
+                    border-radius: 8px;
+                }}
+                QLabel {{
+                    color: #ffffff;
+                    font-family: 'Segoe UI', sans-serif;
+                    font-size: {font_px}px;
+                    font-weight: 500;
+                    line-height: 1.35;
+                }}
+            """)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_dragging = True
+            self._drag_start = event.globalPosition().toPoint()
+            self._win_start_pos = self.pos()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self._is_dragging and (event.buttons() & Qt.MouseButton.LeftButton):
+            delta = event.globalPosition().toPoint() - self._drag_start
+            if delta.manhattanLength() >= 2:
+                self._user_moved = True
+                self.move(self._win_start_pos + delta)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_dragging = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
         if sys.platform == "win32":
             try:
                 wid = int(self.winId())
@@ -610,6 +819,8 @@ class TranslationControlBar(QWidget):
     def _toggle_passthrough(self):
         new_state = not getattr(self.frame_window, "passthrough_enabled", True)
         self.frame_window.set_passthrough(new_state)
+        msg = tr("trans_pass_on_pop", "Сквозной клик ВКЛЮЧЕН (клики проходят сквозь рамку)") if new_state else tr("trans_pass_off_pop", "Режим настройки (рамку можно растягивать и двигать)")
+        QToolTip.showText(QCursor.pos(), msg, self.btn_passthrough)
 
     def update_passthrough_ui(self):
         if not hasattr(self, "btn_passthrough"):
@@ -617,11 +828,11 @@ class TranslationControlBar(QWidget):
         is_pass = getattr(self.frame_window, "passthrough_enabled", True)
         if is_pass:
             self.btn_passthrough.setIcon(create_themed_icon("mouse_pointer", is_dark=True, size=13, custom_color="#38bdf8"))
-            self.btn_passthrough.setToolTip(tr("trans_pass_on_tip", "Рамка неосязаема (клики проходят сквозь неё в игру). Нажмите для режима настройки размера."))
+            self.btn_passthrough.setToolTip(tr("trans_pass_on_tip", "Сквозной клик ВКЛЮЧЕН (рамка неосязаема, клики проходят в игру). Нажмите для режима настройки размера."))
             self.btn_passthrough.setStyleSheet("QPushButton { border-color: rgba(56, 189, 248, 160); background-color: rgba(14, 165, 233, 40); }")
         else:
             self.btn_passthrough.setIcon(create_themed_icon("maximize_2", is_dark=True, size=13))
-            self.btn_passthrough.setToolTip(tr("trans_pass_off_tip", "Режим настройки: рамку можно изменять за края. Нажмите для включения неосязаемости."))
+            self.btn_passthrough.setToolTip(tr("trans_pass_off_tip", "Режим настройки ВКЛЮЧЕН (рамку можно двигать и растягивать). Нажмите для включения сквозного клика."))
             self.btn_passthrough.setStyleSheet("QPushButton { border-color: #eab308; background-color: rgba(234, 179, 8, 40); }")
 
     def _update_lang_button_text(self):
@@ -918,7 +1129,7 @@ class TranslationFrameWindow(QWidget):
             self.setGeometry(x, y, w, h)
 
         # Конфигурация параметров оформления и работы
-        self.current_mode = "hud"  # "hud" (субтитры) или "inplace" (поверх слов)
+        self.current_mode = "inplace"  # По умолчанию режим "поверх текста" (inplace)
         self.src_lang = "auto"
         self.tgt_lang = "ru"
         self.is_paused = False
@@ -945,7 +1156,7 @@ class TranslationFrameWindow(QWidget):
         self.drag_start_pos = QPoint()
         self.initial_geometry = QRect()
 
-        # Создаем HUD для субтитров внутри рамки
+        # Создаем автономное окно HUD для субтитров (перемещается по всему экрану)
         self._setup_hud_ui()
 
         # Внешняя автономная панель управления (снаружи над рамкой)
@@ -968,56 +1179,22 @@ class TranslationFrameWindow(QWidget):
         self.set_passthrough(self.passthrough_enabled)
 
     def _setup_hud_ui(self):
-        self.hud_frame = QFrame(self)
-        hud_layout = QVBoxLayout(self.hud_frame)
-        hud_layout.setContentsMargins(10, 8, 10, 8)
-        self.lbl_hud_text = QLabel(tr("trans_waiting_text", "Ожидание текста в рамке..."))
-        self.lbl_hud_text.setWordWrap(True)
-        self.lbl_hud_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        hud_layout.addWidget(self.lbl_hud_text)
+        self.hud_window = TranslationHudWindow(self)
+        self.hud_frame = self.hud_window.hud_frame
+        self.lbl_hud_text = self.hud_window.lbl_hud_text
         self._update_hud_style()
         self._update_hud_geometry()
 
     def _update_hud_geometry(self):
-        w, h = self.width(), self.height()
-        hud_h = max(40, min(140, int(h * 0.40)))
-        self.hud_frame.setGeometry(8, max(4, h - hud_h - 8), max(100, w - 16), hud_h)
-        self.hud_frame.setVisible(self.current_mode == "hud")
+        if hasattr(self, "hud_window") and self.hud_window:
+            self.hud_window.sync_to_frame()
+            is_visible = (self.current_mode == "hud") and not self.is_paused and not self.is_locked_stealth
+            self.hud_window.setVisible(is_visible)
+            self.hud_frame.setVisible(is_visible)
 
     def _update_hud_style(self):
-        r, g, b = self.THEME_COLORS.get(self.bg_theme, (15, 23, 42))
-        alpha = int(self.bg_opacity * 255)
-        font_px = self.hud_font_size if self.hud_font_size > 0 else 13
-
-        if self.bg_opacity <= 0.05:
-            self.hud_frame.setStyleSheet(f"""
-                QFrame {{
-                    background-color: transparent;
-                    border: none;
-                }}
-                QLabel {{
-                    color: #ffffff;
-                    font-family: 'Segoe UI', sans-serif;
-                    font-size: {font_px}px;
-                    font-weight: 600;
-                    line-height: 1.35;
-                }}
-            """)
-        else:
-            self.hud_frame.setStyleSheet(f"""
-                QFrame {{
-                    background-color: rgba({r}, {g}, {b}, {alpha});
-                    border: 1px solid rgba(59, 130, 246, {min(220, alpha + 40)});
-                    border-radius: 8px;
-                }}
-                QLabel {{
-                    color: #ffffff;
-                    font-family: 'Segoe UI', sans-serif;
-                    font-size: {font_px}px;
-                    font-weight: 500;
-                    line-height: 1.35;
-                }}
-            """)
+        if hasattr(self, "hud_window") and self.hud_window:
+            self.hud_window.sync_style()
 
     def set_passthrough(self, enabled: bool):
         """
@@ -1052,6 +1229,8 @@ class TranslationFrameWindow(QWidget):
         if locked:
             if hasattr(self, "control_bar"):
                 self.control_bar.hide()
+            if hasattr(self, "hud_window"):
+                self.hud_window.hide()
             self.unlock_pill.update_position()
             self.unlock_pill.update_state()
             self.unlock_pill.show()
@@ -1063,6 +1242,8 @@ class TranslationFrameWindow(QWidget):
                 self.control_bar.sync_to_frame()
                 self.control_bar.show()
                 self.control_bar.raise_()
+            if hasattr(self, "hud_window"):
+                self.hud_window.setVisible(self.current_mode == "hud" and not self.is_paused)
             self.set_passthrough(self.passthrough_enabled)
         self.update()
 
@@ -1094,10 +1275,9 @@ class TranslationFrameWindow(QWidget):
     def _toggle_pause(self):
         self.is_paused = not self.is_paused
         self.worker.set_paused(self.is_paused)
-        if self.is_paused:
-            self.hud_frame.setVisible(False)
-        else:
-            self.hud_frame.setVisible(self.current_mode == "hud")
+        if hasattr(self, "hud_window") and self.hud_window:
+            self.hud_window.setVisible(self.current_mode == "hud" and not self.is_paused)
+        self.hud_frame.setVisible(not self.is_paused if self.current_mode == "hud" else False)
 
         if hasattr(self, "control_bar") and hasattr(self.control_bar, "btn_pause"):
             if self.is_paused:
@@ -1427,6 +1607,8 @@ class TranslationFrameWindow(QWidget):
     def closeEvent(self, event):
         if hasattr(self, "control_bar") and self.control_bar:
             self.control_bar.close()
+        if hasattr(self, "hud_window") and self.hud_window:
+            self.hud_window.close()
         if hasattr(self, "unlock_pill") and self.unlock_pill:
             self.unlock_pill.close()
         if hasattr(self, "worker") and self.worker.isRunning():

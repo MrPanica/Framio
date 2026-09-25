@@ -3190,12 +3190,14 @@ def test_recent_media_history():
         assert writer.isOpened(), "Тестовый MP4 не открылся для проверки превью"
         writer.write(np.full((24, 32, 3), 180, dtype=np.uint8))
         writer.release()
+    QApplication.clipboard().clear()
+    QApplication.processEvents()
     FramioApp._copy_recent_media(app, {"path": "O:/captures/example.mp4"})
     QApplication.processEvents()
     recent_mime = QApplication.clipboard().mimeData()
     urls = recent_mime.urls()
     for _ in range(5):
-        if urls:
+        if urls and urls[0].toLocalFile().endswith("example.mp4"):
             break
         time.sleep(0.02)
         QApplication.processEvents()
@@ -4521,7 +4523,7 @@ def test_magnifier_tool_and_filter():
 
 def test_translation_frame_and_translator():
     """Проверка локального переводчика и перманентной плавающей рамки перевода."""
-    print("[TEST] Проверка модуля перевода и окна плавающей рамки перевода...")
+    from PyQt6.QtCore import QPoint, QRectF
     from utils.translator import translate_text, clear_translation_cache, get_cache_size
     from ui.translation_window import TranslationFrameWindow
 
@@ -4559,13 +4561,32 @@ def test_translation_frame_and_translator():
     frame_win.set_passthrough(True)
     assert frame_win.passthrough_enabled
 
-    # Переключение режимов (HUD vs In-place)
-    frame_win._toggle_display_mode()
+    # Режим по умолчанию: "inplace" (поверх текста)
     assert frame_win.current_mode == "inplace"
     assert frame_win.worker._mode == "inplace"
+    assert frame_win.hud_window.isWindow()
+    # HUD окно субтитров свободно перемещается по всему экрану
+    frame_win.hud_window.move(QPoint(500, 700))
+    assert frame_win.hud_window.pos() == QPoint(500, 700)
+
+    # Проверка интеллектуального объединения строк (сохранение контекста)
+    from ui.translation_window import group_multiline_blocks
+    raw_lines = [
+        {"text": "What's your favorite", "x": 100, "y": 150, "width": 180, "height": 22},
+        {"text": "talk show host?", "x": 100, "y": 174, "width": 150, "height": 22}
+    ]
+    grouped = group_multiline_blocks(raw_lines)
+    assert len(grouped) == 1
+    assert grouped[0]["text"] == "What's your favorite talk show host?"
+    assert grouped[0]["lines_count"] == 2
+
+    # Переключение режимов (HUD vs In-place)
     frame_win._toggle_display_mode()
     assert frame_win.current_mode == "hud"
     assert frame_win.worker._mode == "hud"
+    frame_win._toggle_display_mode()
+    assert frame_win.current_mode == "inplace"
+    assert frame_win.worker._mode == "inplace"
 
     # Пауза / возобновление
     frame_win._toggle_pause()
@@ -4574,6 +4595,9 @@ def test_translation_frame_and_translator():
     frame_win._toggle_pause()
     assert not frame_win.is_paused
     assert not frame_win.worker._paused
+
+    # Переключаем в HUD для проверки видимости субтитров при маскировке и паузе
+    frame_win._set_display_mode("hud")
 
     # Проверка скрытия в режим глазика (Stealth mode) и управление через ПКМ/ЛКМ
     frame_win.set_stealth_lock(True)
@@ -4601,6 +4625,7 @@ def test_translation_frame_and_translator():
     # Проверка флагов неперехвата фокуса (WindowDoesNotAcceptFocus)
     assert frame_win.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
     assert frame_win.control_bar.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
+    assert frame_win.hud_window.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
     assert frame_win.unlock_pill.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
 
     frame_win.close()
