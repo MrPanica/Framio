@@ -251,6 +251,7 @@ class OverlayWindow(QWidget):
         # Нижняя панель
         self.bottom_toolbar.save_clicked.connect(self.save_screenshot)
         self.bottom_toolbar.copy_clicked.connect(self.copy_screenshot)
+        self.bottom_toolbar.copy_text_clicked.connect(self.copy_ocr_text)
         self.bottom_toolbar.scrolling_screenshot_requested.connect(self.start_scrolling_screenshot)
         self.bottom_toolbar.search_image_requested.connect(self.search_image)
         self.bottom_toolbar.record_video_started.connect(lambda p: self.start_recording("video", p))
@@ -269,6 +270,7 @@ class OverlayWindow(QWidget):
         self.region_header.close_clicked.connect(self._on_region_header_close)
         self.region_header.save_clicked.connect(lambda fmt: self.save_screenshot(fmt, all_regions=True))
         self.region_header.copy_clicked.connect(lambda fmt: self.copy_screenshot(fmt, all_regions=True))
+        self.region_header.copy_text_clicked.connect(lambda lang: self.copy_ocr_text(lang, all_regions=True))
         self.region_header.record_video_started.connect(lambda p: self.start_recording("video", p, all_regions=True))
         self.region_header.record_gif_started.connect(lambda p: self.start_recording("gif", p, all_regions=True))
         self.region_header.mass_filter_selected.connect(self._on_mass_filter_changed)
@@ -803,6 +805,8 @@ class OverlayWindow(QWidget):
             self.save_screenshot(all_regions=True)
         elif action == "copy":
             self.copy_screenshot("standard", all_regions=True)
+        elif action == "copy_text":
+            self.copy_ocr_text("auto", all_regions=True)
         elif action == "video":
             self.start_recording("video", all_regions=True)
         elif action == "gif":
@@ -4330,10 +4334,15 @@ class OverlayWindow(QWidget):
                 self.history_manager.redo()
             elif key == Qt.Key.Key_S:
                 self.save_screenshot()
+            elif key == Qt.Key.Key_T:
+                self.copy_ocr_text("auto")
             elif key == Qt.Key.Key_C:
-                # Ctrl+C — явное групповое копирование: каждая зона сохраняется
-                # отдельным PNG внутри custom clipboard payload.
-                self.copy_screenshot("standard", all_regions=True)
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    self.copy_ocr_text("auto")
+                else:
+                    # Ctrl+C — явное групповое копирование: каждая зона сохраняется
+                    # отдельным PNG внутри custom clipboard payload.
+                    self.copy_screenshot("standard", all_regions=True)
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
@@ -4812,53 +4821,58 @@ class OverlayWindow(QWidget):
             QApplication.clipboard().setMimeData(mime)
             return
 
-        encoded = []
-        for image in images:
-            buf = QBuffer()
-            buf.open(QIODevice.OpenModeFlag.WriteOnly)
-            image.save(buf, "PNG")
-            encoded.append(base64.b64encode(bytes(buf.data())).decode("ascii"))
-            buf.close()
-
         mime = QMimeData()
-        payload = json.dumps({"format": "png", "images": encoded}, separators=(",", ":"))
-        mime.setData("application/x-framio-image-list", payload.encode("ascii"))
-        # Windows has only one standard image slot. Keep the first zone as a
-        # real image for ordinary Ctrl+V targets, while the custom Framio
-        # payload and file URLs carry all zones for multi-file-aware targets.
-        # Do not publish the cache paths as text: text-aware applications were
-        # pasting those paths instead of an image.
         first_buffer = QBuffer()
         first_buffer.open(QIODevice.OpenModeFlag.WriteOnly)
         images[0].save(first_buffer, "PNG")
         mime.setData("image/png", first_buffer.data())
         mime.setImageData(images[0])
         first_buffer.close()
-        cfg = self.__dict__.get("cfg")
-        cache_base = getattr(cfg, "save_dir_screenshots", None) or (Path.cwd() / "Captures" / "Screenshots")
-        cache_root = Path(cache_base) / ".clipboard"
-        cache_root.mkdir(parents=True, exist_ok=True)
-        cache_paths = []
-        stamp = time.time_ns()
-        for index, image in enumerate(images, start=1):
-            cache_path = cache_root / f"Framio_Clipboard_{stamp}_{index}.png"
-            if image.save(str(cache_path), "PNG"):
-                cache_paths.append(cache_path)
-        if cache_paths:
-            mime.setUrls([QUrl.fromLocalFile(str(path)) for path in cache_paths])
+
+        if len(images) > 1:
+            encoded = []
+            for image in images:
+                buf = QBuffer()
+                buf.open(QIODevice.OpenModeFlag.WriteOnly)
+                image.save(buf, "PNG")
+                encoded.append(base64.b64encode(bytes(buf.data())).decode("ascii"))
+                buf.close()
+            payload = json.dumps({"format": "png", "images": encoded}, separators=(",", ":"))
+            mime.setData("application/x-framio-image-list", payload.encode("ascii"))
+
+        # Моментально выставляем данные в системный буфер обмена
         QApplication.clipboard().setMimeData(mime)
+
+        try:
+            cfg = self.__dict__.get("cfg")
+            cache_base = getattr(cfg, "save_dir_screenshots", None) or (Path.cwd() / "Captures" / "Screenshots")
+            cache_root = Path(cache_base) / ".clipboard"
+            cache_root.mkdir(parents=True, exist_ok=True)
+            cache_paths = []
+            stamp = time.time_ns()
+            for index, image in enumerate(images, start=1):
+                cache_path = cache_root / f"Framio_Clipboard_{stamp}_{index}.png"
+                if image.save(str(cache_path), "PNG"):
+                    cache_paths.append(cache_path)
+            if cache_paths:
+                mime.setUrls([QUrl.fromLocalFile(str(path)) for path in cache_paths])
+                QApplication.clipboard().setMimeData(mime)
+        except Exception:
+            pass
 
     def copy_screenshot(self, fmt="standard", all_regions: bool = False):
         preserve_selection = self._should_preserve_selection_after_single_region_action(all_regions)
-        # Рендер строится из сохранённого фонового кадра и слоёв, поэтому
-        # скрывать overlay перед копированием не нужно. Скрытие с processEvents
-        # давало заметное краткое исчезновение затемнения на экране.
+        if not preserve_selection:
+            # Мгновенно скрываем оверлей: нулевая задержка закрытия зоны на экране
+            self.hide()
+            QApplication.processEvents()
+
         images = self.get_cropped_images(all_regions=all_regions)
         if not images:
             if preserve_selection:
                 self._restore_single_recording_overlay_after_action()
             else:
-                self.show()
+                self.close_overlay()
             return
         clipboard = QApplication.clipboard()
 
@@ -4914,6 +4928,65 @@ class OverlayWindow(QWidget):
         else:
             self.close_overlay()
 
+    def copy_ocr_text(self, lang="auto", all_regions: bool = False):
+        """
+        Извлекает текст с выбранных областей с помощью локального движка OCR
+        и моментально помещает его в буфер обмена.
+        """
+        preserve_selection = self._should_preserve_selection_after_single_region_action(all_regions)
+        if not preserve_selection:
+            # Мгновенно скрываем оверлей: нулевая задержка закрытия зоны на экране
+            self.hide()
+            QApplication.processEvents()
+
+        images = self.get_cropped_images(all_regions=all_regions)
+        if not images:
+            if preserve_selection:
+                self._restore_single_recording_overlay_after_action()
+            else:
+                self.close_overlay()
+            return
+
+        from utils.ocr_helper import extract_text_from_image
+        extracted_blocks = []
+        for index, img in enumerate(images, start=1):
+            text, _ = extract_text_from_image(img, lang=lang)
+            if text:
+                if len(images) > 1:
+                    extracted_blocks.append(f"[{tr('region_zone_badge', 'Зона {index}', index=index)}]\n{text}")
+                else:
+                    extracted_blocks.append(text)
+
+        full_text = "\n\n".join(extracted_blocks).strip()
+
+        if full_text:
+            QApplication.clipboard().setText(full_text)
+            if getattr(self.cfg, "play_sound", True):
+                play_capture_sound()
+
+            preview = full_text[:120].replace("\n", " ").strip()
+            if len(full_text) > 120:
+                preview += "..."
+
+            self._notify(
+                tr("notif_ocr_copied_title", "Текст скопирован в буфер обмена"),
+                preview,
+                QSystemTrayIcon.MessageIcon.Information,
+                3500
+            )
+        else:
+            self._notify(
+                tr("notif_ocr_no_text_title", "Текст не найден"),
+                tr("notif_ocr_no_text_body", "На выбранной области изображения текст не обнаружен."),
+                QSystemTrayIcon.MessageIcon.Warning,
+                3500
+            )
+
+        if preserve_selection:
+            self._restore_single_recording_overlay_after_action()
+        else:
+            self.close_overlay()
+
     def grab_ui_snapshot_image(self) -> QImage:
         """
         Захватывает полный снимок экрана с текущим оверлеем программы.
@@ -4925,7 +4998,7 @@ class OverlayWindow(QWidget):
                 self.region_header.popup_ui_snapshot.hide()
             except Exception:
                 pass
-        for popup_name in ("popup_formats", "popup_copy", "popup_video", "popup_gif", "popup_filter"):
+        for popup_name in ("popup_formats", "popup_copy", "popup_ocr", "popup_video", "popup_gif", "popup_filter"):
             p = getattr(getattr(self, "region_header", None), popup_name, None)
             if p is not None and hasattr(p, "isVisible") and p.isVisible():
                 try:

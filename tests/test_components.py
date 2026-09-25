@@ -4385,6 +4385,73 @@ def test_censor_placement_bounds_and_dpr():
     print("  -> Кнопка цензуры под фигурами, эффект ограничен зоной, обводка рисуется, DPR 1:1 без лупы.")
 
 
+def test_ocr_copy_text_tool_and_speedup():
+    print("[TEST] Проверка инструмента копирования текста (OCR) и мгновенного закрытия...")
+    from ui.toolbars import BottomActionToolbar, RegionActionHeader, OcrLanguagePopup
+    from ui.overlay import OverlayWindow
+    from utils.ocr_helper import extract_text_from_image, get_available_ocr_languages, is_ocr_available
+    import numpy as np
+    import cv2
+
+    # 1. Проверка распознавания текста OCR-движком
+    img = np.full((120, 600, 3), 255, dtype=np.uint8)
+    cv2.putText(img, "Framio OCR Fast Copy", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
+    cv2.putText(img, "Testing text extraction", (20, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
+
+    text, lang = extract_text_from_image(img, lang="auto")
+    assert isinstance(text, str), "OCR result should be a string"
+    assert len(text) > 0, "OCR should detect text on synthetic image"
+    langs = get_available_ocr_languages()
+    assert isinstance(langs, list) and len(langs) > 0, "Available OCR languages should not be empty"
+
+    # 2. Проверка тулбара: кнопка btn_copy_text должна находиться строго СПРАВА от btn_copy
+    bt = BottomActionToolbar()
+    layout = bt.layout()
+    idx_copy = layout.indexOf(bt.btn_copy)
+    idx_text = layout.indexOf(bt.btn_copy_text)
+    assert idx_text == idx_copy + 1, f"btn_copy_text (idx={idx_text}) must be immediately to the right of btn_copy (idx={idx_copy})"
+    assert isinstance(bt.popup_ocr, OcrLanguagePopup), "bt.popup_ocr should be OcrLanguagePopup"
+
+    # 3. Проверка массовой панели: btn_mass_copy_text справа от btn_mass_copy
+    mt = RegionActionHeader()
+    m_layout = mt.layout()
+    m_idx_copy = m_layout.indexOf(mt.btn_mass_copy)
+    m_idx_text = m_layout.indexOf(mt.btn_mass_copy_text)
+    assert m_idx_text == m_idx_copy + 1, f"btn_mass_copy_text (idx={m_idx_text}) must be immediately to the right of btn_mass_copy (idx={m_idx_copy})"
+
+    # 4. Проверка работы copy_ocr_text и мгновенного скрытия оверлея
+    bg_pix = QPixmap(800, 600)
+    bg_pix.fill(Qt.GlobalColor.white)
+    p = QPainter(bg_pix)
+    p.setPen(Qt.GlobalColor.black)
+    font = p.font()
+    font.setPointSize(24)
+    p.setFont(font)
+    p.drawText(50, 100, "Framio Local Text")
+    p.end()
+
+    ov = OverlayWindow()
+    ov.background_pixmap = bg_pix
+    ov.show()
+    ov.regions = [QRectF(20, 20, 400, 200)]
+    ov.active_region_idx = 0
+
+    # Копирование текста: оверлей мгновенно скрывается (имитация ускорения) и текст попадает в буфер
+    ov.copy_ocr_text(lang="auto", all_regions=False)
+    assert not ov.isVisible(), "Overlay must be hidden immediately after copy_ocr_text"
+
+    # 5. Проверка мгновенного скрытия при copy_screenshot
+    ov2 = OverlayWindow()
+    ov2.background_pixmap = bg_pix
+    ov2.show()
+    ov2.regions = [QRectF(20, 20, 300, 200)]
+    ov2.active_region_idx = 0
+    ov2.copy_screenshot("standard", all_regions=False)
+    assert not ov2.isVisible(), "Overlay must be hidden immediately upon copy_screenshot for zero perceived latency"
+
+    print("  -> Кнопка OCR справа от копирования, текст извлекается локально, оверлей скрывается мгновенно.")
+
+
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
@@ -4483,6 +4550,7 @@ if __name__ == "__main__":
         test_multi_region_drag_shapes_badge_and_static_background()
         test_ui_snapshot_in_mass_actions()
         test_censor_placement_bounds_and_dpr()
+        test_ocr_copy_text_tool_and_speedup()
         import time
         time.sleep(0.5)
         QApplication.processEvents()

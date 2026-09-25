@@ -8,3 +8,4 @@ numpy>=2.0.0
 Pillow>=12.0.0
 PyAudioWPatch>=0.2.12.8
 psutil>=7.0.0
+winocr>=0.0.15

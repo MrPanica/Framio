@@ -20,7 +20,9 @@ a = Analysis(
     datas=[('icon.ico', '.'), ('icon.png', '.')],
     hiddenimports=[
         'requests', 'cv2', 'numpy', 'PIL', 'imageio_ffmpeg',
-        'PyQt6.QtSvg', 'pyaudiowpatch', '_portaudiowpatch', 'keyboard'
+        'PyQt6.QtSvg', 'pyaudiowpatch', '_portaudiowpatch', 'keyboard',
+        'winocr', 'winrt', 'winrt.windows.media.ocr', 'winrt.windows.globalization',
+        'winrt.windows.graphics.imaging', 'winrt.windows.storage.streams', 'winrt.windows.foundation'
     ],
     hookspath=[],
     hooksconfig={},

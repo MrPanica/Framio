@@ -828,6 +828,62 @@ class CopyFormatPopup(QFrame):
         self.format_selected.emit(fmt)
 
 
+class OcrLanguagePopup(QFrame):
+    """Всплывающее меню выбора языка оптического распознавания текста (OCR)."""
+
+    language_selected = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        theme = get_theme_styles()
+        self.setStyleSheet(theme["popup_frame"] + f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {theme['text_color']};
+                border: none;
+                border-radius: 4px;
+                padding: 6px 14px;
+                text-align: left;
+                font-size: 12px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                background-color: {theme['popup_item_hover']};
+                color: #3b82f6;
+            }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+
+        try:
+            from utils.ocr_helper import get_available_ocr_languages
+            installed_langs = get_available_ocr_languages()
+        except Exception:
+            installed_langs = [
+                {"tag": "ru", "name": "Русский"},
+                {"tag": "en-US", "name": "English"},
+            ]
+
+        # Первым пунктом всегда идет "Авто" (профиль системы + все доступные языки)
+        options = [("auto", tr("popup_ocr_auto", "Текст (Автоопределение)"))]
+        for l in installed_langs:
+            tag = l.get("tag", "")
+            name = l.get("name", "")
+            if tag and tag != "auto":
+                options.append((tag, f"{name} ({tag})"))
+
+        for lang_tag, label in options:
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda checked, t=lang_tag: self._on_select(t))
+            layout.addWidget(btn)
+
+    def _on_select(self, lang_tag: str):
+        self.close()
+        self.language_selected.emit(lang_tag)
+
+
 class UiSnapshotPopup(QFrame):
     """Всплывающее меню выбора действия для снимка интерфейса (сохранить в файл или скопировать в буфер)."""
 
@@ -2403,6 +2459,7 @@ class RegionActionHeader(QFrame):
     add_mode_toggled = pyqtSignal(bool)
     save_clicked = pyqtSignal(str)
     copy_clicked = pyqtSignal(str)
+    copy_text_clicked = pyqtSignal(str)
     record_video_started = pyqtSignal(dict)
     record_gif_started = pyqtSignal(dict)
     mass_filter_selected = pyqtSignal(str)
@@ -2467,6 +2524,11 @@ class RegionActionHeader(QFrame):
         self.btn_mass_copy.clicked.connect(self._show_copy_formats)
         layout.addWidget(self.btn_mass_copy)
 
+        self.btn_mass_copy_text = ModernButton(tr("region_mass_copy_text_short", "Текст"), tr("action_all_copy_text", "Скопировать текст со всех зон (OCR)"))
+        self.btn_mass_copy_text.setIcon(create_themed_icon("scan_text", self.is_dark, size=14))
+        self.btn_mass_copy_text.clicked.connect(self._show_ocr_popup)
+        layout.addWidget(self.btn_mass_copy_text)
+
         self.btn_mass_video = ModernButton(tr("region_mass_video_short", "Видео"), tr("action_all_video", "Записывать видео всех зон"))
         self.btn_mass_video.setIcon(create_themed_icon("video", self.is_dark, size=14))
         self.btn_mass_video.clicked.connect(self._show_video_popup)
@@ -2493,6 +2555,8 @@ class RegionActionHeader(QFrame):
         self.popup_formats.format_selected.connect(self.save_clicked.emit)
         self.popup_copy = CopyFormatPopup(self)
         self.popup_copy.format_selected.connect(self.copy_clicked.emit)
+        self.popup_ocr = OcrLanguagePopup(self)
+        self.popup_ocr.language_selected.connect(self.copy_text_clicked.emit)
         self.popup_video = VideoOptionsPopup(self)
         self.popup_video.start_video.connect(self.record_video_started.emit)
         self.popup_gif = GifOptionsPopup(self)
@@ -2515,7 +2579,7 @@ class RegionActionHeader(QFrame):
                 tr("region_header_title_count", "Зоны · массовые действия ({available}/{total})", available=available_count, total=total_count)
             )
         enabled = available_count > 0
-        for button in (self.btn_mass_save, self.btn_mass_copy, self.btn_mass_video, self.btn_mass_gif, self.btn_mass_filter, self.btn_ui_snapshot):
+        for button in (self.btn_mass_save, self.btn_mass_copy, self.btn_mass_copy_text, self.btn_mass_video, self.btn_mass_gif, self.btn_mass_filter, self.btn_ui_snapshot):
             button.setEnabled(enabled)
         self.setVisible(bool(add_mode or total_count > 1))
 
@@ -2524,6 +2588,9 @@ class RegionActionHeader(QFrame):
 
     def _show_copy_formats(self):
         show_smart_popup(self.btn_mass_copy, self.popup_copy)
+
+    def _show_ocr_popup(self):
+        show_smart_popup(self.btn_mass_copy_text, self.popup_ocr)
 
     def _show_video_popup(self):
         show_smart_popup(self.btn_mass_video, self.popup_video)
@@ -2693,6 +2760,7 @@ class WholeAreaFilterPopup(QFrame):
 class BottomActionToolbar(QFrame):
     save_clicked = pyqtSignal(str)
     copy_clicked = pyqtSignal(str)
+    copy_text_clicked = pyqtSignal(str)
     scrolling_screenshot_requested = pyqtSignal()
     search_image_requested = pyqtSignal(str)
     record_video_started = pyqtSignal(dict)
@@ -2750,6 +2818,17 @@ class BottomActionToolbar(QFrame):
 
         self.popup_copy = CopyFormatPopup(self)
         self.popup_copy.format_selected.connect(self.copy_clicked.emit)
+
+        # 2.1 Скопировать текст (OCR) (SVG иконка скан-текста с выбором языка)
+        self.btn_copy_text = ModernButton("", tr("action_copy_text_tip", "Копировать текст с изображения в буфер обмена (клик — выбор языка) [Ctrl+T]"))
+        self.btn_copy_text.setFixedSize(28, 28)
+        self.btn_copy_text.setIcon(create_themed_icon("scan_text", self.is_dark, size=16))
+        self.btn_copy_text.setIconSize(QSize(16, 16))
+        self.btn_copy_text.clicked.connect(self._show_ocr_popup)
+        layout.addWidget(self.btn_copy_text)
+
+        self.popup_ocr = OcrLanguagePopup(self)
+        self.popup_ocr.language_selected.connect(self.copy_text_clicked.emit)
 
         # 3. Видео MP4 (SVG иконка видеокамеры)
         self.btn_video = ModernButton("", tr("action_video_tip", "Запись видео MP4 (настройки звука и кодека)"))
@@ -2982,6 +3061,9 @@ class BottomActionToolbar(QFrame):
     def _show_copy_formats(self):
         show_smart_popup(self.btn_copy, self.popup_copy)
 
+    def _show_ocr_popup(self):
+        show_smart_popup(self.btn_copy_text, self.popup_ocr)
+
     def _show_search_menu(self):
         show_smart_popup(self.btn_search, self.popup_search)
 
@@ -2998,6 +3080,9 @@ class BottomActionToolbar(QFrame):
         )
         menu.addAction(tr("action_all_copy", "Скопировать все зоны")).triggered.connect(
             lambda: self.all_regions_action.emit("copy")
+        )
+        menu.addAction(create_themed_icon("scan_text", self.is_dark, size=14), tr("action_all_copy_text", "Скопировать текст со всех зон (OCR)")).triggered.connect(
+            lambda: self.all_regions_action.emit("copy_text")
         )
         menu.addSeparator()
         menu.addAction(tr("action_all_video", "Записывать видео всех зон")).triggered.connect(

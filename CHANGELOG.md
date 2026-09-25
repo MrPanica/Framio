@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.16] - 2026-09-25
+
+### English
+
+- **Local OCR (Text Recognition)**: Added "Copy text from screenshot to clipboard" button directly to the right of the copy button on both active zone and mass action toolbars (shortcut: `Ctrl+T` or `Ctrl+Shift+C`). Extracts text locally and offline using native Windows OCR (`Windows.Media.Ocr`) with support for multiple fonts and languages (Russian, English, and all installed Windows OCR languages) with auto-detection and custom language picker popup.
+- **Instant Overlay Close & Copy Acceleration**: Accelerated screenshot copying and overlay closing. Upon clicking copy, the darkening overlay and selection frame close immediately with 0 ms perceived delay. Clipboard data is populated instantly for fast paste, and background caching occurs smoothly.
+
+### Русский
+
+- **Локальный OCR (Распознавание текста)**: Добавлен инструмент «Копировать текст со скриншота в буфер обмена» строго справа от инструмента копирования на панели активной зоны и панели массовых действий (горячие клавиши: `Ctrl+T` или `Ctrl+Shift+C`). Извлекает текст локально и автономно через встроенный движок Windows OCR (`Windows.Media.Ocr`) с поддержкой любых шрифтов и языков (русский, английский и все установленные в Windows языки распознавания), автоопределением и всплывающим меню выбора языка.
+- **Мгновенное закрытие оверлея и ускорение копирования**: Ускорено копирование скриншота в буфер обмена и закрытие области выделения. При нажатии копирования оверлей и рамка выделения исчезают немедленно без задержки (эффект мгновенного отклика 0 мс), буфер обмена заполняется сразу для моментальной вставки через Ctrl+V.
+
 ## [1.0.15] - 2026-09-20
 
 ### English
