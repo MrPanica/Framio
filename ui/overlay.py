@@ -1063,8 +1063,11 @@ class OverlayWindow(QWidget):
         self.activateWindow()
         self.setFocus()
 
-        # 2. Принудительно отрисовываем новый снимок экрана в backing store окна
-        self.repaint()
+        # 2. Отрисовываем новый снимок экрана и обрабатываем события отрисовки ДО включения видимости,
+        # чтобы QBackingStore гарантированно отправил свежий кадр в DWM / UpdateLayeredWindow
+        self.update()
+        for _ in range(2):
+            QApplication.processEvents()
 
         # 3. Восстанавливаем полный регион окна и видимость только после завершения отрисовки
         if sys.platform == "win32":
@@ -4883,15 +4886,18 @@ class OverlayWindow(QWidget):
 
     def copy_screenshot(self, fmt="standard", all_regions: bool = False):
         preserve_selection = self._should_preserve_selection_after_single_region_action(all_regions)
-        images = self.get_cropped_images(all_regions=all_regions)
         if not preserve_selection:
-            # Мгновенно скрываем оверлей и очищаем зоны: нулевая задержка закрытия зоны на экране
+            # Мгновенно скрываем оверлей: нулевая задержка закрытия зоны на экране (0 мс)
             self.setWindowOpacity(0.0)
-            self.clear_regions()
-            self._clear_interactive_selection()
             self._hide_toolbars()
+            self.badge.hide()
             self.hide()
             QApplication.processEvents()
+
+        images = self.get_cropped_images(all_regions=all_regions)
+        if not preserve_selection:
+            self.clear_regions()
+            self._clear_interactive_selection()
 
         if not images:
             if preserve_selection:
@@ -4959,15 +4965,18 @@ class OverlayWindow(QWidget):
         и моментально помещает его в буфер обмена.
         """
         preserve_selection = self._should_preserve_selection_after_single_region_action(all_regions)
-        images = self.get_cropped_images(all_regions=all_regions)
         if not preserve_selection:
-            # Мгновенно скрываем оверлей и очищаем зоны: нулевая задержка закрытия зоны на экране
+            # Мгновенно скрываем оверлей: нулевая задержка закрытия зоны на экране (0 мс)
             self.setWindowOpacity(0.0)
-            self.clear_regions()
-            self._clear_interactive_selection()
             self._hide_toolbars()
+            self.badge.hide()
             self.hide()
             QApplication.processEvents()
+
+        images = self.get_cropped_images(all_regions=all_regions)
+        if not preserve_selection:
+            self.clear_regions()
+            self._clear_interactive_selection()
 
         if not images:
             if preserve_selection:

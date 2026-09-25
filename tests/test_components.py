@@ -4449,7 +4449,17 @@ def test_ocr_copy_text_tool_and_speedup():
     ov2.copy_screenshot("standard", all_regions=False)
     assert not ov2.isVisible(), "Overlay must be hidden immediately upon copy_screenshot for zero perceived latency"
 
-    print("  -> Кнопка OCR справа от копирования, текст извлекается локально, оверлей скрывается мгновенно.")
+    # 6. Проверка постобработки артефактов OCR (_postprocess_ocr_text)
+    from utils.ocr_helper import _postprocess_ocr_text
+    sample_raw = "З. Тестирование\n(О мс задержки)\nO: \\GitHub\\Framio\\dist-onefi1e\\Framio. ехе\nкоммитом: 80eb56f fix(ocr,overlay):\n0CR"
+    cleaned = _postprocess_ocr_text(sample_raw)
+    assert "3. Тестирование" in cleaned
+    assert "(0 мс" in cleaned
+    assert "O:\\GitHub\\Framio\\dist-onefile\\Framio.exe" in cleaned
+    assert "80eb56f (fix(ocr,overlay):" in cleaned
+    assert "OCR" in cleaned
+
+    print("  -> Кнопка OCR справа от копирования, текст извлекается локально, оверлей скрывается мгновенно, постобработка чистит артефакты.")
 
 
 if __name__ == "__main__":

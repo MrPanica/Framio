@@ -106,7 +106,8 @@ def extract_text_from_image(image: Union["QImage", np.ndarray], lang: str = "aut
         return "", ""
 
     if _WINOCR_AVAILABLE:
-        return _extract_with_winocr(bgr, lang)
+        raw_text, used_lang = _extract_with_winocr(bgr, lang)
+        return _postprocess_ocr_text(raw_text), used_lang
 
     # Резервный поиск через pytesseract, если winocr недоступен
     try:
@@ -120,11 +121,47 @@ def extract_text_from_image(image: Union["QImage", np.ndarray], lang: str = "aut
             t_lang = "rus+eng" if lang == "auto" else ("rus" if "ru" in lang else "eng")
             text = pytesseract.image_to_string(pil_img, lang=t_lang).strip()
             if text:
-                return text, t_lang
+                return _postprocess_ocr_text(text), t_lang
     except Exception:
         pass
 
     return "", ""
+
+
+def _postprocess_ocr_text(text: str) -> str:
+    """Интеллектуальная постобработка и очистка артефактов Windows OCR."""
+    import re
+    if not text:
+        return ""
+
+    # 1. Цифра 3 вместо русской буквы 'З' в начале нумерованных списков ("З. Тестирование" -> "3. Тестирование")
+    text = re.sub(r"^[Зз]\.\s+", "3. ", text, flags=re.MULTILINE)
+
+    # 2. Буква 'О' вместо нуля перед единицами времени и измерений ("(О мс" -> "(0 мс")
+    text = re.sub(r"\b[ОоO]\s*(мс|ms|сек|sec|мин|min|s|fps|фпс|КБ|МБ|ГБ|KB|MB|GB)\b", r"0 \1", text)
+
+    # 3. Пути к файлам Windows: убираем пробелы после двоеточия диска ("O: \GitHub" -> "O:\GitHub")
+    text = re.sub(r"([A-Za-z]:)\s*\\", r"\1\\", text)
+    text = re.sub(r"\\+\s+", r"\\", text)
+
+    # 4. Расширения исполняемых файлов (". exe" / ". ехе" -> ".exe")
+    text = re.sub(r"\.\s*(?:exe|ехе)\b", ".exe", text)
+
+    # 5. Опечатки OCR в названии dist-onefile ("dist-onefi1e" -> "dist-onefile")
+    text = re.sub(r"\bdist-onefi1e\b", "dist-onefile", text)
+
+    # 6. Открывающая скобка в хэшах коммитов ("80eb56f fix(" -> "80eb56f (fix(")
+    text = re.sub(r":\s*([0-9a-f]{7,8})\s+([a-z]+\([a-z_]+,[a-z_]+\):)", r": \1 (\2", text)
+
+    # 7. Балансировка и очистка пробелов внутри скобок
+    text = re.sub(r"\(\s+", "(", text)
+    text = re.sub(r"\s+\)", ")", text)
+    text = re.sub(r"\s+,\s+", ", ", text)
+
+    # 8. Исправление "0CR" -> "OCR"
+    text = re.sub(r"\b0CR\b", "OCR", text)
+
+    return text.strip()
 
 
 def _has_cyrillic(text: str) -> bool:
