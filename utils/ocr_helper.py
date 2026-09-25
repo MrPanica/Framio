@@ -442,6 +442,8 @@ def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "aut
 
     try:
         prep_img, _ = _preprocess_image_for_ocr(bgr, scale=2.0)
+        prep_scale_x = float(prep_img.shape[1]) / float(bgr.shape[1])
+        prep_scale_y = float(prep_img.shape[0]) / float(bgr.shape[0])
         res = winocr.recognize_cv2_sync(prep_img, lang=target_lang)
         blocks = []
         for l in res.get("lines", []):
@@ -453,10 +455,10 @@ def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "aut
             ys = [float(w.get("bounding_rect", {}).get("y", 0.0)) for w in words]
             ws = [float(w.get("bounding_rect", {}).get("width", 0.0)) for w in words]
             hs = [float(w.get("bounding_rect", {}).get("height", 0.0)) for w in words]
-            min_x = min(xs) / 2.0
-            min_y = min(ys) / 2.0
-            max_r = max(x + w for x, w in zip(xs, ws)) / 2.0
-            max_b = max(y + h for y, h in zip(ys, hs)) / 2.0
+            min_x = min(xs) / prep_scale_x
+            min_y = min(ys) / prep_scale_y
+            max_r = max(x + w for x, w in zip(xs, ws)) / prep_scale_x
+            max_b = max(y + h for y, h in zip(ys, hs)) / prep_scale_y
             blocks.append({
                 "text": ltxt,
                 "x": min_x,

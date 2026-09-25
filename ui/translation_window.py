@@ -63,58 +63,133 @@ def create_stealth_menu(parent=None) -> QMenu:
     return menu
 
 
+def restore_punctuation(orig: str, tr: str) -> str:
+    """
+    Восстанавливает и сохраняет пунктуацию оригинала (восклицательные/вопросительные знаки,
+    двоеточия, многоточия, точки, запятые, кавычки, диалоговые тире),
+    предотвращая их потерю сетевым переводчиком.
+    """
+    orig = orig.strip()
+    tr = tr.strip()
+    if not orig or not tr:
+        return tr
+
+    # Диалоговые тире
+    if orig.startswith("- ") and not tr.startswith("- "):
+        tr = "- " + tr
+    elif orig.startswith("— ") and not tr.startswith("— "):
+        tr = "— " + tr
+
+    # Кавычки
+    if (orig.startswith('"') and orig.endswith('"')) and not (tr.startswith('"') and tr.endswith('"')):
+        tr = f'"{tr}"'
+    elif (orig.startswith('«') and orig.endswith('»')) and not (tr.startswith('«') and tr.endswith('»')):
+        tr = f'«{tr}»'
+
+    # Знаки препинания в конце строки
+    for p in ["?!", "!?", "...", "…", "!", "?", ":", ";", ",", "."]:
+        if orig.endswith(p):
+            if not tr.endswith(p):
+                tr = tr.rstrip(".,!?:;") + p
+            break
+    return tr
+
+
 def extract_visual_props(crop_bgr: np.ndarray) -> dict:
     """
     Анализирует вырезку текста из экрана и определяет:
     - color_rgb: кортеж (r, g, b) оригинального цвета текста
+    - bg_color_rgb: кортеж (r, g, b) фонового цвета
     - is_bold: логический флаг жирности начертания
+    - is_italic: логический флаг курсива
     - font_family: семейство шрифта ('Segoe UI', 'Trebuchet MS', 'Impact', 'Arial Black')
     """
     import cv2
     if crop_bgr is None or crop_bgr.size == 0 or crop_bgr.shape[0] < 4 or crop_bgr.shape[1] < 4:
-        return {"color_rgb": (248, 250, 252), "is_bold": False, "font_family": "Segoe UI"}
+        return {
+            "color_rgb": (248, 250, 252),
+            "bg_color_rgb": (15, 23, 42),
+            "is_bold": True,
+            "is_italic": False,
+            "font_family": "Segoe UI"
+        }
 
     try:
         h, w = crop_bgr.shape[:2]
+        # Оценка фона по внешним пикселям границы вырезки
+        top = crop_bgr[0, :]
+        bot = crop_bgr[-1, :]
+        left = crop_bgr[:, 0]
+        right = crop_bgr[:, -1]
+        border_bgr = np.concatenate([top, bot, left, right], axis=0)
+        bg_med_bgr = np.median(border_bgr, axis=0).astype(int)
+        bg_rgb = (int(bg_med_bgr[2]), int(bg_med_bgr[1]), int(bg_med_bgr[0]))
+        bg_lum = 0.299 * bg_rgb[0] + 0.587 * bg_rgb[1] + 0.114 * bg_rgb[2]
+
+        # Цветовое отклонение от фона
+        diff = np.linalg.norm(crop_bgr.astype(float) - bg_med_bgr.astype(float), axis=2)
+        diff_u8 = np.clip(diff, 0, 255).astype(np.uint8)
+        _, mask = cv2.threshold(diff_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
         gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-        _, mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
+        sat = hsv[:, :, 1]
 
-        # Анализ фона по краям вырезки
-        border_pixels = np.concatenate([gray[0, :], gray[-1, :], gray[:, 0], gray[:, -1]])
-        bg_val = float(np.median(border_pixels))
-
-        mean_mask_255 = float(np.mean(gray[mask == 255])) if np.any(mask == 255) else 128.0
-        is_bright_text = mean_mask_255 > bg_val
-        text_mask = (mask == 255) if is_bright_text else (mask == 0)
-
-        text_pts = float(np.count_nonzero(text_mask))
-        total_pts = float(mask.size)
-        density = text_pts / max(1.0, total_pts)
-
-        # Определение оригинального цвета текста
-        if text_pts >= 4:
-            bgr_median = np.median(crop_bgr[text_mask], axis=0).astype(int)
-            color_rgb = (int(bgr_median[2]), int(bgr_median[1]), int(bgr_median[0]))
+        # Фильтр пикселей текста с отсевом возможной тёмной обводки
+        candidate_mask = (mask == 255)
+        if bg_lum < 128:
+            core_mask = candidate_mask & ((gray > bg_lum + 20) | (sat > 50))
         else:
-            color_rgb = (248, 250, 252)
+            core_mask = candidate_mask & ((gray < bg_lum - 20) | (sat > 50))
 
-        # Определение жирности и гарнитуры
-        is_bold = (density > 0.25) or (h >= 26 and density > 0.20)
-        if h >= 32 and is_bold:
+        if np.count_nonzero(core_mask) < 6:
+            core_mask = candidate_mask
+
+        if np.count_nonzero(core_mask) >= 4:
+            core_sat = sat[core_mask]
+            if np.median(core_sat) > 40:
+                # Насыщенный цветной текст (желтый, зеленый, красный, циан)
+                high_sat_mask = core_mask & (sat >= np.percentile(core_sat, 50))
+                pts_bgr = np.median(crop_bgr[high_sat_mask], axis=0).astype(int)
+            else:
+                # Нейтральный текст (белый, серый, темный): берем наиболее контрастные пиксели
+                if bg_lum < 128:
+                    high_val_mask = core_mask & (gray >= np.percentile(gray[core_mask], 50))
+                else:
+                    high_val_mask = core_mask & (gray <= np.percentile(gray[core_mask], 50))
+                pts_bgr = np.median(crop_bgr[high_val_mask], axis=0).astype(int)
+            color_rgb = (int(pts_bgr[2]), int(pts_bgr[1]), int(pts_bgr[0]))
+        else:
+            color_rgb = (248, 250, 252) if bg_lum < 128 else (20, 20, 20)
+
+        # Анализ плотности штриха и гарнитуры
+        text_density = float(np.count_nonzero(core_mask)) / float(max(1, h * w))
+        is_bold = (text_density > 0.22) or (h >= 24 and text_density > 0.18)
+
+        if h >= 28 and text_density > 0.32:
+            font_family = "Impact"
+        elif h >= 30 and is_bold:
             font_family = "Trebuchet MS"
-        elif density > 0.32:
-            font_family = "Arial Black"
+        elif is_bold:
+            font_family = "Segoe UI"
         else:
             font_family = "Segoe UI"
 
         return {
             "color_rgb": color_rgb,
+            "bg_color_rgb": bg_rgb,
             "is_bold": is_bold,
+            "is_italic": False,
             "font_family": font_family
         }
     except Exception:
-        return {"color_rgb": (248, 250, 252), "is_bold": False, "font_family": "Segoe UI"}
+        return {
+            "color_rgb": (248, 250, 252),
+            "bg_color_rgb": (15, 23, 42),
+            "is_bold": True,
+            "is_italic": False,
+            "font_family": "Segoe UI"
+        }
 
 
 def group_multiline_blocks(raw_blocks: list[dict]) -> list[dict]:
@@ -308,6 +383,7 @@ class TranslationScannerWorker(QThread):
             if mode == "hud":
                 # В режиме субтитров HUD переводим только общий текст одним быстрым вызовом (~50-150 мс)
                 translated_full = translate_text(full_text, source_lang=src, target_lang=tgt)
+                translated_full = restore_punctuation(full_text, translated_full)
                 self.translation_ready.emit(full_text, translated_full, [])
             else:
                 # В режиме In-place собираем все непустые блоки и переводим ПАКЕТОМ за 1 сетевой запрос
@@ -326,20 +402,33 @@ class TranslationScannerWorker(QThread):
 
                 translated_blocks = []
                 f_h, f_w = frame_bgr.shape[:2]
-                for b, b_tr in zip(valid_blocks, translated_list):
-                    bx = int(max(0, min(f_w - 2, b.get("x", 0))))
-                    by = int(max(0, min(f_h - 2, b.get("y", 0))))
-                    bw = int(max(10, min(f_w - bx, b.get("width", 50))))
-                    bh = int(max(10, min(f_h - by, b.get("height", 20))))
+                to_log_x = float(rw) / float(f_w)
+                to_log_y = float(rh) / float(f_h)
 
-                    crop = frame_bgr[by:by+bh, bx:bx+bw]
+                for b, b_tr_raw in zip(valid_blocks, translated_list):
+                    b_orig = b.get("text", "").strip()
+                    b_tr = restore_punctuation(b_orig, b_tr_raw)
+
+                    # Физические координаты для вырезки в frame_bgr
+                    crop_x = int(max(0, min(f_w - 2, b.get("x", 0))))
+                    crop_y = int(max(0, min(f_h - 2, b.get("y", 0))))
+                    crop_w = int(max(10, min(f_w - crop_x, b.get("width", 50))))
+                    crop_h = int(max(10, min(f_h - crop_y, b.get("height", 20))))
+
+                    crop = frame_bgr[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
                     visual = extract_visual_props(crop)
+
+                    # Логические экранные координаты виджета (DPI-aware)
+                    bx = float(b.get("x", 0)) * to_log_x
+                    by = float(b.get("y", 0)) * to_log_y
+                    bw = float(b.get("width", 50)) * to_log_x
+                    bh = float(b.get("height", 20)) * to_log_y
 
                     lines_cnt = max(1, b.get("lines_count", 1))
                     single_line_h = float(bh) / float(lines_cnt)
 
                     translated_blocks.append({
-                        "original": b.get("text", "").strip(),
+                        "original": b_orig,
                         "translated": b_tr,
                         "x": bx,
                         "y": by,
@@ -348,11 +437,13 @@ class TranslationScannerWorker(QThread):
                         "lines_count": lines_cnt,
                         "line_height": single_line_h,
                         "color_rgb": visual["color_rgb"],
+                        "bg_color_rgb": visual.get("bg_color_rgb", (15, 23, 42)),
                         "is_bold": visual["is_bold"],
+                        "is_italic": visual.get("is_italic", False),
                         "font_family": visual["font_family"]
                     })
 
-                translated_full = " ".join(translated_list) if translated_list else translate_text(full_text, source_lang=src, target_lang=tgt)
+                translated_full = " ".join(item["translated"] for item in translated_blocks) if translated_blocks else restore_punctuation(full_text, translate_text(full_text, source_lang=src, target_lang=tgt))
                 self.translation_ready.emit(full_text, translated_full, translated_blocks)
 
             self.msleep(interval)
@@ -1544,65 +1635,77 @@ class TranslationFrameWindow(QWidget):
                 if self.hud_font_size > 0:
                     base_pixel_size = self.hud_font_size
                 else:
-                    base_pixel_size = max(10, min(24, int(round(line_h * 0.70))))
+                    base_pixel_size = max(11, int(round(line_h * 0.95)))
 
                 if self.match_font_family:
                     family = item.get("font_family", "Segoe UI")
                     is_bold = item.get("is_bold", True)
+                    is_italic = item.get("is_italic", False)
                     weight = QFont.Weight.Bold if is_bold else QFont.Weight.DemiBold
                 else:
                     family = "Segoe UI"
                     weight = QFont.Weight.DemiBold
-
-                max_avail_w = max(40.0, float(w - bx - 8))
+                    is_italic = False
 
                 font = QFont(family, 10, weight)
                 font.setPixelSize(base_pixel_size)
+                font.setItalic(is_italic)
                 fm = QFontMetrics(font)
 
-                text_w = fm.horizontalAdvance(txt)
-                if lines_cnt > 1:
-                    preferred_w = min(max_avail_w, max(float(bw * 1.15), 100.0))
+                text_w = float(fm.horizontalAdvance(txt))
+                orig_cx = bx + bw / 2.0
+                orig_cy = by + bh / 2.0
+
+                if lines_cnt == 1:
+                    # Однострочный текст: небольшой запас по горизонтали для русского перевода
+                    eff_w = max(bw, text_w + 10.0)
+                    eff_h = max(bh, float(fm.height() + 2.0))
                 else:
-                    preferred_w = min(max_avail_w, max(float(bw), float(text_w + 12)))
-                eff_w = min(max_avail_w, preferred_w)
+                    # Многострочный смысловой блок
+                    target_w = max(bw, min(float(w - 16.0), max(bw * 1.15, text_w / float(lines_cnt) + 24.0)))
+                    calc_rect = fm.boundingRect(
+                        QRect(0, 0, int(target_w), 9999),
+                        int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap),
+                        txt
+                    )
+                    eff_w = max(bw, float(calc_rect.width() + 10.0))
+                    eff_h = max(bh, float(calc_rect.height() + 6.0))
 
-                cur_pixel_size = base_pixel_size
-                if lines_cnt == 1 and text_w > eff_w and self.hud_font_size == 0:
-                    scale = eff_w / max(1.0, float(text_w))
-                    cur_pixel_size = max(9, int(round(base_pixel_size * max(0.72, scale))))
-                    font.setPixelSize(cur_pixel_size)
-                    fm = QFontMetrics(font)
+                eff_w = min(float(w - 8.0), eff_w)
+                eff_h = min(float(h - 8.0), eff_h)
 
-                calc_rect = fm.boundingRect(
-                    QRect(0, 0, int(eff_w), 9999),
-                    int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap),
-                    txt
-                )
-                eff_h = max(bh, float(calc_rect.height() + 4))
+                draw_x = max(2.0, min(float(w - eff_w - 4.0), orig_cx - eff_w / 2.0))
+                draw_y = max(2.0, min(float(h - eff_h - 4.0), orig_cy - eff_h / 2.0))
 
-                if by + eff_h > h - 4:
-                    by = max(2.0, float(h - eff_h - 4))
-
-                painter.setFont(font)
-
-                pad_x = 4.0
-                pad_y = 2.0
-                bg_rect = QRectF(bx - pad_x, by - pad_y, eff_w + pad_x * 2, eff_h + pad_y * 2)
+                bg_rect = QRectF(draw_x, draw_y, eff_w, eff_h)
 
                 if self.bg_opacity > 0.05:
-                    painter.setBrush(QColor(r, g, b, alpha))
+                    if self.match_text_color and "bg_color_rgb" in item:
+                        br, bg, bb = item["bg_color_rgb"]
+                    else:
+                        br, bg, bb = r, g, b
+                    painter.setBrush(QColor(br, bg, bb, alpha))
                     painter.setPen(QPen(QColor(59, 130, 246, min(200, alpha + 30)), 1.0))
                     painter.drawRoundedRect(bg_rect, 4.0, 4.0)
 
                 if self.match_text_color and "color_rgb" in item:
                     cr, cg, cb = item["color_rgb"]
-                    text_color = QColor(cr, cg, cb)
+                    # Обеспечиваем гарантированную читаемость текста на фоне
+                    t_lum = 0.299 * cr + 0.587 * cg + 0.114 * cb
+                    b_lum = 0.299 * br + 0.587 * bg + 0.114 * bb
+                    if abs(t_lum - b_lum) < 45:
+                        text_color = QColor(255, 255, 255) if b_lum < 128 else QColor(15, 23, 42)
+                    else:
+                        text_color = QColor(cr, cg, cb)
                 else:
                     text_color = QColor(248, 250, 252)
 
+                painter.setFont(font)
                 painter.setPen(text_color)
-                painter.drawText(bg_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, txt)
+                if lines_cnt == 1:
+                    painter.drawText(bg_rect, Qt.AlignmentFlag.AlignCenter, txt)
+                else:
+                    painter.drawText(bg_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, txt)
 
     def showEvent(self, event):
         super().showEvent(event)
