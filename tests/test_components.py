@@ -4580,6 +4580,38 @@ def test_translation_frame_and_translator():
     assert grouped[0]["text"] == "What's your favorite talk show host?"
     assert grouped[0]["lines_count"] == 2
 
+    # Проверка объединения при большем реалистичном межстрочном интервале субтитров (gap 16-20 px)
+    raw_subtitles = [
+        {"text": "What is your favorite", "x": 100, "y": 150, "width": 250, "height": 24},
+        {"text": "talk show host?", "x": 100, "y": 190, "width": 200, "height": 24}
+    ]
+    sub_grouped = group_multiline_blocks(raw_subtitles)
+    assert len(sub_grouped) == 1
+    assert sub_grouped[0]["text"] == "What is your favorite talk show host?"
+    assert sub_grouped[0]["lines_count"] == 2
+
+    # Проверка _layout_text_block (адаптивная подгонка размера шрифта под оригинал)
+    from PyQt6.QtGui import QFont
+    f_1l, w_1l, h_1l, mult_1l = frame_win._layout_text_block(
+        "Привет", "Segoe UI", QFont.Weight.DemiBold, False,
+        ideal_ps=16, bw=100, bh=24, lines_cnt=1, line_h=24,
+        max_frame_w=500, max_frame_h=200
+    )
+    assert not mult_1l
+    assert f_1l.pixelSize() == 16
+    assert w_1l < 200
+
+    # Проверка переноса длинного предложения без сжатия в нечитаемый шрифт
+    f_wl, w_wl, h_wl, mult_wl = frame_win._layout_text_block(
+        "Вы действительно хотите навсегда удалить этот выбранный файл?",
+        "Segoe UI", QFont.Weight.DemiBold, False,
+        ideal_ps=16, bw=200, bh=24, lines_cnt=1, line_h=24,
+        max_frame_w=500, max_frame_h=200
+    )
+    assert mult_wl
+    assert f_wl.pixelSize() >= 12  # Сохраняет читаемый размер шрифта оригинала, а не сжимает до 8 px
+    assert w_wl <= 500
+
     # Переключение режимов (HUD vs In-place)
     frame_win._toggle_display_mode()
     assert frame_win.current_mode == "hud"

@@ -236,16 +236,16 @@ def group_multiline_blocks(raw_blocks: list[dict]) -> list[dict]:
         is_subsequent_line = False
         # 1. Если предыдущая строка заканчивается точкой, вопросительным/восклицательным знаком или двоеточием —
         # это законченное предложение или отдельный пункт, его нельзя объединять со следующей строкой!
-        if not prev_txt.endswith((".", "!", "?", ":", ";")):
-            # 2. Одинаковый или близкий размер шрифта (в пределах 40%)
-            if abs(prev_lh - bh) <= max(6.0, prev_lh * 0.40):
+        if not prev_txt.rstrip().endswith((".", "!", "?", ":", ";", "…", "—", "-")):
+            # 2. Одинаковый или близкий размер шрифта (в пределах 50%)
+            if abs(prev_lh - bh) <= max(8.0, prev_lh * 0.50):
                 # 3. Строка находится прямо под предыдущей (межстрочный интервал субтитров/абзаца, а не расстояние между кнопками)
-                if -6.0 <= gap_y <= max(8.0, prev_lh * 0.55):
-                    h_overlap = (bx < (prev["x"] + prev["width"])) and ((bx + bw) > prev["x"])
-                    left_aligned = abs(bx - prev["x"]) < 30.0
+                if -8.0 <= gap_y <= max(20.0, prev_lh * 1.35):
+                    h_overlap = (bx < (prev["x"] + prev["width"] + 15.0)) and ((bx + bw) > (prev["x"] - 15.0))
+                    left_aligned = abs(bx - prev["x"]) < max(35.0, prev["width"] * 0.25)
                     prev_center = prev["x"] + prev["width"] / 2.0
                     curr_center = bx + bw / 2.0
-                    center_aligned = abs(curr_center - prev_center) < 40.0
+                    center_aligned = abs(curr_center - prev_center) < max(45.0, prev["width"] * 0.25)
                     if h_overlap or left_aligned or center_aligned:
                         is_subsequent_line = True
 
@@ -1592,6 +1592,78 @@ class TranslationFrameWindow(QWidget):
     # ------------------ Отрисовка рамки и In-place текста ------------------
 
     @staticmethod
+    def _layout_text_block(
+        text: str,
+        family: str,
+        weight: QFont.Weight,
+        is_italic: bool,
+        ideal_ps: int,
+        bw: float,
+        bh: float,
+        lines_cnt: int,
+        line_h: float,
+        max_frame_w: float,
+        max_frame_h: float
+    ) -> tuple[QFont, float, float, bool]:
+        """
+        Интеллектуальный расчет шрифта и габаритов перевода:
+        1. Если оригинал был в 1 строку и перевод помещается в 1 строку (с расширением до 25%)
+           при целевом кегле оригинала — отображаем на 1 строке без сжатия шрифта.
+        2. Если текст не помещается на 1 строке или оригинал многострочный — аккуратно переносим по словам (word wrap),
+           сохраняя кегль оригинала (допустимо уменьшение максимум на 25-30% от идеала, но никогда до крошечных 8 px).
+        3. Возвращает (QFont, eff_w, eff_h, is_multiline).
+        """
+        # 1. Пробуем уместить на 1 строке, если исходный текст был 1 строка
+        if lines_cnt == 1:
+            f = QFont(family, 10, weight)
+            f.setPixelSize(ideal_ps)
+            f.setItalic(is_italic)
+            fm = QFontMetrics(f)
+            adv = float(fm.horizontalAdvance(text))
+            fh = float(fm.height())
+            target_1line_w = max(bw, min(max_frame_w, max(bw * 1.25, bw + 24.0)))
+            if adv <= target_1line_w and fh <= max_frame_h:
+                eff_w = min(max_frame_w, adv + 12.0)
+                eff_h = min(max_frame_h, max(bh, fh + 6.0))
+                return f, eff_w, eff_h, False
+
+        # 2. Многострочный режим переноса по словам
+        min_ps = max(9, int(round(ideal_ps * 0.70)))
+        wrap_w = min(max_frame_w, max(bw * 1.25, bw + 24.0, 110.0))
+        allowed_h = min(max_frame_h, max(bh * 1.35 + 10.0, float(lines_cnt + 1) * (line_h * 1.35) + 8.0))
+
+        flags = int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap)
+        best_f = None
+        best_w = wrap_w
+        best_h = allowed_h
+
+        for ps in range(ideal_ps, min_ps - 1, -1):
+            f = QFont(family, 10, weight)
+            f.setPixelSize(ps)
+            f.setItalic(is_italic)
+            fm = QFontMetrics(f)
+            r = fm.boundingRect(QRect(0, 0, int(wrap_w), 9999), flags, text)
+            if r.height() <= allowed_h and r.width() <= wrap_w:
+                best_f = f
+                cand_w = min(wrap_w, max(bw, float(r.width()) + 14.0))
+                r_check = fm.boundingRect(QRect(0, 0, int(cand_w), 9999), flags, text)
+                best_w = cand_w
+                best_h = min(allowed_h, max(bh, float(r_check.height()) + 8.0))
+                break
+
+        if best_f is None:
+            best_f = QFont(family, 10, weight)
+            best_f.setPixelSize(min_ps)
+            best_f.setItalic(is_italic)
+            fm = QFontMetrics(best_f)
+            r = fm.boundingRect(QRect(0, 0, int(wrap_w), 9999), flags, text)
+            best_w = min(max_frame_w, max(bw, float(r.width()) + 14.0))
+            r_check = fm.boundingRect(QRect(0, 0, int(best_w), 9999), flags, text)
+            best_h = min(max_frame_h, max(bh, float(r_check.height()) + 8.0))
+
+        return best_f, best_w, best_h, True
+
+    @staticmethod
     def _fit_font_to_box(
         text: str,
         family: str,
@@ -1608,7 +1680,6 @@ class TranslationFrameWindow(QWidget):
         high = max(min_ps, ideal_ps)
         best_ps = min_ps
 
-        # Бинарный поиск оптимального размера шрифта, чтобы текст гарантированно помещался в отведенную область
         while low <= high:
             mid = (low + high) // 2
             f = QFont(family, 10, weight)
@@ -1716,31 +1787,19 @@ class TranslationFrameWindow(QWidget):
                     weight = QFont.Weight.DemiBold
                     is_italic = False
 
-                is_multiline = (lines_cnt > 1)
-
-                if is_multiline:
-                    target_w = min(max_frame_w, max(bw * 1.15, bw + 16.0))
-                    target_h = min(max_frame_h, max(bh * 1.25, bh + 12.0))
-                else:
-                    target_w = min(max_frame_w, max(bw * 1.25, bw + 20.0))
-                    target_h = min(max_frame_h, max(bh * 1.25, bh + 8.0))
-
-                # Автоматическая адаптивная подгонка размера шрифта под блок и рамку
-                font, fm, tw, th = self._fit_font_to_box(
+                # Интеллектуальная компоновка и подбор кегля перевода
+                font, eff_w, eff_h, is_multiline = self._layout_text_block(
                     txt, family, weight, is_italic,
-                    max_w=target_w, max_h=target_h,
-                    ideal_ps=ideal_ps, is_multiline=is_multiline,
-                    min_ps=8
+                    ideal_ps=ideal_ps, bw=bw, bh=bh,
+                    lines_cnt=lines_cnt, line_h=line_h,
+                    max_frame_w=max_frame_w, max_frame_h=max_frame_h
                 )
-
-                eff_w = min(max_frame_w, tw + 8.0)
-                eff_h = min(max_frame_h, th + 4.0)
 
                 orig_cx = bx + bw / 2.0
                 orig_cy = by + bh / 2.0
 
-                draw_x = max(2.0, min(float(w - eff_w - 4.0), orig_cx - eff_w / 2.0))
-                draw_y = max(2.0, min(float(h - eff_h - 4.0), orig_cy - eff_h / 2.0))
+                draw_x = max(2.0, min(float(w - eff_w - 2.0), orig_cx - eff_w / 2.0))
+                draw_y = max(2.0, min(float(h - eff_h - 2.0), orig_cy - eff_h / 2.0))
 
                 bg_rect = QRectF(draw_x, draw_y, eff_w, eff_h)
 
@@ -1750,7 +1809,7 @@ class TranslationFrameWindow(QWidget):
                     else:
                         br, bg, bb = r, g, b
                     painter.setBrush(QColor(br, bg, bb, alpha))
-                    painter.setPen(QPen(QColor(59, 130, 246, min(200, alpha + 30)), 1.0))
+                    painter.setPen(Qt.PenStyle.NoPen)
                     painter.drawRoundedRect(bg_rect, 4.0, 4.0)
 
                 if self.match_text_color and "color_rgb" in item:
