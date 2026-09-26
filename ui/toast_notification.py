@@ -88,7 +88,15 @@ class ToastNotification(QWidget):
         self.thumbnail_pixmap = thumbnail_pixmap
         self.target_path = target_path
         self.copy_data = copy_data
-        self.timeout_ms = timeout
+        if timeout is None:
+            try:
+                from config import ConfigManager
+                cfg = ConfigManager.get_instance().config
+                self.timeout_ms = int(getattr(cfg, "notification_duration_seconds", 4)) * 1000
+            except Exception:
+                self.timeout_ms = 4000
+        else:
+            self.timeout_ms = timeout
         self.is_closing = False
         self._target_pos = QPoint()
 
@@ -405,13 +413,22 @@ class ToastManager(QObject):
         self,
         title: str,
         message: str,
-        icon_name: str = "camera",
+        icon_name: str = "info",
         thumbnail_pixmap: QPixmap = None,
         target_path: str = None,
         copy_data = None,
-        timeout: int = 4000
+        timeout: int = None,
+        sound_type: str = None
     ):
         """Создает и отображает всплывающее уведомление над системным треем."""
+        if timeout is None:
+            try:
+                from config import ConfigManager
+                cfg = ConfigManager.get_instance().config
+                timeout = int(getattr(cfg, "notification_duration_seconds", 4)) * 1000
+            except Exception:
+                timeout = 4000
+
         toast = ToastNotification(
             title=title,
             message=message,
@@ -436,9 +453,12 @@ class ToastManager(QObject):
             from config import ConfigManager
             cfg = ConfigManager.get_instance().config
             if getattr(cfg, "play_sound", True):
-                if icon_name != "camera":
+                if sound_type == "notification" or (sound_type is None and icon_name != "camera"):
                     from utils.sound import play_notification_sound
                     play_notification_sound()
+                elif sound_type == "capture":
+                    from utils.sound import play_capture_sound
+                    play_capture_sound()
         except Exception:
             pass
 

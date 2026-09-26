@@ -89,6 +89,7 @@ class AppConfig:
     quick_drag_ocr_hotkey: str = DEFAULT_HOTKEY_QUICK_DRAG_OCR
     quick_drag_ocr_lang: str = "auto"          # auto, ru, en, etc.
     custom_notifications: bool = True          # Стилизованные компактные уведомления Framio над треем
+    notification_duration_seconds: int = 4     # Время показа всплывающего уведомления в секундах
     
     # Видео настройки
     video_fps: int = 30

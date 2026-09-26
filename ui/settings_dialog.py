@@ -1398,6 +1398,19 @@ class SettingsDialog(QDialog):
         self.chk_custom_notif.setChecked(getattr(self.cfg, "custom_notifications", True))
         card_auto.add_row(tr("settings_notif_row", "Всплывающие уведомления:"), tr("settings_custom_notif_desc", "Показывать стильные карточки Framio с превью и кнопками над системным треем вместо стандартных уведомлений Windows"), self.chk_custom_notif)
 
+        self.spin_notif_duration = QSpinBox()
+        self.spin_notif_duration.setRange(1, 30)
+        self.spin_notif_duration.setValue(getattr(self.cfg, "notification_duration_seconds", 4))
+        self.spin_notif_duration.setSuffix(f" {tr('settings_seconds_short', 'сек')}")
+        self.spin_notif_duration.setFixedWidth(110)
+        self.spin_notif_duration.setEnabled(self.chk_custom_notif.isChecked())
+        self.chk_custom_notif.toggled.connect(self.spin_notif_duration.setEnabled)
+        card_auto.add_row(
+            tr("settings_notif_duration_row", "Длительность показа:"),
+            tr("settings_notif_duration_desc", "Время в секундах, в течение которого карточка уведомления остается на экране"),
+            self.spin_notif_duration
+        )
+
         self.chk_open_folder = QCheckBox(tr("settings_open_folder", "Открывать папку с файлом после сохранения"))
         self.chk_open_folder.setChecked(getattr(self.cfg, "open_folder_after_save", False))
         card_auto.add_row(tr("settings_folder_row", "Проводник"), tr("settings_open_folder_desc", "Показывать созданный файл в проводнике Windows"), self.chk_open_folder)
@@ -1603,6 +1616,8 @@ class SettingsDialog(QDialog):
         self.cfg.play_sound = self.chk_sound.isChecked()
         if hasattr(self, "chk_custom_notif"):
             self.cfg.custom_notifications = self.chk_custom_notif.isChecked()
+        if hasattr(self, "spin_notif_duration"):
+            self.cfg.notification_duration_seconds = self.spin_notif_duration.value()
         self.cfg.open_folder_after_save = self.chk_open_folder.isChecked()
         self.cfg.autostart = self.chk_autostart.isChecked()
         set_windows_autostart(self.cfg.autostart)

@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.21] - 2026-09-27
+
+### English
+
+- **Tactile Soft Sound (11_Tactile_Soft_Silent)**: Integrated a refined, dampened mechanical tactile click sound across all screenshot and notification triggers (soft dome collapse with silicone damper feel and acoustic resonance).
+- **Notification Duration Setting**: Added a customizable display duration setting for toast notification cards (from 1 to 30 seconds) in **Settings → General, Language & Captures**.
+- **Fixed Asynchronous Audio Playback on Windows**: Fixed silent audio failures by invoking Win32 `PlaySoundW` directly with `SND_ASYNC | SND_MEMORY`, bypassing Python `winsound` memory playback limitations.
+- **Enhanced Single Instance Window Activation**: Improved secondary instance activation so that launching `Framio.exe` while it is already running immediately brings and restores the settings window to the foreground via native Windows API (`ShowWindow SW_RESTORE` + `SetForegroundWindow`).
+
+### Русский
+
+- **Тактильный мягкий звук (11_Tactile_Soft_Silent)**: Внедрён приятный приглушенный тактильный щелчок для всех звуковых событий приложения (смягченный срыв мембраны с силиконовым демпфером и теплым акустическим откликом).
+- **Настройка длительности показа уведомлений**: В раздел **Настройки → Общие, язык и снимки** добавлена регулировка времени отображения всплывающих карточек уведомлений (от 1 до 30 секунд).
+- **Исправление воспроизведения звука в Windows**: Устранена проблема тихого сбоя звуков при асинхронном воспроизведении из памяти стандартной библиотекой `winsound` путём прямого вызова функции Win32 API `PlaySoundW`.
+- **Надежное восстановление окна при повторном запуске**: Улучшена обработка повторного запуска приложения — при попытке открыть `Framio.exe`, когда оно уже работает в фоне, окно настроек теперь гарантированно восстанавливается из трея и выводится на передний план средствами Win32 API.
+
 ## [1.0.20] - 2026-09-27
 
 ### English

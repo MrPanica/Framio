@@ -230,7 +230,7 @@ class OverlayWindow(QWidget):
         self._connect_signals()
         self._hide_toolbars()
 
-    def _notify(self, title: str, message: str, icon=None, timeout: int = 4000, target_path: str = None, thumbnail_pixmap=None, copy_data=None, icon_name="camera"):
+    def _notify(self, title: str, message: str, icon=None, timeout: int = None, target_path: str = None, thumbnail_pixmap=None, copy_data=None, icon_name="camera", sound_type=None):
         """Вызывает всплывающее уведомление (кастомный тост Framio или трей Windows)."""
         app_inst = getattr(QApplication.instance(), "app_instance", None)
         if app_inst and hasattr(app_inst, "show_notification"):
@@ -239,7 +239,8 @@ class OverlayWindow(QWidget):
                 target_path=target_path,
                 thumbnail_pixmap=thumbnail_pixmap,
                 copy_data=copy_data,
-                icon_name=icon_name
+                icon_name=icon_name,
+                sound_type=sound_type
             )
 
     def _connect_signals(self):
@@ -1593,9 +1594,6 @@ class OverlayWindow(QWidget):
                     qimg = crop.toImage()
                     res = extract_text_from_image(qimg, lang=ocr_lang)
                     text = res[0] if isinstance(res, (tuple, list)) else (res or "")
-
-                    if getattr(self.cfg, "play_sound", True):
-                        play_capture_sound()
 
                     if text and isinstance(text, str) and text.strip():
                         clean_text = text.strip()
@@ -5143,8 +5141,6 @@ class OverlayWindow(QWidget):
 
         if full_text:
             QApplication.clipboard().setText(full_text)
-            if getattr(self.cfg, "play_sound", True):
-                play_capture_sound()
 
             preview = full_text[:120].replace("\n", " ").strip()
             if len(full_text) > 120:

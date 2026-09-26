@@ -18,97 +18,55 @@ _NOTIFICATION_WAV = None
 _LOCK = threading.Lock()
 
 
-def _generate_shutter_wav() -> bytes:
-    """Генерирует высококачественный механический щелчок шторки/зеркала затвора камеры."""
+def _generate_tactile_soft_silent_wav() -> bytes:
+    """Генерирует тактильный мягкий приглушенный щелчок (11_Tactile_Soft_Silent).
+    
+    Длительность 410 мс:
+    - 0..45 мс: мягкий тактильный провал мембраны (1800 -> 900 Гц)
+    - 30..200 мс: мягкий упор силиконового демпфера (310 Гц и 140 Гц)
+    - 160..390 мс: бархатное акустическое затухание (480 Гц)
+    """
     sample_rate = 44100
-    duration = 0.17  # 170 мс
-    num_samples = int(sample_rate * duration)
-
-    rng = random.Random(1337)
-    samples = []
-
-    for i in range(num_samples):
+    dur = 0.41
+    n = int(sample_rate * dur)
+    res = [0.0] * n
+    for i in range(n):
         t = i / sample_rate
-        val = 0.0
+        if t < 0.045:
+            res[i] += math.sin(2 * math.pi * (1800 - t * 20000) * t) * 0.5 * math.exp(-t * 95)
+        # Мягкий резиновый упор
+        if 0.03 <= t < 0.20:
+            t2 = t - 0.03
+            res[i] += math.sin(2 * math.pi * 310 * t2) * 0.7 * math.exp(-t2 * 32)
+            res[i] += math.sin(2 * math.pi * 140 * t2) * 0.55 * math.exp(-t2 * 26)
+        # Бархатный отклик
+        if 0.16 <= t < 0.39:
+            t3 = t - 0.16
+            res[i] += math.sin(2 * math.pi * 480 * t3) * 0.15 * math.exp(-t3 * 22)
 
-        # Фаза 1: подъём зеркала и открытие первой шторки (0 .. 28 мс)
-        if 0.0 <= t < 0.028:
-            t1 = t
-            env1 = math.exp(-t1 * 220)
-            click1 = math.sin(2 * math.pi * (3400 - t1 * 60000) * t1) * 0.85
-            snap1 = math.sin(2 * math.pi * 1250 * t1) * 0.5
-            noise1 = (rng.random() * 2 - 1) * 0.45 * env1
-            val += (click1 + snap1 + noise1) * env1
-
-        # Фаза 2: микро-пауза и натяжение механики (22 .. 48 мс)
-        if 0.022 <= t < 0.048:
-            t_mid = t - 0.022
-            env_mid = math.sin(math.pi * t_mid / 0.026)
-            whir = (rng.random() * 2 - 1) * 0.12 * env_mid
-            val += whir
-
-        # Фаза 3: срабатывание второй шторки и удар зеркала (48 .. 165 мс)
-        if 0.048 <= t < 0.165:
-            t2 = t - 0.048
-            env2 = math.exp(-t2 * 62)
-            snap2 = math.sin(2 * math.pi * (2600 - t2 * 14000) * t2) * 0.95 * math.exp(-t2 * 180)
-            clack = math.sin(2 * math.pi * 920 * t2) * 0.6 * math.exp(-t2 * 90)
-            body = math.sin(2 * math.pi * 310 * t2) * 0.55 * math.exp(-t2 * 50)
-            sub = math.sin(2 * math.pi * 145 * t2) * 0.4 * math.exp(-t2 * 35)
-            noise2 = (rng.random() * 2 - 1) * 0.55 * math.exp(-t2 * 110)
-            val += (snap2 + clack + body + sub + noise2) * env2
-
-        val = max(-1.0, min(1.0, val * 0.92))
-        samples.append(int(val * 32767))
+    peak = max(max(abs(s) for s in res), 0.001)
+    scale = 0.92 / max(peak, 0.92)
+    int_samples = [int(max(-1.0, min(1.0, s * scale)) * 32767) for s in res]
 
     buf = io.BytesIO()
     with wave.open(buf, 'wb') as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(sample_rate)
-        raw_data = struct.pack(f'<{len(samples)}h', *samples)
+        raw_data = struct.pack(f'<{len(int_samples)}h', *int_samples)
         wf.writeframes(raw_data)
 
     return buf.getvalue()
+
+
+def _generate_shutter_wav() -> bytes:
+    """Генерирует тактильный мягкий щелчок для снимков экрана."""
+    return _generate_tactile_soft_silent_wav()
 
 
 def _generate_notification_wav() -> bytes:
-    """Генерирует стильный, мягкий и четкий двухтональный звук всплывающего уведомления."""
-    sample_rate = 44100
-    duration = 0.22  # 220 мс
-    num_samples = int(sample_rate * duration)
-    samples = []
-
-    for i in range(num_samples):
-        t = i / sample_rate
-        val = 0.0
-
-        # Нота 1: A5 (880 Гц)
-        if t < 0.14:
-            t1 = t
-            env1 = math.sin(min(1.0, t1 / 0.006) * math.pi * 0.5) * math.exp(-t1 * 26)
-            tone1 = math.sin(2 * math.pi * 880.0 * t1) + 0.25 * math.sin(2 * math.pi * 1760.0 * t1)
-            val += tone1 * env1 * 0.5
-
-        # Нота 2: E6 (1318.5 Гц)
-        if t >= 0.055:
-            t2 = t - 0.055
-            env2 = math.sin(min(1.0, t2 / 0.006) * math.pi * 0.5) * math.exp(-t2 * 20)
-            tone2 = math.sin(2 * math.pi * 1318.5 * t2) + 0.2 * math.sin(2 * math.pi * 2637.0 * t2)
-            val += tone2 * env2 * 0.65
-
-        val = max(-1.0, min(1.0, val * 0.9))
-        samples.append(int(val * 32767))
-
-    buf = io.BytesIO()
-    with wave.open(buf, 'wb') as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        raw_data = struct.pack(f'<{len(samples)}h', *samples)
-        wf.writeframes(raw_data)
-
-    return buf.getvalue()
+    """Генерирует тактильный мягкий щелчок для всплывающих уведомлений."""
+    return _generate_tactile_soft_silent_wav()
 
 
 def get_shutter_sound_bytes() -> bytes:
@@ -131,25 +89,37 @@ def get_notification_sound_bytes() -> bytes:
     return _NOTIFICATION_WAV
 
 
-def play_capture_sound():
-    """Воспроизводит реалистичный механический звук затвора фотоаппарата."""
-    if sys.platform != "win32":
+def _play_wav_bytes(data: bytes):
+    """Надёжно воспроизводит аудиоданные WAV без блокировки интерфейса и без сбоев."""
+    if sys.platform != "win32" or not data:
         return
     try:
-        import winsound
-        data = get_shutter_sound_bytes()
-        winsound.PlaySound(data, winsound.SND_MEMORY | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+        # Вызов Win32 API winmm PlaySoundW напрямую с флагами:
+        # SND_MEMORY (0x0004) | SND_ASYNC (0x0001) | SND_NODEFAULT (0x0002)
+        import ctypes
+        res = ctypes.windll.winmm.PlaySoundW(data, 0, 0x0004 | 0x0001 | 0x0002)
+        if not res:
+            raise RuntimeError("PlaySoundW returned 0")
     except Exception:
-        pass
+        try:
+            import winsound
+            import threading
+            threading.Thread(
+                target=winsound.PlaySound,
+                args=(data, winsound.SND_MEMORY),
+                daemon=True
+            ).start()
+        except Exception:
+            pass
+
+
+def play_capture_sound():
+    """Воспроизводит реалистичный механический звук затвора фотоаппарата."""
+    data = get_shutter_sound_bytes()
+    _play_wav_bytes(data)
 
 
 def play_notification_sound():
     """Воспроизводит мягкий современный звук всплывающего уведомления."""
-    if sys.platform != "win32":
-        return
-    try:
-        import winsound
-        data = get_notification_sound_bytes()
-        winsound.PlaySound(data, winsound.SND_MEMORY | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
-    except Exception:
-        pass
+    data = get_notification_sound_bytes()
+    _play_wav_bytes(data)

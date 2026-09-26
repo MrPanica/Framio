@@ -1154,7 +1154,13 @@ TRANSLATIONS = {
         "settings_qd_lang": "Язык распознавания:",
         "settings_custom_notif": "Компактные всплывающие уведомления Framio над панелью задач",
         "settings_notif_row": "Всплывающие уведомления:",
-        "settings_custom_notif_desc": "Показывать стильные карточки Framio с превью и кнопками над системным треем вместо стандартных уведомлений Windows",
+        "settings_custom_notif_desc": "Показывать стильные карточки Framio с превью и кнопками над системным треем вместо стандартных уведомлений Windows",
+
+        "settings_notif_duration_row": "Длительность показа:",
+
+        "settings_notif_duration_desc": "Время в секундах, в течение которого карточка уведомления остается на экране",
+
+        "settings_seconds_short": "сек",
         "notif_quick_screen_copied": "Скриншот скопирован в буфер",
         "notif_action_copy": "Копировать",
         "notif_action_copied": "Скопировано!",
@@ -2831,7 +2837,13 @@ TRANSLATIONS = {
         "settings_qd_lang": "OCR Language:",
         "settings_custom_notif": "Compact Framio toast notifications above the taskbar",
         "settings_notif_row": "Toast notifications:",
-        "settings_custom_notif_desc": "Show sleek Framio toast cards with preview and action buttons above the tray instead of standard Windows notifications",
+        "settings_custom_notif_desc": "Show sleek Framio toast cards with preview and action buttons above the tray instead of standard Windows notifications",
+
+        "settings_notif_duration_row": "Display duration:",
+
+        "settings_notif_duration_desc": "Time in seconds the notification card remains visible on screen",
+
+        "settings_seconds_short": "sec",
         "notif_quick_screen_copied": "Screenshot copied to clipboard",
         "notif_action_copy": "Copy",
         "notif_action_copied": "Copied!",

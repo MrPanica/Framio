@@ -4782,7 +4782,14 @@ def test_shutter_sound_and_quick_drag_and_toast():
     mgr = ToastManager.instance()
     mgr.show_toast("Manager Test", "Body Test", thumbnail_pixmap=pix)
     mgr.show_toast("Manager Test 2", "Body Test 2", thumbnail_pixmap=qimg)
+    mgr.show_toast("Sound Info Test", "Info Body", icon_name="info")
     QApplication.processEvents()
+
+    toast_dyn = ToastNotification("Dyn Title", "Dyn Message")
+    assert toast_dyn.timeout_ms >= 1000
+    toast_dyn.close()
+    toast_dyn.deleteLater()
+
     mgr.close_all()
     QApplication.processEvents()
 

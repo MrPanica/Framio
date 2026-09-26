@@ -692,14 +692,20 @@ class FramioApp(QObject):
         title: str,
         message: str,
         icon=None,
-        timeout: int = 4000,
+        timeout: int = None,
         target_path: str = None,
         thumbnail_pixmap=None,
         copy_data=None,
-        icon_name="camera"
+        icon_name="info",
+        sound_type: str = None
     ):
         if target_path:
             self._last_notification_path = str(target_path)
+
+        if timeout is None or timeout in (3000, 3500, 4000, 5000):
+            timeout_ms = int(getattr(self.cfg, "notification_duration_seconds", 4)) * 1000
+        else:
+            timeout_ms = timeout
 
         use_custom = getattr(self.cfg, "custom_notifications", True)
         if use_custom:
@@ -711,7 +717,8 @@ class FramioApp(QObject):
                 thumbnail_pixmap=thumbnail_pixmap,
                 target_path=target_path,
                 copy_data=copy_data,
-                timeout=timeout
+                timeout=timeout_ms,
+                sound_type=sound_type
             ))
             return
 
@@ -719,7 +726,7 @@ class FramioApp(QObject):
             return
         if icon is None:
             icon = QSystemTrayIcon.MessageIcon.Information
-        QTimer.singleShot(0, lambda: self.tray.showMessage(title, message, icon, timeout))
+        QTimer.singleShot(0, lambda: self.tray.showMessage(title, message, icon, timeout_ms))
 
     def _on_tray_notification_clicked(self):
         if self._last_notification_path:
@@ -756,8 +763,8 @@ class FramioApp(QObject):
                 title,
                 tr("notif_video_saved_body", filename=fname, folder=folder),
                 QSystemTrayIcon.MessageIcon.Information,
-                5000,
-                target_path=path
+                target_path=path,
+                icon_name="video"
             )
         elif path == "":
             self.show_notification(
@@ -1096,17 +1103,33 @@ class FramioApp(QObject):
         if hasattr(self, "_settings_dlg") and self._settings_dlg is not None:
             try:
                 self._settings_dlg.tabs.setCurrentIndex(initial_tab)
-                self._settings_dlg.show()
+                self._settings_dlg.showNormal()
                 self._settings_dlg.raise_()
                 self._settings_dlg.activateWindow()
+                if sys.platform == "win32":
+                    try:
+                        import ctypes
+                        hwnd = int(self._settings_dlg.winId())
+                        ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                        ctypes.windll.user32.SetForegroundWindow(hwnd)
+                    except Exception:
+                        pass
                 return
             except Exception:
                 pass
         self._settings_dlg = SettingsDialog(initial_tab=initial_tab)
         self._settings_dlg.settings_applied.connect(self._on_settings_applied)
-        self._settings_dlg.show()
+        self._settings_dlg.showNormal()
         self._settings_dlg.raise_()
         self._settings_dlg.activateWindow()
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hwnd = int(self._settings_dlg.winId())
+                ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
 
     def _on_settings_applied(self):
         self.hotkey_mgr.update_hotkeys(
