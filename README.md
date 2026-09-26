@@ -2,7 +2,7 @@
 
 Framio is a portable Windows app for taking screenshots, recording screen areas as MP4 or GIF, extracting text offline with local Windows OCR, and translating on-screen text in real-time. It can work with one area, several areas, the whole desktop, or a complete application window.
 
-The current release is `1.0.19`. See [CHANGELOG.md](CHANGELOG.md) for the release history.
+The current release is `1.0.20`. See [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## English
 
@@ -22,7 +22,7 @@ python main.py
 ### What you can capture
 
 - A rectangular area of the screen.
-- Quick mouse drag capture: hold key combination + mouse button (`Ctrl+Shift+LButton` for screenshot, `Ctrl+Alt+LButton` for OCR) to drag and instantly copy to clipboard.
+- Quick mouse drag capture (can be enabled and configured in **Settings → Hotkeys**): hold configured key combination + mouse button to drag and instantly copy a screenshot or extracted text (OCR) to clipboard.
 - Several independent areas at once.
 - All connected screens.
 - A complete application window.
@@ -103,8 +103,8 @@ Framio sends images only to the search engine you choose. Yandex Images receives
 | Action | Keys |
 | --- | --- |
 | Capture an area | `Ctrl+Shift+Print Screen` |
-| Quick screenshot drag to clipboard | `Ctrl+Shift+LButton` (drag & release) |
-| Quick text recognition drag (OCR) to clipboard | `Ctrl+Alt+LButton` (drag & release) |
+| Quick screenshot drag to clipboard | Unassigned by default (Settings → Hotkeys) |
+| Quick text recognition drag (OCR) to clipboard | Unassigned by default (Settings → Hotkeys) |
 | Quick screenshot of all screens | `Ctrl+Print Screen` |
 | Standard fullscreen screenshot to the screenshots folder | `Print Screen` |
 | Copy text from selection (OCR) | `Ctrl+T` / `Ctrl+Shift+C` |
@@ -153,7 +153,7 @@ The GitHub Actions workflow runs the tests, builds all three Windows packages, u
 
 ## Русский
 
-Текущая версия — `1.0.19`. История изменений находится в [CHANGELOG.md](CHANGELOG.md).
+Текущая версия — `1.0.20`. История изменений находится в [CHANGELOG.md](CHANGELOG.md).
 
 ### Быстрый запуск
 
@@ -171,7 +171,7 @@ python main.py
 ### Что можно захватывать
 
 - Прямоугольную область экрана.
-- Быстрый захват жестами мыши: зажмите сочетание клавиш и кнопку мыши (`Ctrl+Shift+ЛКМ` для скриншота, `Ctrl+Alt+ЛКМ` для OCR), выделите область и отпустите мышь для моментального копирования в буфер обмена.
+- Быстрый захват жестами мыши (включается и настраивается в **Настройки → Горячие клавиши**): зажмите настроенное сочетание клавиш и кнопку мыши, выделите область и отпустите мышь для моментального копирования снимка или распознанного текста (OCR) в буфер обмена.
 - Несколько независимых областей одновременно.
 - Все подключённые экраны.
 - Целое окно приложения.
@@ -252,8 +252,8 @@ Framio отправляет изображение только в выбран�
 | Действие | Клавиши |
 | --- | --- |
 | Выделить область | `Ctrl+Shift+Print Screen` |
-| Быстрый скриншот области в буфер | `Ctrl+Shift+ЛКМ` (выделение с удержанием) |
-| Быстрое распознавание текста (OCR) в буфер | `Ctrl+Alt+ЛКМ` (выделение с удержанием) |
+| Быстрый скриншот области в буфер | По умолчанию не назначено (Настройки → Горячие клавиши) |
+| Быстрое распознавание текста (OCR) в буфер | По умолчанию не назначено (Настройки → Горячие клавиши) |
 | Быстрый скриншот всех экранов | `Ctrl+Print Screen` |
 | Обычный скриншот всего экрана в папку | `Print Screen` |
 | Копировать текст из области (OCR) | `Ctrl+T` / `Ctrl+Shift+C` |

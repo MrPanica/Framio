@@ -4714,19 +4714,32 @@ def test_close_overlay_does_not_steal_focus_from_active_window():
 def test_shutter_sound_and_quick_drag_and_toast():
     """Тестирует генерацию звука затвора, парсинг/сплит жестов мыши и работу кастомных тостов."""
     print("[TEST] Проверка звука затвора, жестов мыши и всплывающих уведомлений...")
-    from utils.sound import get_shutter_sound_bytes, play_capture_sound
+    from utils.sound import get_shutter_sound_bytes, play_capture_sound, get_notification_sound_bytes, play_notification_sound
     from utils.hotkey_manager import parse_mouse_gesture_string, MOD_CONTROL, MOD_SHIFT, MOD_ALT
     from ui.settings_dialog import split_mouse_gesture, join_mouse_gesture
     from ui.toast_notification import ToastNotification, ToastManager
+    from utils.ocr_helper import _convert_to_bgr
 
-    # 1. Звук затвора
+    # 1. Звук затвора и звук уведомления
     wav_bytes = get_shutter_sound_bytes()
     assert len(wav_bytes) > 1000
     assert wav_bytes.startswith(b"RIFF")
     assert b"WAVE" in wav_bytes
     play_capture_sound()
 
+    notif_bytes = get_notification_sound_bytes()
+    assert len(notif_bytes) > 1000
+    assert notif_bytes.startswith(b"RIFF")
+    assert b"WAVE" in notif_bytes
+    play_notification_sound()
+
     # 2. Жесты мыши
+    mods_empty, btn_empty = parse_mouse_gesture_string("")
+    assert mods_empty == 0
+    assert btn_empty == ""
+    assert join_mouse_gesture("", "LButton") == ""
+    assert join_mouse_gesture("Ctrl", "") == "Ctrl+LButton"
+
     mods, btn = parse_mouse_gesture_string("Ctrl+Shift+LButton")
     assert mods == (MOD_CONTROL | MOD_SHIFT)
     assert btn == "left"
@@ -4745,7 +4758,16 @@ def test_shutter_sound_and_quick_drag_and_toast():
     assert b2 == "MButton"
     assert join_mouse_gesture(k2, b2) == "Ctrl+Alt+MButton"
 
-    # 3. Toast Notifications
+    # 3. Toast Notifications (включая передачу QImage в качестве миниатюры - защита от регрессии краша)
+    qimg = QImage(120, 80, QImage.Format.Format_ARGB32)
+    qimg.fill(QColor(0, 120, 255))
+    toast_img = ToastNotification("Img Title", "Img Message", thumbnail_pixmap=qimg, copy_data=qimg, timeout=2000)
+    toast_img.show()
+    QApplication.processEvents()
+    toast_img.close()
+    toast_img.deleteLater()
+    QApplication.processEvents()
+
     pix = QPixmap(100, 100)
     pix.fill(QColor(255, 0, 0))
     toast = ToastNotification("Test Title", "Test Message", thumbnail_pixmap=pix, copy_data="test_data", timeout=5000)
@@ -4759,10 +4781,17 @@ def test_shutter_sound_and_quick_drag_and_toast():
 
     mgr = ToastManager.instance()
     mgr.show_toast("Manager Test", "Body Test", thumbnail_pixmap=pix)
+    mgr.show_toast("Manager Test 2", "Body Test 2", thumbnail_pixmap=qimg)
     QApplication.processEvents()
     mgr.close_all()
     QApplication.processEvents()
-    print("  -> Звук затвора, жесты мыши и тост-уведомления работают корректно.")
+
+    # 4. OCR helper конвертер с QImage и QPixmap
+    bgr1 = _convert_to_bgr(qimg)
+    assert bgr1 is not None and bgr1.shape[:2] == (80, 120)
+    bgr2 = _convert_to_bgr(pix)
+    assert bgr2 is not None and bgr2.shape[:2] == (100, 100)
+    print("  -> Звук затвора, звук уведомления, жесты мыши, OCR-конвертер и тост-уведомления работают корректно.")
 
 
 if __name__ == "__main__":

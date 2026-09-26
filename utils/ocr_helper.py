@@ -60,16 +60,33 @@ def get_available_ocr_languages() -> list[dict]:
     return languages
 
 
-def _convert_to_bgr(image: Union["QImage", np.ndarray]) -> Optional[np.ndarray]:
-    """Конвертирует QImage или numpy-массив в стандартный 3-канальный BGR numpy-массив."""
+def _convert_to_bgr(image: Union["QImage", np.ndarray, object]) -> Optional[np.ndarray]:
+    """Конвертирует QImage, QPixmap, PIL Image или numpy-массив в стандартный 3-канальный BGR numpy-массив."""
     if image is None:
         return None
+
+    # Поддержка QPixmap
+    if hasattr(image, "toImage"):
+        try:
+            image = image.toImage()
+        except Exception:
+            pass
 
     if QImage is not None and isinstance(image, QImage):
         if image.isNull() or image.width() <= 0 or image.height() <= 0:
             return None
         from utils.screen_lock import qimage_to_cv2_bgr
         return qimage_to_cv2_bgr(image)
+
+    # Поддержка PIL Image
+    if hasattr(image, "convert") and hasattr(image, "mode"):
+        try:
+            rgb = np.array(image.convert("RGB"))
+            if cv2 is not None:
+                return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            return rgb[:, :, ::-1]
+        except Exception:
+            pass
 
     if isinstance(image, np.ndarray):
         if image.size == 0 or len(image.shape) < 2:

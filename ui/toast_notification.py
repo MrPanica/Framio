@@ -206,33 +206,39 @@ class ToastNotification(QWidget):
         self.adjustSize()
 
     def _setup_icon(self):
-        if self.thumbnail_pixmap and not self.thumbnail_pixmap.isNull():
-            # Отрисовываем аккуратное превью со скруглением
-            size = 44
-            scaled = self.thumbnail_pixmap.scaled(
-                size, size,
-                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            # Обрезаем по центру
-            rx = max(0, (scaled.width() - size) // 2)
-            ry = max(0, (scaled.height() - size) // 2)
-            cropped = scaled.copy(rx, ry, size, size)
+        try:
+            if self.thumbnail_pixmap is not None and not self.thumbnail_pixmap.isNull():
+                pm = self.thumbnail_pixmap
+                if isinstance(pm, QImage):
+                    pm = QPixmap.fromImage(pm)
+                size = 44
+                scaled = pm.scaled(
+                    size, size,
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                rx = max(0, (scaled.width() - size) // 2)
+                ry = max(0, (scaled.height() - size) // 2)
+                cropped = scaled.copy(rx, ry, size, size)
 
-            rounded = QPixmap(size, size)
-            rounded.fill(Qt.GlobalColor.transparent)
-            painter = QPainter(rounded)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            path = QPainterPath()
-            path.addRoundedRect(0, 0, size, size, 8, 8)
-            painter.setClipPath(path)
-            painter.drawPixmap(0, 0, cropped)
-            painter.setPen(QColor(255, 255, 255, 40))
-            painter.drawRoundedRect(0, 0, size - 1, size - 1, 8, 8)
-            painter.end()
+                rounded = QPixmap(size, size)
+                rounded.fill(Qt.GlobalColor.transparent)
+                painter = QPainter(rounded)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                path = QPainterPath()
+                path.addRoundedRect(0, 0, size, size, 8, 8)
+                painter.setClipPath(path)
+                painter.drawPixmap(0, 0, cropped)
+                painter.setPen(QColor(255, 255, 255, 40))
+                painter.drawRoundedRect(0, 0, size - 1, size - 1, 8, 8)
+                painter.end()
 
-            self.icon_label.setPixmap(rounded)
-        else:
+                self.icon_label.setPixmap(rounded)
+                return
+        except Exception as e:
+            pass
+
+        try:
             # Векторная иконка в стильной подложке
             size = 44
             pix = QPixmap(size, size)
@@ -249,14 +255,21 @@ class ToastNotification(QWidget):
             painter.end()
 
             self.icon_label.setPixmap(pix)
+        except Exception as e:
+            pass
 
     def _copy_again(self):
-        clipboard = QApplication.clipboard()
-        if isinstance(self.copy_data, str):
-            clipboard.setText(self.copy_data)
-        elif isinstance(self.copy_data, QPixmap):
-            clipboard.setPixmap(self.copy_data)
-        elif isinstance(self.copy_data, Path) or (isinstance(self.copy_data, str) and Path(self.copy_data).exists()):
+        try:
+            clipboard = QApplication.clipboard()
+            if isinstance(self.copy_data, str):
+                clipboard.setText(self.copy_data)
+            elif isinstance(self.copy_data, QPixmap):
+                clipboard.setPixmap(self.copy_data)
+            elif isinstance(self.copy_data, QImage):
+                clipboard.setImage(self.copy_data)
+            elif isinstance(self.copy_data, Path) or (isinstance(self.copy_data, str) and Path(self.copy_data).exists()):
+                pass
+        except Exception:
             pass
         # Визуальный отклик
         sender = self.sender()
@@ -417,6 +430,17 @@ class ToastManager(QObject):
 
         self.active_toasts.append(toast)
         self._reposition_toasts()
+
+        # Воспроизведение звука уведомления
+        try:
+            from config import ConfigManager
+            cfg = ConfigManager.get_instance().config
+            if getattr(cfg, "play_sound", True):
+                if icon_name != "camera":
+                    from utils.sound import play_notification_sound
+                    play_notification_sound()
+        except Exception:
+            pass
 
     def _reposition_toasts(self):
         screen = QGuiApplication.primaryScreen()

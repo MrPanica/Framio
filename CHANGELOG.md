@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.20] - 2026-09-27
+
+### English
+
+- **Crash Fix on Clipboard Copy**: Resolved an application crash (`TypeError: drawPixmap argument 3 has unexpected type 'QImage'`) when copying screenshots to the clipboard via the toolbar or hotkey with toast notifications enabled.
+- **Fixed Quick Drag OCR**: Fixed an issue where the Quick Drag OCR gesture selected an area but failed to extract or copy text upon releasing the mouse button due to an unhandled tuple return type.
+- **New Notification Sound**: Added a dedicated, pleasant two-tone synthesized notification chime for toast popups, keeping the authentic DSLR shutter click exclusively for screen capture actions.
+- **Quick Drag Gestures Unassigned by Default**: Quick Drag Screenshot and Quick Drag OCR are now unassigned by default (`""`), preventing unexpected captures until explicitly configured in **Settings → Hotkeys**.
+- **Robust Image Conversion in OCR Helper**: Added comprehensive native support for `QImage`, `QPixmap`, PIL images, and numpy arrays in local OCR preprocessing.
+
+### Русский
+
+- **Исправление падения при копировании в буфер обмена**: Устранена критическая ошибка (`TypeError: drawPixmap argument 3 has unexpected type 'QImage'`), приводившая к крашу приложения при копировании скриншотов через панель или горячие клавиши при включённых всплывающих уведомлениях.
+- **Исправление быстрого OCR жестом мыши**: Исправлена ошибка, из-за которой быстрое распознавание текста жестом мыши выделяло область, но не копировало результат в буфер обмена при отпускании мыши из-за несоответствия формата возвращаемого значения.
+- **Новый звук для всплывающих уведомлений**: Добавлен приятный синтезированный двухтональный звук для карточек уведомлений (тостов), при этом реалистичный звук затвора фотоаппарата задействуется исключительно при создании снимков.
+- **Быстрый захват мышью по умолчанию отключен**: Жесты быстрого скриншота и быстрого OCR теперь по умолчанию не назначены (`""`), исключая случайные срабатывания до их явной настройки в разделе **Настройки → Горячие клавиши**.
+- **Надёжная конвертация изображений в OCR**: Расширена совместимость локального OCR-модуля с прямым приёмом форматов `QImage`, `QPixmap`, PIL Image и массивов numpy.
+
 ## [1.0.19] - 2026-09-27
 
 ### English

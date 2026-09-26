@@ -63,9 +63,9 @@ def split_mouse_gesture(gesture_str: str) -> tuple[str, str]:
 def join_mouse_gesture(keys: str, btn: str) -> str:
     """Объединяет клавиши-модификаторы и кнопку мыши."""
     k = keys.strip().rstrip("+").strip()
-    b = btn.strip() or "LButton"
     if not k:
-        return b
+        return ""
+    b = btn.strip() or "LButton"
     return f"{k}+{b}"
 
 
@@ -1136,7 +1136,7 @@ class SettingsDialog(QDialog):
 
         self.edit_qd_screen_keys = QLineEdit(screen_keys)
         self.edit_qd_screen_keys.setFixedWidth(130)
-        self.edit_qd_screen_keys.setPlaceholderText("Ctrl+Shift")
+        self.edit_qd_screen_keys.setPlaceholderText(tr("settings_hk_none", "Не назначено"))
         btn_rec_qd_screen = HotkeyRecorderButton(self.edit_qd_screen_keys)
         btn_rec_qd_screen.setFixedWidth(82)
 
@@ -1149,17 +1149,10 @@ class SettingsDialog(QDialog):
             self.combo_qd_screen_btn.setCurrentIndex(idx_s_btn)
         self.combo_qd_screen_btn.setFixedWidth(180)
 
-        btn_reset_qd_screen = QPushButton(tr("settings_btn_reset", "Сбросить"))
+        btn_reset_qd_screen = QPushButton(tr("settings_btn_clear", "Очистить"))
         btn_reset_qd_screen.setFixedWidth(72)
         def _reset_qd_screen():
-            def_keys, def_btn = split_mouse_gesture(DEFAULT_HOTKEY_QUICK_DRAG_SCREENSHOT)
-            self.edit_qd_screen_keys.setText(def_keys)
-            b_idx = self.combo_qd_screen_btn.findData(def_btn)
-            if b_idx >= 0:
-                self.combo_qd_screen_btn.setCurrentIndex(b_idx)
-            f_idx = self.combo_qd_screen_fmt.findData("png")
-            if f_idx >= 0:
-                self.combo_qd_screen_fmt.setCurrentIndex(f_idx)
+            self.edit_qd_screen_keys.setText("")
         btn_reset_qd_screen.clicked.connect(_reset_qd_screen)
 
         row_qd_s1.addWidget(self.edit_qd_screen_keys)
@@ -1210,7 +1203,7 @@ class SettingsDialog(QDialog):
 
         self.edit_qd_ocr_keys = QLineEdit(ocr_keys)
         self.edit_qd_ocr_keys.setFixedWidth(130)
-        self.edit_qd_ocr_keys.setPlaceholderText("Ctrl+Alt")
+        self.edit_qd_ocr_keys.setPlaceholderText(tr("settings_hk_none", "Не назначено"))
         btn_rec_qd_ocr = HotkeyRecorderButton(self.edit_qd_ocr_keys)
         btn_rec_qd_ocr.setFixedWidth(82)
 
@@ -1223,17 +1216,10 @@ class SettingsDialog(QDialog):
             self.combo_qd_ocr_btn.setCurrentIndex(idx_o_btn)
         self.combo_qd_ocr_btn.setFixedWidth(180)
 
-        btn_reset_qd_ocr = QPushButton(tr("settings_btn_reset", "Сбросить"))
+        btn_reset_qd_ocr = QPushButton(tr("settings_btn_clear", "Очистить"))
         btn_reset_qd_ocr.setFixedWidth(72)
         def _reset_qd_ocr():
-            def_keys, def_btn = split_mouse_gesture(DEFAULT_HOTKEY_QUICK_DRAG_OCR)
-            self.edit_qd_ocr_keys.setText(def_keys)
-            b_idx = self.combo_qd_ocr_btn.findData(def_btn)
-            if b_idx >= 0:
-                self.combo_qd_ocr_btn.setCurrentIndex(b_idx)
-            l_idx = self.combo_qd_ocr_lang.findData("auto")
-            if l_idx >= 0:
-                self.combo_qd_ocr_lang.setCurrentIndex(l_idx)
+            self.edit_qd_ocr_keys.setText("")
         btn_reset_qd_ocr.clicked.connect(_reset_qd_ocr)
 
         row_qd_o1.addWidget(self.edit_qd_ocr_keys)
