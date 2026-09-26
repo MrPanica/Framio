@@ -1,16 +1,22 @@
 # Changelog
 
-## [1.0.16] - 2026-09-25
+## [1.0.16] - 2026-09-26
 
 ### English
 
-- **Local OCR (Text Recognition)**: Added "Copy text from screenshot to clipboard" button directly to the right of the copy button on both active zone and mass action toolbars (shortcut: `Ctrl+T` or `Ctrl+Shift+C`). Extracts text locally and offline using native Windows OCR (`Windows.Media.Ocr`) with support for multiple fonts and languages (Russian, English, and all installed Windows OCR languages) with auto-detection and custom language picker popup.
-- **Instant Overlay Close & Copy Acceleration**: Accelerated screenshot copying and overlay closing. Upon clicking copy, the darkening overlay and selection frame close immediately with 0 ms perceived delay. Clipboard data is populated instantly for fast paste, and background caching occurs smoothly.
+- **Real-time Screen & Subtitle Translator**: Added floating frame translation tool with dual operating modes: In-place text replacement overlay directly over on-screen text, and a movable floating HUD subtitle bar. Supports continuous screen scanning with Smart Diff to minimize CPU load.
+- **Line-by-Line Contextual Rendering**: Intelligent sentence-level translation preserves semantic meaning across multiple lines while rendering translations line-by-line directly on top of each original line, leaving line gaps untouched.
+- **Stealth Eye Pill & Pass-through Mode**: Click-through mouse transparency (`WS_EX_TRANSPARENT`) lets users click right through the translation frame into underlying games or apps. Minimizing into an ultra-compact floating eye pill allows repositioning with either mouse button and right-click pause/resume.
+- **Local OCR (Text Recognition)**: Added "Copy text from screenshot to clipboard" button directly to the right of the copy button on both active zone and mass action toolbars (shortcut: `Ctrl+T` or `Ctrl+Shift+C`). Extracts text locally and offline using native Windows OCR (`Windows.Media.Ocr`) with support for multiple fonts and languages with auto-detection.
+- **Instant Overlay Close & Copy Acceleration**: Accelerated screenshot copying and overlay closing with 0 ms perceived delay.
 
 ### Русский
 
-- **Локальный OCR (Распознавание текста)**: Добавлен инструмент «Копировать текст со скриншота в буфер обмена» строго справа от инструмента копирования на панели активной зоны и панели массовых действий (горячие клавиши: `Ctrl+T` или `Ctrl+Shift+C`). Извлекает текст локально и автономно через встроенный движок Windows OCR (`Windows.Media.Ocr`) с поддержкой любых шрифтов и языков (русский, английский и все установленные в Windows языки распознавания), автоопределением и всплывающим меню выбора языка.
-- **Мгновенное закрытие оверлея и ускорение копирования**: Ускорено копирование скриншота в буфер обмена и закрытие области выделения. При нажатии копирования оверлей и рамка выделения исчезают немедленно без задержки (эффект мгновенного отклика 0 мс), буфер обмена заполняется сразу для моментальной вставки через Ctrl+V.
+- **Экранный переводчик в реальном времени и перевод субтитров**: Добавлен инструмент плавающей рамки перевода с двумя режимами отображения: In-place (замена текста прямо поверх оригинала на экране) и автономное перемещаемое HUD-окно субтитров. Автоматическое непрерывное сканирование с оптимизацией Smart Diff не расходует процессор на статичных кадрах.
+- **Построчная контекстная отрисовка**: Перевод предложения целиком сохраняет контекст и смысл многострочных субтитров и диалогов, а отображение выполняется строго построчно поверх исходных строк без перекрытия межстрочного пространства.
+- **Режим маскировки и сквозные клики**: Включение прозрачности для мыши (`WS_EX_TRANSPARENT`) позволяет кликать прямо сквозь рамку перевода в игры и программы под ней. Сворачивание в компактную плавающую кнопку-глазик позволяет свободно перетаскивать её любой кнопкой мыши и ставить перевод на паузу кликом ПКМ.
+- **Локальный OCR (Распознавание текста)**: Добавлен инструмент «Копировать текст со скриншота в буфер обмена» строго справа от инструмента копирования на панели активной зоны и панели массовых действий (горячие клавиши: `Ctrl+T` или `Ctrl+Shift+C`). Извлекает текст локально и автономно через встроенный движок Windows OCR (`Windows.Media.Ocr`) с поддержкой любых шрифтов и языков, автоопределением и всплывающим меню выбора языка.
+- **Мгновенное закрытие оверлея и ускорение копирования**: Ускорено копирование скриншота в буфер обмена и закрытие области выделения без задержки (0 мс).
 
 ## [1.0.15] - 2026-09-20
 

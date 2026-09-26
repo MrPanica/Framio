@@ -48,11 +48,14 @@ jobs:
             'ui/settings_dialog.py',
             'ui/toolbars.py',
             'ui/recording_window.py',
+            'ui/translation_window.py',
             'models/shapes.py',
             'recorder/capture_worker.py',
             'utils/capture_mask.py',
             'utils/i18n.py',
-            'utils/image_search.py'
+            'utils/image_search.py',
+            'utils/ocr_helper.py',
+            'utils/translator.py'
           )
           python -m py_compile $files
 
