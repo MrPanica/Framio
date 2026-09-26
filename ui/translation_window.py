@@ -192,12 +192,147 @@ def extract_visual_props(crop_bgr: np.ndarray) -> dict:
         }
 
 
+def should_group_lines(prev_line: dict, curr_line: dict) -> bool:
+    """
+    Определяет, являются ли две последовательные строки экрана
+    частями одного предложения/абзаца для совместного перевода.
+    """
+    prev_txt = prev_line.get("text", "").strip()
+    curr_txt = curr_line.get("text", "").strip()
+    if not prev_txt or not curr_txt:
+        return False
+
+    # 1. Если предыдущая строка заканчивается точкой, вопросительным или восклицательным знаком — это конец предложения
+    if prev_txt.rstrip().endswith((".", "!", "?", ":", ";", "…", "—", "-")):
+        return False
+
+    prev_y = float(prev_line.get("y", 0))
+    prev_h = float(prev_line.get("height", 20))
+    prev_lh = float(prev_line.get("word_height", prev_h))
+    prev_bottom = prev_y + prev_h
+
+    curr_y = float(curr_line.get("y", 0))
+    curr_h = float(curr_line.get("height", 20))
+    curr_lh = float(curr_line.get("word_height", curr_h))
+
+    gap_y = curr_y - prev_bottom
+
+    # 2. Межстрочный интервал: строка должна быть прямо под предыдущей
+    max_gap = max(18.0, prev_lh * 1.05)
+    if not (-4.0 <= gap_y <= max_gap):
+        return False
+
+    # 3. Кегли шрифтов должны быть близки (не объединять заголовок с мелким текстом)
+    if abs(prev_lh - curr_lh) > max(7.0, prev_lh * 0.45):
+        return False
+
+    # 4. Горизонтальное перекрытие или выравнивание (по левому краю или по центру)
+    prev_x = float(prev_line.get("x", 0))
+    prev_w = float(prev_line.get("width", 50))
+    curr_x = float(curr_line.get("x", 0))
+    curr_w = float(curr_line.get("width", 50))
+
+    h_overlap = (curr_x < (prev_x + prev_w + 25.0)) and ((curr_x + curr_w) > (prev_x - 25.0))
+    left_aligned = abs(curr_x - prev_x) < max(40.0, prev_w * 0.30)
+    prev_center = prev_x + prev_w / 2.0
+    curr_center = curr_x + curr_w / 2.0
+    center_aligned = abs(curr_center - prev_center) < max(50.0, prev_w * 0.30)
+
+    if not (h_overlap or left_aligned or center_aligned):
+        return False
+
+    # 5. Семантическая проверка: не объединять пункты меню/списков (1-2 слова с заглавной буквы)
+    prev_words = prev_txt.split()
+    curr_words = curr_txt.split()
+
+    # Случай А: curr_txt начинается со строчной буквы (явное продолжение фразы)
+    if curr_txt[0].islower():
+        return True
+
+    # Случай Б: prev_txt заканчивается служебным словом (предлог, союз, местоимение, вспомогательный глагол)
+    CONNECTIVE_ENDINGS = {
+        "to", "of", "in", "on", "for", "with", "at", "by", "from", "as", "into", "about",
+        "and", "or", "but", "so", "because", "that", "which", "who", "whom", "whose",
+        "a", "an", "the",
+        "your", "my", "his", "her", "their", "our", "its", "this", "these", "those",
+        "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "will", "would", "can", "could", "should", "may", "might", "must",
+        "what", "where", "when", "why", "how", "which", "favorite",
+        "и", "в", "на", "с", "по", "к", "для", "о", "об", "от", "из", "за", "у", "до",
+        "что", "как", "где", "когда", "который", "которая", "которое", "которые",
+        "твой", "ваш", "мой", "наш", "его", "ее", "их", "этот", "эта", "это", "эти"
+    }
+    last_word_clean = prev_words[-1].lower().strip(" ,;:-—'\"")
+    if last_word_clean in CONNECTIVE_ENDINGS:
+        return True
+
+    # Случай В: Длинная строка без точки (3+ слова), переходящая в следующую строку (2+ слова)
+    if len(prev_words) >= 3 and len(curr_words) >= 2:
+        return True
+
+    # Случай Г: Субтитры с выравниванием по центру (две строки диалога)
+    if center_aligned and len(prev_words) >= 2:
+        return True
+
+    # Иначе — скорее всего разные кнопки/пункты меню, не объединяем
+    return False
+
+
+def split_translation_to_lines(line_texts: list[str], full_translation: str) -> list[str]:
+    """
+    Распределяет слова единого перевода пропорционально строкам оригинала.
+    Сохраняет контекст перевода всего предложения, но возвращает отдельный
+    текст для каждой физической строки экрана, исключая отрисовку в межстрочном интервале.
+    """
+    if not line_texts:
+        return []
+    if len(line_texts) == 1:
+        return [full_translation.strip()]
+
+    words = full_translation.strip().split()
+    if not words:
+        return ["" for _ in line_texts]
+
+    if len(words) <= len(line_texts):
+        res = []
+        for i in range(len(line_texts)):
+            if i < len(words):
+                res.append(words[i])
+            else:
+                res.append("")
+        return res
+
+    # Длины строк оригинала в символах (без краевых пробелов)
+    lengths = [max(1, len(t.strip())) for t in line_texts]
+    total_len = sum(lengths)
+    ratios = [l / float(total_len) for l in lengths]
+
+    total_words = len(words)
+    res = []
+    curr_idx = 0
+
+    for i, ratio in enumerate(ratios):
+        if i == len(ratios) - 1:
+            line_words = words[curr_idx:]
+        else:
+            count = max(1, int(round(total_words * ratio)))
+            remaining_lines = len(ratios) - 1 - i
+            count = min(count, len(words) - curr_idx - remaining_lines)
+            count = max(1, count)
+            line_words = words[curr_idx : curr_idx + count]
+            curr_idx += count
+        res.append(" ".join(line_words))
+
+    return res
+
+
 def group_multiline_blocks(raw_blocks: list[dict]) -> list[dict]:
     """
     Интеллектуально объединяет строки OCR, принадлежащие одному абзацу/предложению,
-    в единые смысловые блоки с общим контекстом перевода.
-    Предотвращает потерю смысла при переносе строк (например, 'favorite / talk show host'),
-    не объединяя при этом независимые кнопки и разные предложения.
+    в единые смысловые группы с общим контекстом перевода.
+    Каждая группа содержит объединенный 'text' для качественного перевода,
+    а также список исходных физических строк 'lines' для раздельной точной отрисовки
+    непосредственно поверх каждой строки экрана без перекрытия межстрочного интервала.
     """
     if not raw_blocks:
         return []
@@ -216,6 +351,15 @@ def group_multiline_blocks(raw_blocks: list[dict]) -> list[dict]:
         bh = float(b.get("height", 20))
         lh = float(b.get("word_height", bh))
 
+        initial_line = {
+            "text": txt,
+            "x": bx,
+            "y": by,
+            "width": bw,
+            "height": bh,
+            "word_height": lh
+        }
+
         if not merged:
             merged.append({
                 "text": txt,
@@ -224,50 +368,28 @@ def group_multiline_blocks(raw_blocks: list[dict]) -> list[dict]:
                 "width": bw,
                 "height": bh,
                 "line_height": lh,
-                "lines_count": 1
+                "lines_count": 1,
+                "lines": [initial_line]
             })
             continue
 
         prev = merged[-1]
-        prev_txt = prev["text"].strip()
-        prev_bottom = prev["y"] + prev["height"]
-        prev_lh = float(prev.get("line_height", prev["height"]))
+        prev_last_line = prev["lines"][-1]
         prev_cnt = prev.get("lines_count", 1)
-        gap_y = by - prev_bottom
 
-        is_subsequent_line = False
-        # Объединять можно МАКСИМУМ 2 строки (стандартная 2-строчная субтитра). Никогда не раздувать в огромную рамку 3+ строк!
-        if prev_cnt < 2:
-            # 1. Предыдущая строка НЕ должна заканчиваться точкой, вопросительным/восклицательным знаком или двоеточием
-            if not prev_txt.rstrip().endswith((".", "!", "?", ":", ";", "…", "—", "-")):
-                # 2. Не объединять одиночное короткое слово-заголовок (например "Level", "Quest", "Option") с длинным предложением
-                word_count_prev = len(prev_txt.split())
-                word_count_curr = len(txt.split())
-                if not (word_count_prev == 1 and word_count_curr >= 3 and prev["width"] < 80 and bw > 160):
-                    # 3. Одинаковый или близкий размер шрифта (в пределах 45%)
-                    if abs(prev_lh - lh) <= max(6.0, prev_lh * 0.45):
-                        # 4. Строка находится прямо под предыдущей (межстрочный интервал субтитров/абзаца)
-                        if -4.0 <= gap_y <= max(16.0, prev_lh * 0.90):
-                            h_overlap = (bx < (prev["x"] + prev["width"] + 15.0)) and ((bx + bw) > (prev["x"] - 15.0))
-                            left_aligned = abs(bx - prev["x"]) < max(35.0, prev["width"] * 0.25)
-                            prev_center = prev["x"] + prev["width"] / 2.0
-                            curr_center = bx + bw / 2.0
-                            center_aligned = abs(curr_center - prev_center) < max(45.0, prev["width"] * 0.25)
-                            if h_overlap or left_aligned or center_aligned:
-                                is_subsequent_line = True
-
-        if is_subsequent_line:
+        if prev_cnt < 3 and should_group_lines(prev_last_line, initial_line):
             new_x = min(prev["x"], bx)
             new_y = min(prev["y"], by)
             new_r = max(prev["x"] + prev["width"], bx + bw)
-            new_b = max(prev_bottom, by + bh)
+            new_b = max(prev["y"] + prev["height"], by + bh)
             prev["text"] = prev["text"] + " " + txt
             prev["x"] = new_x
             prev["y"] = new_y
             prev["width"] = new_r - new_x
             prev["height"] = new_b - new_y
-            prev["line_height"] = (prev_lh + lh) / 2.0
-            prev["lines_count"] = 2
+            prev["line_height"] = (prev["line_height"] * prev_cnt + lh) / float(prev_cnt + 1)
+            prev["lines_count"] = prev_cnt + 1
+            prev["lines"].append(initial_line)
         else:
             merged.append({
                 "text": txt,
@@ -276,7 +398,8 @@ def group_multiline_blocks(raw_blocks: list[dict]) -> list[dict]:
                 "width": bw,
                 "height": bh,
                 "line_height": lh,
-                "lines_count": 1
+                "lines_count": 1,
+                "lines": [initial_line]
             })
 
     return merged
@@ -428,40 +551,56 @@ class TranslationScannerWorker(QThread):
                     b_orig = b.get("text", "").strip()
                     b_tr = restore_punctuation(b_orig, b_tr_raw)
 
-                    # Физические координаты для вырезки в frame_bgr
-                    crop_x = int(max(0, min(f_w - 2, b.get("x", 0))))
-                    crop_y = int(max(0, min(f_h - 2, b.get("y", 0))))
-                    crop_w = int(max(10, min(f_w - crop_x, b.get("width", 50))))
-                    crop_h = int(max(10, min(f_h - crop_y, b.get("height", 20))))
+                    # Получаем физические строки оригинала для этого смыслового блока
+                    constituent_lines = b.get("lines", [])
+                    if not constituent_lines:
+                        constituent_lines = [b]
 
-                    crop = frame_bgr[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
-                    visual = extract_visual_props(crop)
+                    # Распределяем слова перевода по физическим строкам экрана
+                    if len(constituent_lines) > 1:
+                        line_orig_texts = [l.get("text", "").strip() for l in constituent_lines]
+                        line_tr_texts = split_translation_to_lines(line_orig_texts, b_tr)
+                    else:
+                        line_tr_texts = [b_tr]
 
-                    # Логические экранные координаты виджета (DPI-aware)
-                    bx = float(b.get("x", 0)) * to_log_x
-                    by = float(b.get("y", 0)) * to_log_y
-                    bw = float(b.get("width", 50)) * to_log_x
-                    bh = float(b.get("height", 20)) * to_log_y
+                    for line_item, line_tr in zip(constituent_lines, line_tr_texts):
+                        l_text = line_item.get("text", "").strip()
+                        l_tr = line_tr.strip()
+                        if not l_tr:
+                            continue
 
-                    lines_cnt = max(1, b.get("lines_count", 1))
-                    raw_lh = float(b.get("line_height", b.get("height", 20) / float(lines_cnt)))
-                    single_line_h = raw_lh * to_log_y
+                        # Физические координаты для вырезки в frame_bgr
+                        crop_x = int(max(0, min(f_w - 2, line_item.get("x", 0))))
+                        crop_y = int(max(0, min(f_h - 2, line_item.get("y", 0))))
+                        crop_w = int(max(10, min(f_w - crop_x, line_item.get("width", 50))))
+                        crop_h = int(max(10, min(f_h - crop_y, line_item.get("height", 20))))
 
-                    translated_blocks.append({
-                        "original": b_orig,
-                        "translated": b_tr,
-                        "x": bx,
-                        "y": by,
-                        "width": bw,
-                        "height": bh,
-                        "lines_count": lines_cnt,
-                        "line_height": single_line_h,
-                        "color_rgb": visual["color_rgb"],
-                        "bg_color_rgb": visual.get("bg_color_rgb", (15, 23, 42)),
-                        "is_bold": visual["is_bold"],
-                        "is_italic": visual.get("is_italic", False),
-                        "font_family": visual["font_family"]
-                    })
+                        crop = frame_bgr[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
+                        visual = extract_visual_props(crop)
+
+                        # Логические экранные координаты виджета (DPI-aware) для ЭТОЙ строки
+                        bx = float(line_item.get("x", 0)) * to_log_x
+                        by = float(line_item.get("y", 0)) * to_log_y
+                        bw = float(line_item.get("width", 50)) * to_log_x
+                        bh = float(line_item.get("height", 20)) * to_log_y
+
+                        lh = float(line_item.get("word_height", bh)) * to_log_y
+
+                        translated_blocks.append({
+                            "original": l_text,
+                            "translated": l_tr,
+                            "x": bx,
+                            "y": by,
+                            "width": bw,
+                            "height": bh,
+                            "lines_count": 1,
+                            "line_height": lh,
+                            "color_rgb": visual["color_rgb"],
+                            "bg_color_rgb": visual.get("bg_color_rgb", (15, 23, 42)),
+                            "is_bold": visual["is_bold"],
+                            "is_italic": visual.get("is_italic", False),
+                            "font_family": visual["font_family"]
+                        })
 
                 translated_full = " ".join(item["translated"] for item in translated_blocks) if translated_blocks else restore_punctuation(full_text, translate_text(full_text, source_lang=src, target_lang=tgt))
                 self.translation_ready.emit(full_text, translated_full, translated_blocks)
@@ -1622,22 +1761,36 @@ class TranslationFrameWindow(QWidget):
         """
         # 1. Пробуем уместить на 1 строке, если исходный текст был 1 строка
         if lines_cnt == 1:
+            target_1line_w = min(max_frame_w, max(bw * 1.35, bw + 35.0))
             f = QFont(family, 10, weight)
             f.setPixelSize(ideal_ps)
             f.setItalic(is_italic)
             fm = QFontMetrics(f)
             adv = float(fm.horizontalAdvance(text))
             fh = float(fm.height())
-            target_1line_w = max(bw, min(max_frame_w, max(bw * 1.20, bw + 16.0)))
             if adv <= target_1line_w and fh <= max_frame_h:
                 eff_w = min(max_frame_w, max(bw, adv + 8.0))
-                eff_h = min(max_frame_h, max(bh, fh + 4.0))
+                eff_h = min(max_frame_h, max(bh, fh + 2.0))
                 return f, eff_w, eff_h, False
 
-        # 2. Многострочный режим переноса по словам
+            # Если немного не влезло, пробуем уместить на 1 строке с небольшим уменьшением шрифта (до 78%)
+            min_1line_ps = max(9, int(round(ideal_ps * 0.78)))
+            for ps in range(ideal_ps - 1, min_1line_ps - 1, -1):
+                f_cand = QFont(family, 10, weight)
+                f_cand.setPixelSize(ps)
+                f_cand.setItalic(is_italic)
+                fm_cand = QFontMetrics(f_cand)
+                cand_adv = float(fm_cand.horizontalAdvance(text))
+                cand_fh = float(fm_cand.height())
+                if cand_adv <= target_1line_w and cand_fh <= max_frame_h:
+                    eff_w = min(max_frame_w, max(bw, cand_adv + 8.0))
+                    eff_h = min(max_frame_h, max(bh, cand_fh + 2.0))
+                    return f_cand, eff_w, eff_h, False
+
+        # 2. Многострочный режим переноса по словам (если текст действительно длинный)
         min_ps = max(9, int(round(ideal_ps * 0.70)))
-        wrap_w = min(max_frame_w, max(bw * 1.20, bw + 16.0, 100.0))
-        allowed_h = min(max_frame_h, max(bh * 1.25, line_h * 2.4 + 6.0))
+        wrap_w = min(max_frame_w, max(bw * 1.25, bw + 20.0, 100.0))
+        allowed_h = min(max_frame_h, max(bh * 1.30, line_h * 2.4 + 6.0))
 
         flags = int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap)
         best_f = None

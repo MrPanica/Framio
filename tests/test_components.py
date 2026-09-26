@@ -4587,8 +4587,16 @@ def test_translation_frame_and_translator():
     ]
     sub_grouped = group_multiline_blocks(raw_subtitles)
     assert len(sub_grouped) == 1
-    assert sub_grouped[0]["text"] == "What is your favorite talk show host?"
-    assert sub_grouped[0]["lines_count"] == 2
+    # Проверка разделения единого контекстного перевода по физическим строкам экрана
+    from ui.translation_window import split_translation_to_lines
+    lines_split = split_translation_to_lines(
+        ["What is your favorite", "talk show host?"],
+        "Какой ваш любимый ведущий ток-шоу?"
+    )
+    assert len(lines_split) == 2
+    assert "любимый" in lines_split[0]
+    assert "ток-шоу" in lines_split[1]
+    assert len(sub_grouped[0]["lines"]) == 2
 
     # Проверка _layout_text_block (адаптивная подгонка размера шрифта под оригинал)
     from PyQt6.QtGui import QFont

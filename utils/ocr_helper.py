@@ -443,10 +443,12 @@ def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "aut
 
     try:
         h, w = bgr.shape[:2]
-        # Для стандартных и крупных кадров захват 1:1 без интерполяции дает максимальную резкость и точность.
-        # Масштабируем только очень мелкие фрагменты (<110 px).
-        if h < 110 or w < 140:
+        # Оптимальный масштаб для Windows Media OCR (нейросеть Windows лучше всего распознает текст с высотой символов >= 18-24 px)
+        if h < 140 or w < 180:
             scale_factor = 2.0
+            scan_img = cv2.resize(bgr, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
+        elif h < 380 or w < 600:
+            scale_factor = 1.5
             scan_img = cv2.resize(bgr, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
         else:
             scale_factor = 1.0
@@ -481,7 +483,7 @@ def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "aut
                 curr_x = float(curr_rect.get("x", 0.0))
                 gap = curr_x - prev_r
                 word_h = max(float(prev_rect.get("height", 15.0)), float(curr_rect.get("height", 15.0)))
-                if gap > max(35.0 * scale_factor, word_h * 2.2):
+                if gap > max(45.0 * scale_factor, word_h * 2.5):
                     chunks.append(curr_chunk)
                     curr_chunk = [w_item]
                 else:
