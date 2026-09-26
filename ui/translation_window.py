@@ -214,6 +214,7 @@ def group_multiline_blocks(raw_blocks: list[dict]) -> list[dict]:
         by = float(b.get("y", 0))
         bw = float(b.get("width", 50))
         bh = float(b.get("height", 20))
+        lh = float(b.get("word_height", bh))
 
         if not merged:
             merged.append({
@@ -222,7 +223,7 @@ def group_multiline_blocks(raw_blocks: list[dict]) -> list[dict]:
                 "y": by,
                 "width": bw,
                 "height": bh,
-                "line_height": bh,
+                "line_height": lh,
                 "lines_count": 1
             })
             continue
@@ -231,39 +232,42 @@ def group_multiline_blocks(raw_blocks: list[dict]) -> list[dict]:
         prev_txt = prev["text"].strip()
         prev_bottom = prev["y"] + prev["height"]
         prev_lh = float(prev.get("line_height", prev["height"]))
+        prev_cnt = prev.get("lines_count", 1)
         gap_y = by - prev_bottom
 
         is_subsequent_line = False
-        # 1. Если предыдущая строка заканчивается точкой, вопросительным/восклицательным знаком или двоеточием —
-        # это законченное предложение или отдельный пункт, его нельзя объединять со следующей строкой!
-        if not prev_txt.rstrip().endswith((".", "!", "?", ":", ";", "…", "—", "-")):
-            # 2. Одинаковый или близкий размер шрифта (в пределах 50%)
-            if abs(prev_lh - bh) <= max(8.0, prev_lh * 0.50):
-                # 3. Строка находится прямо под предыдущей (межстрочный интервал субтитров/абзаца, а не расстояние между кнопками)
-                if -8.0 <= gap_y <= max(20.0, prev_lh * 1.35):
-                    h_overlap = (bx < (prev["x"] + prev["width"] + 15.0)) and ((bx + bw) > (prev["x"] - 15.0))
-                    left_aligned = abs(bx - prev["x"]) < max(35.0, prev["width"] * 0.25)
-                    prev_center = prev["x"] + prev["width"] / 2.0
-                    curr_center = bx + bw / 2.0
-                    center_aligned = abs(curr_center - prev_center) < max(45.0, prev["width"] * 0.25)
-                    if h_overlap or left_aligned or center_aligned:
-                        is_subsequent_line = True
+        # Объединять можно МАКСИМУМ 2 строки (стандартная 2-строчная субтитра). Никогда не раздувать в огромную рамку 3+ строк!
+        if prev_cnt < 2:
+            # 1. Предыдущая строка НЕ должна заканчиваться точкой, вопросительным/восклицательным знаком или двоеточием
+            if not prev_txt.rstrip().endswith((".", "!", "?", ":", ";", "…", "—", "-")):
+                # 2. Не объединять одиночное короткое слово-заголовок (например "Level", "Quest", "Option") с длинным предложением
+                word_count_prev = len(prev_txt.split())
+                word_count_curr = len(txt.split())
+                if not (word_count_prev == 1 and word_count_curr >= 3 and prev["width"] < 80 and bw > 160):
+                    # 3. Одинаковый или близкий размер шрифта (в пределах 45%)
+                    if abs(prev_lh - lh) <= max(6.0, prev_lh * 0.45):
+                        # 4. Строка находится прямо под предыдущей (межстрочный интервал субтитров/абзаца)
+                        if -4.0 <= gap_y <= max(16.0, prev_lh * 0.90):
+                            h_overlap = (bx < (prev["x"] + prev["width"] + 15.0)) and ((bx + bw) > (prev["x"] - 15.0))
+                            left_aligned = abs(bx - prev["x"]) < max(35.0, prev["width"] * 0.25)
+                            prev_center = prev["x"] + prev["width"] / 2.0
+                            curr_center = bx + bw / 2.0
+                            center_aligned = abs(curr_center - prev_center) < max(45.0, prev["width"] * 0.25)
+                            if h_overlap or left_aligned or center_aligned:
+                                is_subsequent_line = True
 
         if is_subsequent_line:
             new_x = min(prev["x"], bx)
             new_y = min(prev["y"], by)
             new_r = max(prev["x"] + prev["width"], bx + bw)
             new_b = max(prev_bottom, by + bh)
-            prev_cnt = prev.get("lines_count", 1)
-            new_cnt = prev_cnt + 1
             prev["text"] = prev["text"] + " " + txt
             prev["x"] = new_x
             prev["y"] = new_y
             prev["width"] = new_r - new_x
             prev["height"] = new_b - new_y
-            # Настоящая средняя высота строки без раздувания за счет межстрочных отступов:
-            prev["line_height"] = (prev_lh * prev_cnt + bh) / float(new_cnt)
-            prev["lines_count"] = new_cnt
+            prev["line_height"] = (prev_lh + lh) / 2.0
+            prev["lines_count"] = 2
         else:
             merged.append({
                 "text": txt,
@@ -271,7 +275,7 @@ def group_multiline_blocks(raw_blocks: list[dict]) -> list[dict]:
                 "y": by,
                 "width": bw,
                 "height": bh,
-                "line_height": bh,
+                "line_height": lh,
                 "lines_count": 1
             })
 
@@ -310,6 +314,7 @@ class TranslationScannerWorker(QThread):
         with QMutexLocker(self._mutex):
             self._rect = QRect(rect)
             self._last_frame_small = None
+            self._last_ocr_text = ""
 
     def set_languages(self, src: str, tgt: str):
         with QMutexLocker(self._mutex):
@@ -367,8 +372,10 @@ class TranslationScannerWorker(QThread):
 
                 if self._last_frame_small is not None and small_gray is not None:
                     diff = cv2.absdiff(small_gray, self._last_frame_small)
-                    mean_diff = np.mean(diff)
-                    if mean_diff < 1.2:
+                    mean_diff = float(np.mean(diff))
+                    max_diff = int(np.max(diff))
+                    # Пропускаем только действительно статичные кадры, не пропуская появление даже одного слова
+                    if mean_diff < 0.35 and max_diff < 18:
                         self.msleep(interval)
                         continue
 
@@ -1621,16 +1628,16 @@ class TranslationFrameWindow(QWidget):
             fm = QFontMetrics(f)
             adv = float(fm.horizontalAdvance(text))
             fh = float(fm.height())
-            target_1line_w = max(bw, min(max_frame_w, max(bw * 1.25, bw + 24.0)))
+            target_1line_w = max(bw, min(max_frame_w, max(bw * 1.20, bw + 16.0)))
             if adv <= target_1line_w and fh <= max_frame_h:
-                eff_w = min(max_frame_w, adv + 12.0)
-                eff_h = min(max_frame_h, max(bh, fh + 6.0))
+                eff_w = min(max_frame_w, max(bw, adv + 8.0))
+                eff_h = min(max_frame_h, max(bh, fh + 4.0))
                 return f, eff_w, eff_h, False
 
         # 2. Многострочный режим переноса по словам
         min_ps = max(9, int(round(ideal_ps * 0.70)))
-        wrap_w = min(max_frame_w, max(bw * 1.25, bw + 24.0, 110.0))
-        allowed_h = min(max_frame_h, max(bh * 1.35 + 10.0, float(lines_cnt + 1) * (line_h * 1.35) + 8.0))
+        wrap_w = min(max_frame_w, max(bw * 1.20, bw + 16.0, 100.0))
+        allowed_h = min(max_frame_h, max(bh * 1.25, line_h * 2.4 + 6.0))
 
         flags = int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap)
         best_f = None
@@ -1645,10 +1652,10 @@ class TranslationFrameWindow(QWidget):
             r = fm.boundingRect(QRect(0, 0, int(wrap_w), 9999), flags, text)
             if r.height() <= allowed_h and r.width() <= wrap_w:
                 best_f = f
-                cand_w = min(wrap_w, max(bw, float(r.width()) + 14.0))
+                cand_w = min(wrap_w, max(bw, float(r.width()) + 10.0))
                 r_check = fm.boundingRect(QRect(0, 0, int(cand_w), 9999), flags, text)
                 best_w = cand_w
-                best_h = min(allowed_h, max(bh, float(r_check.height()) + 8.0))
+                best_h = min(allowed_h, max(bh, float(r_check.height()) + 4.0))
                 break
 
         if best_f is None:
@@ -1657,9 +1664,9 @@ class TranslationFrameWindow(QWidget):
             best_f.setItalic(is_italic)
             fm = QFontMetrics(best_f)
             r = fm.boundingRect(QRect(0, 0, int(wrap_w), 9999), flags, text)
-            best_w = min(max_frame_w, max(bw, float(r.width()) + 14.0))
+            best_w = min(max_frame_w, max(bw, float(r.width()) + 10.0))
             r_check = fm.boundingRect(QRect(0, 0, int(best_w), 9999), flags, text)
-            best_h = min(max_frame_h, max(bh, float(r_check.height()) + 8.0))
+            best_h = min(max_frame_h, max(bh, float(r_check.height()) + 4.0))
 
         return best_f, best_w, best_h, True
 

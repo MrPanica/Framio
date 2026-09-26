@@ -427,7 +427,7 @@ def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "aut
     """
     Распознаёт текст и возвращает блоки с точными экранными координатами
     для динамического наложения перевода прямо поверх текста (In-place).
-    Каждый элемент: {"text": "...", "x": float, "y": float, "width": float, "height": float}
+    Каждый элемент: {"text": "...", "x": float, "y": float, "width": float, "height": float, "word_height": float}
     """
     bgr = _convert_to_bgr(image)
     if bgr is None or bgr.size == 0 or not _WINOCR_AVAILABLE:
@@ -435,37 +435,83 @@ def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "aut
 
     target_lang = "en-US" if lang in ("auto", "en") else lang
     installed = get_available_ocr_languages()
+    installed_tags = [item["tag"] for item in installed]
     for item in installed:
         if item["tag"].lower().startswith(target_lang.lower()[:2]):
             target_lang = item["tag"]
             break
 
     try:
-        prep_img, _ = _preprocess_image_for_ocr(bgr, scale=2.0)
-        prep_scale_x = float(prep_img.shape[1]) / float(bgr.shape[1])
-        prep_scale_y = float(prep_img.shape[0]) / float(bgr.shape[0])
-        res = winocr.recognize_cv2_sync(prep_img, lang=target_lang)
+        h, w = bgr.shape[:2]
+        # Для стандартных и крупных кадров захват 1:1 без интерполяции дает максимальную резкость и точность.
+        # Масштабируем только очень мелкие фрагменты (<110 px).
+        if h < 110 or w < 140:
+            scale_factor = 2.0
+            scan_img = cv2.resize(bgr, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
+        else:
+            scale_factor = 1.0
+            scan_img = bgr
+
+        res = winocr.recognize_cv2_sync(scan_img, lang=target_lang)
+        raw_lines = res.get("lines", []) if res else []
+
+        # Если целевой язык auto или ru, и установлен русский языковой пакет Windows OCR,
+        # проверяем наличие кириллических надписей
+        if (not raw_lines or lang in ("auto", "ru")) and "ru" in installed_tags and target_lang != "ru":
+            res_ru = winocr.recognize_cv2_sync(scan_img, lang="ru")
+            lines_ru = res_ru.get("lines", []) if res_ru else []
+            if len(lines_ru) > len(raw_lines):
+                raw_lines = lines_ru
+
         blocks = []
-        for l in res.get("lines", []):
+        for l in raw_lines:
             ltxt = l.get("text", "").strip()
             words = l.get("words", [])
             if not ltxt or not words:
                 continue
-            xs = [float(w.get("bounding_rect", {}).get("x", 0.0)) for w in words]
-            ys = [float(w.get("bounding_rect", {}).get("y", 0.0)) for w in words]
-            ws = [float(w.get("bounding_rect", {}).get("width", 0.0)) for w in words]
-            hs = [float(w.get("bounding_rect", {}).get("height", 0.0)) for w in words]
-            min_x = min(xs) / prep_scale_x
-            min_y = min(ys) / prep_scale_y
-            max_r = max(x + w for x, w in zip(xs, ws)) / prep_scale_x
-            max_b = max(y + h for y, h in zip(ys, hs)) / prep_scale_y
-            blocks.append({
-                "text": ltxt,
-                "x": min_x,
-                "y": min_y,
-                "width": max_r - min_x,
-                "height": max_b - min_y
-            })
+
+            # Разбиваем слова одной OcrLine, если между ними неестественно большой горизонтальный разрыв
+            # (например, кнопки меню в разных углах экрана или разные колонки таблиц)
+            chunks = []
+            curr_chunk = [words[0]]
+            for w_item in words[1:]:
+                prev_rect = curr_chunk[-1].get("bounding_rect", {})
+                curr_rect = w_item.get("bounding_rect", {})
+                prev_r = float(prev_rect.get("x", 0.0)) + float(prev_rect.get("width", 0.0))
+                curr_x = float(curr_rect.get("x", 0.0))
+                gap = curr_x - prev_r
+                word_h = max(float(prev_rect.get("height", 15.0)), float(curr_rect.get("height", 15.0)))
+                if gap > max(35.0 * scale_factor, word_h * 2.2):
+                    chunks.append(curr_chunk)
+                    curr_chunk = [w_item]
+                else:
+                    curr_chunk.append(w_item)
+            chunks.append(curr_chunk)
+
+            for chunk in chunks:
+                chunk_txt = " ".join(w.get("text", "") for w in chunk).strip()
+                if not chunk_txt:
+                    continue
+                xs = [float(w.get("bounding_rect", {}).get("x", 0.0)) for w in chunk]
+                ys = [float(w.get("bounding_rect", {}).get("y", 0.0)) for w in chunk]
+                ws = [float(w.get("bounding_rect", {}).get("width", 0.0)) for w in chunk]
+                hs = [float(w.get("bounding_rect", {}).get("height", 0.0)) for w in chunk]
+
+                min_x = min(xs) / scale_factor
+                min_y = min(ys) / scale_factor
+                max_r = max(x + w_val for x, w_val in zip(xs, ws)) / scale_factor
+                max_b = max(y + h_val for y, h_val in zip(ys, hs)) / scale_factor
+                med_h = float(np.median(hs)) / scale_factor
+
+                blocks.append({
+                    "text": chunk_txt,
+                    "x": min_x,
+                    "y": min_y,
+                    "width": max_r - min_x,
+                    "height": max_b - min_y,
+                    "word_height": med_h
+                })
+
         return blocks
     except Exception:
         return []
