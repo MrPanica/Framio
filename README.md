@@ -1,303 +1,309 @@
-# Framio
-
-Framio is a portable Windows app for taking screenshots, recording screen areas as MP4 or GIF, extracting text offline with local Windows OCR, and translating on-screen text in real-time. It can work with one area, several areas, the whole desktop, or a complete application window.
-
-The current release is `1.0.18`. See [CHANGELOG.md](CHANGELOG.md) for the release history.
-
-## English
-
-### Quick start
-
-1. Download a build from [GitHub Releases](https://github.com/MrPanica/Framio/releases).
-2. Run `Framio.exe`. Installation is not required; the app appears in the system tray.
-3. Press `Ctrl+Shift+Print Screen` or choose the capture command from the tray menu.
-
-For a source checkout:
-
-```powershell
-python -m pip install -r requirements.txt
-python main.py
-```
-
-### What you can capture
-
-- A rectangular area of the screen.
-- Several independent areas at once.
-- All connected screens.
-- A complete application window.
-- A scrolling page or document.
-- Real-time on-screen text and subtitle translation.
-- Instant offline text extraction (OCR).
-
-Screenshots can be saved as PNG, JPG, or WebP. Areas can be recorded as MP4 or GIF. System audio and microphone recording are available in the recording settings.
-
-### Real-time Screen & Subtitle Translator
-
-Framio includes an intelligent screen translation frame:
-
-- **Two display modes**:
-  - **In-place overlay**: Translates text directly over the original on-screen words, automatically detecting font sizes, colors, and line coordinates. Whole-sentence translation preserves context across multiple lines, and words are distributed line-by-line directly on top of each original line without drawing across line gaps.
-  - **HUD Subtitles**: A movable floating subtitle window that can be positioned anywhere across multi-monitor setups, ideal for game dialogue and video streams.
-- **Smart Diff Optimization**: Scans the selected frame continuously at high speed, consuming near-zero CPU resources on static frames and refreshing immediately when text changes.
-- **Click-Through Transparency (`WS_EX_TRANSPARENT`)**: When translation is active, mouse clicks pass directly through the frame into the underlying game or application.
-- **Stealth Mode (Eye Pill)**: Collapse the control panel into an ultra-compact 16×16 floating eye button. Move it freely with either the left or right mouse button; click RMB to pause/resume translation (icon switches to a struck-through eye); click LMB to restore the full control panel.
-
-### Local OCR (Text Recognition)
-
-- Extract and copy text from any screen selection directly to the clipboard with one click or via `Ctrl+T` (`Ctrl+Shift+C`).
-- Runs 100% offline and locally using native `Windows.Media.Ocr`. No images or data are sent to external servers.
-- Automatic language detection with support for Russian, English, and all language packs installed in Windows, plus a fast language picker.
-- Advanced post-processing cleans up spacing, punctuation, and common OCR artifacts.
-
-### Censorship, Blur & Magnifier Filters
-
-- Apply **Blur**, **Pixelate / Mosaic**, or **Magnifier** filters directly from the main annotation toolbar.
-- Fully interactive: drag, resize, rotate, and adjust filter intensity with real-time preview.
-- High-contrast dual-tone transformation handles ensure visibility on both bright and dark backgrounds.
-
-### Multiple areas
-
-1. Select the first area.
-2. Press `+` in the area toolbar.
-3. Select the next area. Press `+` again before creating another area.
-4. To add areas continuously, hold `Ctrl` while drawing.
-
-Existing areas remain movable. Clicking an existing area does not create a new one.
-
-The top multi-action bar works with all areas that are not currently recording. It can save, copy, start MP4 recording, or start GIF recording for all of them. Each area remains a separate screenshot or recording.
-
-When several images are copied, Framio puts the complete set into its own clipboard payload and also publishes file URLs. Windows applications that support only one standard image may paste the first image; this is a limitation of the Windows clipboard format, not a combined screenshot from Framio.
-
-### Recording a complete window
-
-Start capture without drawing an area, then double-click the target window. Framio finds the window behind its overlay and uses that window as the capture source.
-
-For an already selected area, open the recording frame settings and either choose a window from the list or use **Select window by clicking**. To return to normal screen-area capture, choose **Entire area under frame**.
-
-Some windows cannot be captured by Windows, including protected or DRM content and some hardware-rendered surfaces. In that case Framio falls back to the pixels visible under the recording frame.
-
-### Capture masks
-
-Select **Capture area mask** and choose a freeform contour, rectangle, or oval. A freeform contour closes when the mouse button is released. You can create several masks in one area and move, resize, or rotate them.
-
-Right-click a mask and choose **Set capture area to mask bounds** to resize the capture area to the common bounding rectangle of all masks in that area. PNG keeps transparency outside the masks; MP4 and GIF use black outside them.
-
-### Undo and redo
-
-`Ctrl+Z` and `Ctrl+Y` cover annotation edits, mask creation/deletion/transforms, capture-area changes, and adding or removing areas. A move or resize is stored as one history entry when the mouse button is released, not once per mouse event. Saving, copying, and starting a recording are output actions and are not added to the edit history.
-
-### Recent media
-
-Open **Framio — Recent Media** from the tray menu. The panel contains filters for all items, screenshots, GIFs, and videos. It shows image and video previews, the file name above each preview, and the full name and path in the tooltip.
-
-Use **Copy** to place an image or file in the Windows clipboard. Use **View** or click the preview to open the file with the default Windows application. A preview can also be dragged into a chat, editor, or another application.
-Use **Open with...** on a card to choose another Windows application for the file.
-
-### Reverse image search
-
-Framio sends images only to the search engine you choose. Yandex Images receives the PNG directly. For Google Lens, Framio opens a one-use local form that submits the PNG with a browser `multipart/form-data` navigation directly to Google’s Lens upload endpoint. The file is not uploaded to an intermediate host; the temporary local form is removed automatically.
-
-### Default hotkeys
-
-| Action | Keys |
-| --- | --- |
-| Capture an area | `Ctrl+Shift+Print Screen` |
-| Quick screenshot of all screens | `Ctrl+Print Screen` |
-| Standard fullscreen screenshot to the screenshots folder | `Print Screen` |
-| Copy text from selection (OCR) | `Ctrl+T` / `Ctrl+Shift+C` |
-| Screen & Subtitle Translator | Unassigned by default (Tray menu / Settings) |
-| Record all screens | `Ctrl+Shift+F9` |
-| Stop active recording | `Ctrl+Shift+F10` |
-| Copy selected areas | `Ctrl+C` |
-| Save selected areas | `Ctrl+S` |
-| Undo | `Ctrl+Z` |
-| Redo | `Ctrl+Y` |
-| Close capture or cancel recording | `Esc` |
-
-Change these shortcuts in **Settings → Hotkeys**. The tray menu shows the current values.
-
-### Portable builds
-
-| Build | What to copy | FFmpeg | Main difference |
-| --- | --- | --- | --- |
-| Folder portable | The complete `Framio` folder, including `_internal` | Included | Starts fastest and does not unpack into `%TEMP%`; the whole folder must stay together. |
-| Full single-file | One `Framio.exe` | Included | Easiest to carry; unpacks its private files into `%TEMP%` at each start; about 114 MiB. |
-| Lite single-file | One `Framio.exe` | Not bundled | Smaller download; basic MP4/GIF recording remains available, but FFmpeg-dependent audio muxing and post-processing are not included. |
-
-The app keeps `settings.json` and the `Captures` folders next to the executable. Move the whole portable build when changing computers or folders.
-
-### Development
-
-Run the tests:
-
-```powershell
-python -u tests/test_components.py
-```
-
-Build the folder version:
-
-```powershell
-python -m PyInstaller --noconfirm Framio.spec
-```
-
-Build the single-file version:
-
-```powershell
-python -m PyInstaller --noconfirm Framio-onefile.spec
-```
-
-The GitHub Actions workflow runs the tests, builds all three Windows packages, uploads Actions artifacts, and creates a GitHub Release for a matching `v<version>` tag. The version is read from `VERSION`. Release notes come from the matching English-then-Russian section in `CHANGELOG.md`.
-
-## Русский
-
-Текущая версия — `1.0.18`. История изменений находится в [CHANGELOG.md](CHANGELOG.md).
-
-### Быстрый запуск
-
-1. Скачайте сборку из раздела [GitHub Releases](https://github.com/MrPanica/Framio/releases).
-2. Запустите `Framio.exe`. Установка не нужна — приложение появится в системном трее.
-3. Нажмите `Ctrl+Shift+Print Screen` или выберите захват в меню трея.
-
-Для запуска из исходников:
-
-```powershell
-python -m pip install -r requirements.txt
-python main.py
-```
-
-### Что можно захватывать
-
-- Прямоугольную область экрана.
-- Несколько независимых областей одновременно.
-- Все подключённые экраны.
-- Целое окно приложения.
-- Длинную страницу или документ с прокруткой.
-- Перевод текста и субтитров на экране в реальном времени.
-- Мгновенное локальное распознавание текста (OCR).
-
-Скриншоты можно сохранять в PNG, JPG и WebP. Области можно записывать в MP4 или GIF. Запись системного звука и микрофона включается в параметрах записи.
-
-### Экранный переводчик в реальном времени и перевод субтитров
-
-Framio оснащён плавающей рамкой перевода с интеллектуальным сканированием:
-
-- **Два режима отображения**:
-  - **In-place (поверх текста)**: Перевод отображается прямо поверх оригинального текста на экране с точным повторением кегля шрифта, цвета и координат строк. Перевод предложения целиком сохраняет контекст многострочных диалогов и субтитров, а слова распределяются построчно строго по соответствующим строкам оригинала без перекрытия межстрочных интервалов.
-  - **HUD-окно субтитров**: Независимая перемещаемая панель субтитров, которую можно разместить в любом месте экрана (включая второй монитор), что идеально подходит для диалогов в играх и стримов.
-- **Оптимизация Smart Diff**: Непрерывное сканирование кадра практически не расходует ресурсы процессора на статичном изображении и мгновенно обновляет перевод при смене текста.
-- **Сквозные клики (`WS_EX_TRANSPARENT`)**: В режиме активного перевода рамка становится неосязаемой для мыши, позволяя кликать сквозь неё прямо в элементы игры или программы.
-- **Режим маскировки (кнопка-глазик)**: Сворачивание панели управления в миниатюрную плавающую кнопку 16×16 px. Её можно свободно перемещать по экрану как левой, так и правой кнопкой мыши; клик ПКМ ставит перевод на паузу (иконка зачёркивается); клик ЛКМ мгновенно возвращает панель настроек.
-
-### Локальный OCR (Распознавание текста)
-
-- Извлечение и копирование текста из выделенной области в буфер обмена в один клик или по `Ctrl+T` (`Ctrl+Shift+C`).
-- Работает 100% автономно и локально через встроенный движок `Windows.Media.Ocr`. Изображения не отправляются в интернет.
-- Автоматическое определение языка (русский, английский и все установленные языковые пакеты Windows) и быстрое меню ручного выбора языка.
-- Интеллектуальная постобработка устраняет артефакты распознавания, корректирует пробелы и знаки препинания.
-
-### Цензура, размытие и лупа
-
-- Инструменты **Размытие (Blur)**, **Пикселизация / Мозаика** и **Лупа (Масштабирование)** доступны прямо на панели рисования.
-- Интерактивное управление: перемещение, масштабирование, вращение и настройка силы эффекта в реальном времени.
-- Контрастная двухцветная рамка трансформации хорошо видна как на светлом, так и на тёмном фоне.
-
-### Несколько областей
-
-1. Выделите первую область.
-2. Нажмите `+` на панели области.
-3. Выделите следующую область. Перед созданием ещё одной снова нажмите `+`.
-4. Для непрерывного добавления удерживайте `Ctrl` во время выделения.
-
-Уже созданные области можно перемещать. Клик по существующей области не создаёт новую.
-
-Верхняя панель массовых действий работает со всеми свободными областями. Через неё можно сохранить, скопировать, запустить MP4 или GIF сразу для всех. Каждая область остаётся отдельным изображением или отдельной записью.
-
-При копировании нескольких изображений Framio сохраняет полный набор в собственном формате буфера обмена и добавляет ссылки на файлы. Обычные приложения Windows, которые умеют принимать только одно изображение, вставят первую область — это ограничение стандартного буфера обмена Windows.
-
-### Запись целого окна
-
-Начните захват, не рисуя область, и дважды щёлкните по нужному окну. Framio найдёт окно под своим overlay и будет использовать его как источник записи.
-
-Если область уже выделена, откройте параметры рамки записи и выберите окно из списка либо нажмите **Выбрать окно кликом мыши**. Для возврата к обычной записи экрана выберите **Вся область под рамкой**.
-
-Некоторые окна Windows нельзя захватывать напрямую: например, защищённое или DRM-содержимое и отдельные поверхности с аппаратным выводом. В таком случае Framio записывает видимые пиксели под рамкой.
-
-### Маски области записи
-
-Выберите **Маска области записи**, а затем произвольный контур, прямоугольник или овал. Произвольный контур замыкается после отпускания кнопки мыши. В одной области можно создать несколько масок, перемещать, масштабировать и поворачивать их.
-
-Нажмите правой кнопкой по маске и выберите **Установить область по размеру маски**, чтобы рамка захвата стала общей ограничивающей рамкой всех масок этой области. В PNG снаружи масок остаётся прозрачность, а в MP4 и GIF внешняя часть становится чёрной.
-
-### Отмена и повтор действий
-
-`Ctrl+Z` и `Ctrl+Y` работают с аннотациями, созданием, удалением и трансформацией масок, изменением областей, а также добавлением и удалением областей. Перемещение или изменение размера записывается одной командой после отпускания кнопки мыши, а не по каждому событию мыши. Сохранение, копирование и запуск записи являются операциями вывода и в историю редактирования не попадают.
-
-### Последние материалы
-
-Откройте **Последние материалы Framio** в меню трея. В панели есть фильтры «Все», «Скриншоты», «GIF» и «Видео». Для изображений и видео показываются превью, имя файла находится над превью, а полное имя и путь доступны в подсказке.
-
-Кнопка **Копировать** помещает изображение или файл в буфер обмена Windows. Кнопка **Просмотр** и клик по превью открывают файл стандартным приложением Windows. Превью также можно перетащить в чат, редактор или другую программу.
-Кнопка **Открыть с помощью...** позволяет выбрать другое приложение Windows для этого файла.
-
-### Поиск по картинке
-
-Framio отправляет изображение только в выбранный сервис. Яндекс.Картинки получает PNG напрямую. Для Google Lens Framio открывает одноразовую локальную форму и отправляет PNG браузерной multipart-навигацией прямо в upload-адрес Google Lens. Файл не загружается на промежуточный хост, а временная локальная форма автоматически удаляется.
-
-### Горячие клавиши по умолчанию
-
-| Действие | Клавиши |
-| --- | --- |
-| Выделить область | `Ctrl+Shift+Print Screen` |
-| Быстрый скриншот всех экранов | `Ctrl+Print Screen` |
-| Обычный скриншот всего экрана в папку | `Print Screen` |
-| Копировать текст из области (OCR) | `Ctrl+T` / `Ctrl+Shift+C` |
-| Экранный переводчик субтитров | По умолчанию не назначено (Меню трея / Настройки) |
-| Записать все экраны | `Ctrl+Shift+F9` |
-| Остановить запись | `Ctrl+Shift+F10` |
-| Скопировать выбранные области | `Ctrl+C` |
-| Сохранить выбранные области | `Ctrl+S` |
-| Отменить действие | `Ctrl+Z` |
-| Повторить отменённое действие | `Ctrl+Y` |
-| Закрыть захват или отменить запись | `Esc` |
-
-Изменить сочетания можно в разделе **Настройки → Горячие клавиши**. В меню трея показываются текущие значения.
-
-### Портативные сборки
-
-| Сборка | Что переносить | FFmpeg | Главное отличие |
-| --- | --- | --- | --- |
-| Папочная portable | Всю папку `Framio`, включая `_internal` | Включён | Запускается быстрее и не распаковывает файлы в `%TEMP%`; папку нельзя разделять. |
-| Полная одним файлом | Один `Framio.exe` | Включён | Удобнее всего переносить; при каждом запуске распаковывает внутренние файлы в `%TEMP%`; около 114 МиБ. |
-| Lite одним файлом | Один `Framio.exe` | Не включён | Меньше размер; обычная запись MP4/GIF остаётся, но функции с FFmpeg, например сведение звука и постобработка, недоступны. |
-
-`settings.json` и папки `Captures` создаются рядом с exe. Для переноса на другой компьютер переносите всю выбранную portable-сборку.
-
-### Разработка
-
-Запустить тесты:
-
-```powershell
-python -u tests/test_components.py
-```
-
-Собрать папочную версию:
-
-```powershell
-python -m PyInstaller --noconfirm Framio.spec
-```
-
-Собрать версию одним файлом:
-
-```powershell
-python -m PyInstaller --noconfirm Framio-onefile.spec
-```
-
-GitHub Actions запускает тесты, собирает три варианта для Windows, загружает артефакты и создаёт GitHub Release для тега `v<версия>`. Версия берётся из `VERSION`. Текст релиза берётся из соответствующего раздела `CHANGELOG.md`: сначала английская часть, затем русская.
-
-## License
-
-[Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)](LICENSE)
-
-This notice covers Framio's original source code and original assets. Dependencies bundled with the application keep their own licenses. In particular, PyQt6 is distributed under GPLv3 or a separate commercial license; check those terms before redistributing modified or commercial builds.
-
-Это уведомление относится к оригинальному коду и оригинальным материалам Framio. Вложенные зависимости сохраняют собственные лицензии. В частности, PyQt6 распространяется по GPLv3 или отдельной коммерческой лицензии; перед распространением изменённых или коммерческих сборок нужно учитывать эти условия.
+# Framio
+
+Framio is a portable Windows app for taking screenshots, recording screen areas as MP4 or GIF, extracting text offline with local Windows OCR, and translating on-screen text in real-time. It can work with one area, several areas, the whole desktop, or a complete application window.
+
+The current release is `1.0.19`. See [CHANGELOG.md](CHANGELOG.md) for the release history.
+
+## English
+
+### Quick start
+
+1. Download a build from [GitHub Releases](https://github.com/MrPanica/Framio/releases).
+2. Run `Framio.exe`. Installation is not required; the app appears in the system tray.
+3. Press `Ctrl+Shift+Print Screen` or choose the capture command from the tray menu.
+
+For a source checkout:
+
+```powershell
+python -m pip install -r requirements.txt
+python main.py
+```
+
+### What you can capture
+
+- A rectangular area of the screen.
+- Quick mouse drag capture: hold key combination + mouse button (`Ctrl+Shift+LButton` for screenshot, `Ctrl+Alt+LButton` for OCR) to drag and instantly copy to clipboard.
+- Several independent areas at once.
+- All connected screens.
+- A complete application window.
+- A scrolling page or document.
+- Real-time on-screen text and subtitle translation.
+- Instant offline text extraction (OCR).
+
+Screenshots can be saved as PNG, JPG, or WebP. Areas can be recorded as MP4 or GIF. System audio and microphone recording are available in the recording settings.
+
+### Real-time Screen & Subtitle Translator
+
+Framio includes an intelligent screen translation frame:
+
+- **Two display modes**:
+  - **In-place overlay**: Translates text directly over the original on-screen words, automatically detecting font sizes, colors, and line coordinates. Whole-sentence translation preserves context across multiple lines, and words are distributed line-by-line directly on top of each original line without drawing across line gaps.
+  - **HUD Subtitles**: A movable floating subtitle window that can be positioned anywhere across multi-monitor setups, ideal for game dialogue and video streams.
+- **Smart Diff Optimization**: Scans the selected frame continuously at high speed, consuming near-zero CPU resources on static frames and refreshing immediately when text changes.
+- **Click-Through Transparency (`WS_EX_TRANSPARENT`)**: When translation is active, mouse clicks pass directly through the frame into the underlying game or application.
+- **Stealth Mode (Eye Pill)**: Collapse the control panel into an ultra-compact 16×16 floating eye button. Move it freely with either the left or right mouse button; click RMB to pause/resume translation (icon switches to a struck-through eye); click LMB to restore the full control panel.
+
+### Local OCR (Text Recognition)
+
+- Extract and copy text from any screen selection directly to the clipboard with one click or via `Ctrl+T` (`Ctrl+Shift+C`).
+- Runs 100% offline and locally using native `Windows.Media.Ocr`. No images or data are sent to external servers.
+- Automatic language detection with support for Russian, English, and all language packs installed in Windows, plus a fast language picker.
+- Advanced post-processing cleans up spacing, punctuation, and common OCR artifacts.
+
+### Censorship, Blur & Magnifier Filters
+
+- Apply **Blur**, **Pixelate / Mosaic**, or **Magnifier** filters directly from the main annotation toolbar.
+- Fully interactive: drag, resize, rotate, and adjust filter intensity with real-time preview.
+- High-contrast dual-tone transformation handles ensure visibility on both bright and dark backgrounds.
+
+### Multiple areas
+
+1. Select the first area.
+2. Press `+` in the area toolbar.
+3. Select the next area. Press `+` again before creating another area.
+4. To add areas continuously, hold `Ctrl` while drawing.
+
+Existing areas remain movable. Clicking an existing area does not create a new one.
+
+The top multi-action bar works with all areas that are not currently recording. It can save, copy, start MP4 recording, or start GIF recording for all of them. Each area remains a separate screenshot or recording.
+
+When several images are copied, Framio puts the complete set into its own clipboard payload and also publishes file URLs. Windows applications that support only one standard image may paste the first image; this is a limitation of the Windows clipboard format, not a combined screenshot from Framio.
+
+### Recording a complete window
+
+Start capture without drawing an area, then double-click the target window. Framio finds the window behind its overlay and uses that window as the capture source.
+
+For an already selected area, open the recording frame settings and either choose a window from the list or use **Select window by clicking**. To return to normal screen-area capture, choose **Entire area under frame**.
+
+Some windows cannot be captured by Windows, including protected or DRM content and some hardware-rendered surfaces. In that case Framio falls back to the pixels visible under the recording frame.
+
+### Capture masks
+
+Select **Capture area mask** and choose a freeform contour, rectangle, or oval. A freeform contour closes when the mouse button is released. You can create several masks in one area and move, resize, or rotate them.
+
+Right-click a mask and choose **Set capture area to mask bounds** to resize the capture area to the common bounding rectangle of all masks in that area. PNG keeps transparency outside the masks; MP4 and GIF use black outside them.
+
+### Undo and redo
+
+`Ctrl+Z` and `Ctrl+Y` cover annotation edits, mask creation/deletion/transforms, capture-area changes, and adding or removing areas. A move or resize is stored as one history entry when the mouse button is released, not once per mouse event. Saving, copying, and starting a recording are output actions and are not added to the edit history.
+
+### Recent media
+
+Open **Framio — Recent Media** from the tray menu. The panel contains filters for all items, screenshots, GIFs, and videos. It shows image and video previews, the file name above each preview, and the full name and path in the tooltip.
+
+Use **Copy** to place an image or file in the Windows clipboard. Use **View** or click the preview to open the file with the default Windows application. A preview can also be dragged into a chat, editor, or another application.
+Use **Open with...** on a card to choose another Windows application for the file.
+
+### Reverse image search
+
+Framio sends images only to the search engine you choose. Yandex Images receives the PNG directly. For Google Lens, Framio opens a one-use local form that submits the PNG with a browser `multipart/form-data` navigation directly to Google’s Lens upload endpoint. The file is not uploaded to an intermediate host; the temporary local form is removed automatically.
+
+### Default hotkeys
+
+| Action | Keys |
+| --- | --- |
+| Capture an area | `Ctrl+Shift+Print Screen` |
+| Quick screenshot drag to clipboard | `Ctrl+Shift+LButton` (drag & release) |
+| Quick text recognition drag (OCR) to clipboard | `Ctrl+Alt+LButton` (drag & release) |
+| Quick screenshot of all screens | `Ctrl+Print Screen` |
+| Standard fullscreen screenshot to the screenshots folder | `Print Screen` |
+| Copy text from selection (OCR) | `Ctrl+T` / `Ctrl+Shift+C` |
+| Screen & Subtitle Translator | Unassigned by default (Tray menu / Settings) |
+| Record all screens | `Ctrl+Shift+F9` |
+| Stop active recording | `Ctrl+Shift+F10` |
+| Copy selected areas | `Ctrl+C` |
+| Save selected areas | `Ctrl+S` |
+| Undo | `Ctrl+Z` |
+| Redo | `Ctrl+Y` |
+| Close capture or cancel recording | `Esc` |
+
+Change these shortcuts in **Settings → Hotkeys**. The tray menu shows the current values.
+
+### Portable builds
+
+| Build | What to copy | FFmpeg | Main difference |
+| --- | --- | --- | --- |
+| Folder portable | The complete `Framio` folder, including `_internal` | Included | Starts fastest and does not unpack into `%TEMP%`; the whole folder must stay together. |
+| Full single-file | One `Framio.exe` | Included | Easiest to carry; unpacks its private files into `%TEMP%` at each start; about 114 MiB. |
+| Lite single-file | One `Framio.exe` | Not bundled | Smaller download; basic MP4/GIF recording remains available, but FFmpeg-dependent audio muxing and post-processing are not included. |
+
+The app keeps `settings.json` and the `Captures` folders next to the executable. Move the whole portable build when changing computers or folders.
+
+### Development
+
+Run the tests:
+
+```powershell
+python -u tests/test_components.py
+```
+
+Build the folder version:
+
+```powershell
+python -m PyInstaller --noconfirm Framio.spec
+```
+
+Build the single-file version:
+
+```powershell
+python -m PyInstaller --noconfirm Framio-onefile.spec
+```
+
+The GitHub Actions workflow runs the tests, builds all three Windows packages, uploads Actions artifacts, and creates a GitHub Release for a matching `v<version>` tag. The version is read from `VERSION`. Release notes come from the matching English-then-Russian section in `CHANGELOG.md`.
+
+## Русский
+
+Текущая версия — `1.0.19`. История изменений находится в [CHANGELOG.md](CHANGELOG.md).
+
+### Быстрый запуск
+
+1. Скачайте сборку из раздела [GitHub Releases](https://github.com/MrPanica/Framio/releases).
+2. Запустите `Framio.exe`. Установка не нужна — приложение появится в системном трее.
+3. Нажмите `Ctrl+Shift+Print Screen` или выберите захват в меню трея.
+
+Для запуска из исходников:
+
+```powershell
+python -m pip install -r requirements.txt
+python main.py
+```
+
+### Что можно захватывать
+
+- Прямоугольную область экрана.
+- Быстрый захват жестами мыши: зажмите сочетание клавиш и кнопку мыши (`Ctrl+Shift+ЛКМ` для скриншота, `Ctrl+Alt+ЛКМ` для OCR), выделите область и отпустите мышь для моментального копирования в буфер обмена.
+- Несколько независимых областей одновременно.
+- Все подключённые экраны.
+- Целое окно приложения.
+- Длинную страницу или документ с прокруткой.
+- Перевод текста и субтитров на экране в реальном времени.
+- Мгновенное локальное распознавание текста (OCR).
+
+Скриншоты можно сохранять в PNG, JPG и WebP. Области можно записывать в MP4 или GIF. Запись системного звука и микрофона включается в параметрах записи.
+
+### Экранный переводчик в реальном времени и перевод субтитров
+
+Framio оснащён плавающей рамкой перевода с интеллектуальным сканированием:
+
+- **Два режима отображения**:
+  - **In-place (поверх текста)**: Перевод отображается прямо поверх оригинального текста на экране с точным повторением кегля шрифта, цвета и координат строк. Перевод предложения целиком сохраняет контекст многострочных диалогов и субтитров, а слова распределяются построчно строго по соответствующим строкам оригинала без перекрытия межстрочных интервалов.
+  - **HUD-окно субтитров**: Независимая перемещаемая панель субтитров, которую можно разместить в любом месте экрана (включая второй монитор), что идеально подходит для диалогов в играх и стримов.
+- **Оптимизация Smart Diff**: Непрерывное сканирование кадра практически не расходует ресурсы процессора на статичном изображении и мгновенно обновляет перевод при смене текста.
+- **Сквозные клики (`WS_EX_TRANSPARENT`)**: В режиме активного перевода рамка становится неосязаемой для мыши, позволяя кликать сквозь неё прямо в элементы игры или программы.
+- **Режим маскировки (кнопка-глазик)**: Сворачивание панели управления в миниатюрную плавающую кнопку 16×16 px. Её можно свободно перемещать по экрану как левой, так и правой кнопкой мыши; клик ПКМ ставит перевод на паузу (иконка зачёркивается); клик ЛКМ мгновенно возвращает панель настроек.
+
+### Локальный OCR (Распознавание текста)
+
+- Извлечение и копирование текста из выделенной области в буфер обмена в один клик или по `Ctrl+T` (`Ctrl+Shift+C`).
+- Работает 100% автономно и локально через встроенный движок `Windows.Media.Ocr`. Изображения не отправляются в интернет.
+- Автоматическое определение языка (русский, английский и все установленные языковые пакеты Windows) и быстрое меню ручного выбора языка.
+- Интеллектуальная постобработка устраняет артефакты распознавания, корректирует пробелы и знаки препинания.
+
+### Цензура, размытие и лупа
+
+- Инструменты **Размытие (Blur)**, **Пикселизация / Мозаика** и **Лупа (Масштабирование)** доступны прямо на панели рисования.
+- Интерактивное управление: перемещение, масштабирование, вращение и настройка силы эффекта в реальном времени.
+- Контрастная двухцветная рамка трансформации хорошо видна как на светлом, так и на тёмном фоне.
+
+### Несколько областей
+
+1. Выделите первую область.
+2. Нажмите `+` на панели области.
+3. Выделите следующую область. Перед созданием ещё одной снова нажмите `+`.
+4. Для непрерывного добавления удерживайте `Ctrl` во время выделения.
+
+Уже созданные области можно перемещать. Клик по существующей области не создаёт новую.
+
+Верхняя панель массовых действий работает со всеми свободными областями. Через неё можно сохранить, скопировать, запустить MP4 или GIF сразу для всех. Каждая область остаётся отдельным изображением или отдельной записью.
+
+При копировании нескольких изображений Framio сохраняет полный набор в собственном формате буфера обмена и добавляет ссылки на файлы. Обычные приложения Windows, которые умеют принимать только одно изображение, вставят первую область — это ограничение стандартного буфера обмена Windows.
+
+### Запись целого окна
+
+Начните захват, не рисуя область, и дважды щёлкните по нужному окну. Framio найдёт окно под своим overlay и будет использовать его как источник записи.
+
+Если область уже выделена, откройте параметры рамки записи и выберите окно из списка либо нажмите **Выбрать окно кликом мыши**. Для возврата к обычной записи экрана выберите **Вся область под рамкой**.
+
+Некоторые окна Windows нельзя захватывать напрямую: например, защищённое или DRM-содержимое и отдельные поверхности с аппаратным выводом. В таком случае Framio записывает видимые пиксели под рамкой.
+
+### Маски области записи
+
+Выберите **Маска области записи**, а затем произвольный контур, прямоугольник или овал. Произвольный контур замыкается после отпускания кнопки мыши. В одной области можно создать несколько масок, перемещать, масштабировать и поворачивать их.
+
+Нажмите правой кнопкой по маске и выберите **Установить область по размеру маски**, чтобы рамка захвата стала общей ограничивающей рамкой всех масок этой области. В PNG снаружи масок остаётся прозрачность, а в MP4 и GIF внешняя часть становится чёрной.
+
+### Отмена и повтор действий
+
+`Ctrl+Z` и `Ctrl+Y` работают с аннотациями, созданием, удалением и трансформацией масок, изменением областей, а также добавлением и удалением областей. Перемещение или изменение размера записывается одной командой после отпускания кнопки мыши, а не по каждому событию мыши. Сохранение, копирование и запуск записи являются операциями вывода и в историю редактирования не попадают.
+
+### Последние материалы
+
+Откройте **Последние материалы Framio** в меню трея. В панели есть фильтры «Все», «Скриншоты», «GIF» и «Видео». Для изображений и видео показываются превью, имя файла находится над превью, а полное имя и путь доступны в подсказке.
+
+Кнопка **Копировать** помещает изображение или файл в буфер обмена Windows. Кнопка **Просмотр** и клик по превью открывают файл стандартным приложением Windows. Превью также можно перетащить в чат, редактор или другую программу.
+Кнопка **Открыть с помощью...** позволяет выбрать другое приложение Windows для этого файла.
+
+### Поиск по картинке
+
+Framio отправляет изображение только в выбранный сервис. Яндекс.Картинки получает PNG напрямую. Для Google Lens Framio открывает одноразовую локальную форму и отправляет PNG браузерной multipart-навигацией прямо в upload-адрес Google Lens. Файл не загружается на промежуточный хост, а временная локальная форма автоматически удаляется.
+
+### Горячие клавиши по умолчанию
+
+| Действие | Клавиши |
+| --- | --- |
+| Выделить область | `Ctrl+Shift+Print Screen` |
+| Быстрый скриншот области в буфер | `Ctrl+Shift+ЛКМ` (выделение с удержанием) |
+| Быстрое распознавание текста (OCR) в буфер | `Ctrl+Alt+ЛКМ` (выделение с удержанием) |
+| Быстрый скриншот всех экранов | `Ctrl+Print Screen` |
+| Обычный скриншот всего экрана в папку | `Print Screen` |
+| Копировать текст из области (OCR) | `Ctrl+T` / `Ctrl+Shift+C` |
+| Экранный переводчик субтитров | По умолчанию не назначено (Меню трея / Настройки) |
+| Записать все экраны | `Ctrl+Shift+F9` |
+| Остановить запись | `Ctrl+Shift+F10` |
+| Скопировать выбранные области | `Ctrl+C` |
+| Сохранить выбранные области | `Ctrl+S` |
+| Отменить действие | `Ctrl+Z` |
+| Повторить отменённое действие | `Ctrl+Y` |
+| Закрыть захват или отменить запись | `Esc` |
+
+Изменить сочетания можно в разделе **Настройки → Горячие клавиши**. В меню трея показываются текущие значения.
+
+### Портативные сборки
+
+| Сборка | Что переносить | FFmpeg | Главное отличие |
+| --- | --- | --- | --- |
+| Папочная portable | Всю папку `Framio`, включая `_internal` | Включён | Запускается быстрее и не распаковывает файлы в `%TEMP%`; папку нельзя разделять. |
+| Полная одним файлом | Один `Framio.exe` | Включён | Удобнее всего переносить; при каждом запуске распаковывает внутренние файлы в `%TEMP%`; около 114 МиБ. |
+| Lite одним файлом | Один `Framio.exe` | Не включён | Меньше размер; обычная запись MP4/GIF остаётся, но функции с FFmpeg, например сведение звука и постобработка, недоступны. |
+
+`settings.json` и папки `Captures` создаются рядом с exe. Для переноса на другой компьютер переносите всю выбранную portable-сборку.
+
+### Разработка
+
+Запустить тесты:
+
+```powershell
+python -u tests/test_components.py
+```
+
+Собрать папочную версию:
+
+```powershell
+python -m PyInstaller --noconfirm Framio.spec
+```
+
+Собрать версию одним файлом:
+
+```powershell
+python -m PyInstaller --noconfirm Framio-onefile.spec
+```
+
+GitHub Actions запускает тесты, собирает три варианта для Windows, загружает артефакты и создаёт GitHub Release для тега `v<версия>`. Версия берётся из `VERSION`. Текст релиза берётся из соответствующего раздела `CHANGELOG.md`: сначала английская часть, затем русская.
+
+## License
+
+[Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)](LICENSE)
+
+This notice covers Framio's original source code and original assets. Dependencies bundled with the application keep their own licenses. In particular, PyQt6 is distributed under GPLv3 or a separate commercial license; check those terms before redistributing modified or commercial builds.
+
+Это уведомление относится к оригинальному коду и оригинальным материалам Framio. Вложенные зависимости сохраняют собственные лицензии. В частности, PyQt6 распространяется по GPLv3 или отдельной коммерческой лицензии; перед распространением изменённых или коммерческих сборок нужно учитывать эти условия.

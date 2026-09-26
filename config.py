@@ -19,6 +19,8 @@ DEFAULT_HOTKEY_RECORD_FULLSCREEN = "Ctrl+Shift+F9"
 DEFAULT_HOTKEY_STOP_RECORDING = "Ctrl+Shift+F10"
 DEFAULT_HOTKEY_HIGHLIGHT_OBJECTS = "Alt"
 DEFAULT_HOTKEY_LIVE_TRANSLATOR = ""
+DEFAULT_HOTKEY_QUICK_DRAG_SCREENSHOT = "Ctrl+Shift+LButton"
+DEFAULT_HOTKEY_QUICK_DRAG_OCR = "Ctrl+Alt+LButton"
 
 def get_base_dir() -> Path:
     """Возвращает базовую директорию приложения (папку с .exe или скриптом)."""
@@ -82,6 +84,11 @@ class AppConfig:
     hotkey_stop_recording: str = DEFAULT_HOTKEY_STOP_RECORDING
     hotkey_highlight_objects: str = DEFAULT_HOTKEY_HIGHLIGHT_OBJECTS
     hotkey_live_translator: str = DEFAULT_HOTKEY_LIVE_TRANSLATOR
+    quick_drag_screenshot_hotkey: str = DEFAULT_HOTKEY_QUICK_DRAG_SCREENSHOT
+    quick_drag_screenshot_format: str = "png"  # png, jpg, webp
+    quick_drag_ocr_hotkey: str = DEFAULT_HOTKEY_QUICK_DRAG_OCR
+    quick_drag_ocr_lang: str = "auto"          # auto, ru, en, etc.
+    custom_notifications: bool = True          # Стилизованные компактные уведомления Framio над треем
     
     # Видео настройки
     video_fps: int = 30

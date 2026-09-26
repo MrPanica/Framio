@@ -1,1735 +1,3504 @@
 # -*- coding: utf-8 -*-
+
 """
+
 Модуль интернационализации (i18n) Framio.
+
 Поддерживает автоматическое определение языка системы (русский по умолчанию для ru/uk/be систем,
+
 английский для остальных), ручное переключение (Авто / Русский / English)
+
 и словарь переводов для всех элементов интерфейса, уведомлений и справки.
+
 """
+
+
 
 import sys
+
 import ctypes
+
 from PyQt6.QtCore import QLocale
 
+
+
 # Языковые словари
+
 TRANSLATIONS = {
+
     "ru": {
+
         # --- Системный трей и главное меню ---
+
         "app_title": "Framio — Скриншоты и запись",
+
         "tray_ready": "Готов к работе",
+
         "tray_recording_active": "Framio — Идёт запись: {count} активн. (видео/GIF)",
+
         "tray_processing": "Framio — Обработка ({count} шт.):",
+
         "tray_hotkey_capture": "• Захват области: {key}",
+
         "tray_hotkey_fullscreen": "• Запись экрана: {key}",
+
         "tray_hotkey_stop": "• Остановка записи: {key}",
+
         "tray_hotkey_quick_screen": "• Быстрый полный скриншот: {key}",
+
         "tray_hotkey_screenshot": "• Обычный скриншот всего экрана: {key}",
+
         "tray_menu_capture": "Сделать скриншот ({key})",
+
         "tray_menu_quick_fullscreen": "Быстрый скриншот экрана ({key})",
+
         "tray_menu_screenshot": "Обычный скриншот всего экрана ({key})",
+
         "tray_menu_rec_fullscreen": "Записать весь экран ({key})",
+
         "tray_menu_rec_video": "Записать видео области MP4",
+
         "tray_menu_rec_gif": "Записать GIF области",
+
         "tray_menu_live_translator": "Плавающая рамка перевода ({key})",
+
         "tray_menu_live_translator_no_key": "Плавающая рамка перевода",
+
         "tray_menu_status_rec": "Идёт запись ({count} активн.)",
+
         "tray_menu_stop_all": "Остановить запись ({key})",
+
         "tray_menu_folder_screens": "Папка со скриншотами",
+
         "tray_menu_folder_videos": "Папка с видео",
+
         "tray_menu_folder_gifs": "Папка с GIF",
+
         "tray_menu_recent_media": "Последние материалы Framio",
+
         "tray_menu_recent_empty": "Пока нет сохранённых материалов",
+
         "tray_menu_recent_copy_image": "Скопировать изображение: {name}",
+
         "tray_menu_recent_copy_file": "Скопировать файл: {name}",
+
         "recent_media_title": "Последние материалы",
+
         "recent_filter_all": "Все",
+
         "recent_filter_screenshots": "Скриншоты",
+
         "recent_filter_gifs": "GIF",
+
         "recent_filter_videos": "Видео",
+
         "recent_filter_empty": "Нет материалов этого типа",
+
         "recent_preview_unavailable": "Нет превью",
+
         "recent_kind_screenshot": "Скриншот",
+
         "recent_kind_gif": "GIF",
+
         "recent_kind_video": "Видео",
+
         "recent_action_copy": "Копировать",
+
         "recent_action_view": "Просмотр",
+
         "recent_action_copy_tip": "Копировать материал",
+
         "recent_action_view_tip": "Открыть материал для просмотра",
+
         "recent_action_google": "Google",
+
         "recent_action_yandex": "Yandex",
+
         "recent_action_google_tip": "Искать эту картинку в Google Lens",
+
         "recent_action_yandex_tip": "Искать эту картинку в Яндекс.Картинках",
+
         "recent_action_open_with": "Открыть с помощью...",
+
         "recent_action_open_with_tip": "Выбрать приложение для открытия файла",
+
         "recent_search_title": "Поиск по изображению",
+
         "recent_search_started": "Отправка материала в {engine}...",
+
         "recent_context_open": "Открыть",
+
         "recent_context_open_with": "Открыть с помощью...",
+
         "recent_context_copy_path": "Копировать путь",
+
         "tray_menu_settings": "Настройки",
+
         "tray_menu_help": "Справка и инструкция",
+
         "tray_menu_exit": "Выход",
 
+
+
         # --- Уведомления ---
+
         "notif_screen_saved_title": "Скриншот сохранен",
+
         "notif_screen_saved_body": "Файл: {filename}\nПапка: {folder}\nНажмите сюда, чтобы открыть файл в проводнике",
+
         "notif_screen_saved_count": "\nСохранено зон: {count}",
+
         "notif_screen_save_failed_title": "Не удалось сохранить скриншот",
+
         "notif_screen_save_failed_body": "Не удалось записать выбранные изображения на диск.",
+
         "dialog_save_screenshot": "Сохранить скриншоты выбранных зон",
+
         "notif_quick_screen_saved_title": "Быстрый скриншот экрана",
+
         "notif_quick_screen_saved_body": "Весь экран сохранен в {filename}\nНажмите сюда, чтобы открыть файл",
+
         "notif_video_saved_title": "Видео успешно сохранено",
+
         "notif_video_saved_body": "Файл: {filename}\nПапка: {folder}\nНажмите сюда, чтобы открыть файл в проводнике",
+
         "notif_gif_saved_title": "GIF успешно сохранена",
+
         "notif_gif_saved_body": "Файл: {filename}\nПапка: {folder}\nНажмите сюда, чтобы открыть файл в проводнике",
+
         "notif_rec_saving_video": "Сохранение видео...",
+
         "notif_rec_saving_gif": "Сохранение GIF...",
+
         "notif_rec_saving_body": "Идёт оптимизация и кодирование в высоком качестве (в фоне)...",
+
         "notif_mass_saved_title": "Массовая запись сохранена",
+
         "notif_mass_saved_body": "Видео: {video}\nGIF: {gif}",
+
         "storage_warning_title": "Папка приложения защищена",
+
         "storage_warning_body": "Нет права записи рядом с приложением. Записи сохраняются в:\n{path}",
+
         "notif_rec_cancelled_title": "Запись отменена",
+
         "notif_rec_cancelled_body": "Запись экрана отменена без сохранения.",
+
         "notif_rec_started_title": "Запись всего экрана запущена",
+
         "notif_rec_started_body": "Запись экрана началась!\nДля остановки нажмите: {key}",
+
         "notif_clipboard_copied": "Скопировано в буфер обмена",
+
         "notif_clipboard_multi_images": "{count} зон скопированы: первая — как изображение, все — как отдельные файлы.",
+
         "notif_clipboard_png": "Изображение (PNG) скопировано в буфер обмена.",
+
         "notif_clipboard_jpeg": "Изображение (JPEG) скопировано в буфер обмена.",
+
         "notif_clipboard_standard": "Изображение скопировано в буфер обмена (готово для вставки Ctrl+V).",
+
         "notif_clipboard_data_uri_many": "{count} Data URI скопировано в буфер в виде текста.",
+
         "notif_clipboard_data_uri_one": "Data URI (Base64) скопирован в буфер в виде текста.",
+
         "image_search_google_ready": "Выполняется прямая загрузка снимка в Google Lens.",
+
         "image_search_google_failed": "Не удалось открыть прямую загрузку Google Lens.",
+
         "image_search_yandex_fallback": "Снимок скопирован в буфер обмена. Нажмите Ctrl+V в строке поиска Яндекс.Картинок.",
+
         "image_search_google_preparing": "Подготавливается прямая загрузка снимка в Google Lens.",
+
         "image_search_direct_preparing": "Скриншот отправляется в {engine}. Результаты откроются в браузере.",
 
+
+
         # --- Окно записи (RecordingFrameWindow) ---
+
         "rec_mode_video": "REC MP4",
+
         "rec_mode_gif": "REC GIF",
+
         "rec_mode_pause": "ПАУЗА",
+
         "rec_drag_hint": "Зажмите шапку левой кнопкой мыши для перемещения рамки по экрану",
+
         "rec_target_screen": "Записывается вся область экрана под рамкой",
+
         "rec_target_window": "Записывается отдельное окно: {title}",
+
         "rec_mic_on": "Микрофон включен (клик для отключения)",
+
         "rec_mic_off": "Микрофон выключен (клик для включения)",
+
         "rec_system_on": "Системный звук включен (клик для отключения)",
+
         "rec_system_off": "Системный звук выключен (клик для включения)",
+
         "rec_timer_tip": "Текущая длительность записи и количество захваченных кадров",
+
         "rec_size_tip": "Текущие размеры области записи в пикселях",
+
         "rec_draw_btn_tip": "Панель инструментов живого рисования и заметок [Ctrl+Z отмена]",
+
         "rec_pause_tip": "Приостановить запись [Пробел]",
+
         "rec_resume_tip": "Возобновить запись [Пробел]",
+
         "rec_stop_tip": "Завершить запись и сохранить в файл [Enter / Space]",
+
         "rec_lock_tip": "Зафиксировать рамку от случайного изменения размера",
+
         "rec_unlock_tip": "Разблокировать рамку для изменения размера",
+
         "rec_settings_tip": "Параметры записи (выбор приложения / отдельного окна)",
+
         "rec_cancel_tip": "Отменить запись без сохранения и удалить файл [Esc]",
+
         "rec_header_collapse_tip": "Свернуть шапку записи",
+
         "rec_header_expand_tip": "Развернуть шапку записи",
+
         "rec_source_label": "Источник захвата",
+
         "rec_source_all_windows": "Весь экран / Все окна",
+
         "rec_source_all_desc": "Записывать всю область экрана под рамкой со всеми окнами",
+
         "rec_refresh_windows": "Обновить список окон",
+
         "rec_pick_window_btn": "Выбрать окно кликом мыши",
+
         "rec_snap_window_tip": "Нажмите на окно для выбора и прилипания рамки",
+
         "rec_window_hover_badge": "{title} (Кликните для привязки)",
+
         "rec_mode_countdown": "ТАЙМЕР",
+
         "rec_mode_countdown_prefix": "СТАРТ: {sec}с",
+
         "rec_countdown_status": "Старт через {sec}с...",
+
         "rec_countdown_hint": "Приготовьтесь... (Esc для отмены)",
 
+
+
         # --- Длинный скриншот (Scrolling Screenshot) ---
+
         "action_scroll": "Длинный скриншот с автопрокруткой [S]",
+
         "scroll_hud_title": "Длинный скриншот",
+
         "scroll_hud_status": "Кадров: {frames} | Высота: {height} px",
+
         "scroll_hud_done": "Завершить (Enter)",
+
         "scroll_hud_autoscroll": "Авто-скролл",
+
         "scroll_hud_autoscroll_off": "Авто-скролл: Выкл",
+
         "scroll_hud_autoscroll_on": "Авто-скролл: Вкл",
+
         "scroll_hud_autoscroll_tip": "Включить/выключить автоматическую плавную прокрутку страницы",
+
         "scroll_hud_pause": "Пауза",
+
         "scroll_hud_resume": "Продолжить",
+
         "scroll_hud_cancel": "Отмена",
+
         "scroll_hud_snap": "Сделать кадр",
+
         "scroll_hud_hint": "Прокручивайте страницу колёсиком мыши (или используйте Авто-скролл). Кадры склеиваются автоматически!",
+
         "scroll_copied_toast": "Длинный скриншот скопирован в буфер обмена!",
+
         "scroll_saved_toast": "Длинный скриншот сохранён: {path}",
+
+
 
         # --- Панель живого рисования видео (RecordingDrawingToolbar) ---
+
         "draw_cursor": "Курсор (Взаимодействие с экраном / клики сквозь рамку)",
+
         "draw_pen": "Карандаш (свободное рисование)",
+
         "draw_arrow": "Стрелка с усиками",
+
         "draw_rect": "Прямоугольник",
+
         "draw_mosaic": "Мозаика (Цензура размытием)",
+
         "draw_highlighter": "Маркер-хайлайтер (полупрозрачный)",
+
         "draw_text": "Текст с фоном",
+
         "draw_undo": "Отменить последнее действие (Ctrl+Z)",
+
         "draw_clear": "Очистить все нарисованные фигуры",
+
         "draw_color": "Выбрать цвет и толщину рисования",
+
         "draw_layers": "Слои фигур (управление и видимость)",
+
         "draw_pin_on": "Рисунки закреплены на экране (не смещаются при движении рамки)",
+
         "draw_pin_off": "Рисунки привязаны к рамке (смещаются вместе с ней)",
 
+
+
         # --- Скриншотер и оверлей (OverlayWindow & Toolbars) ---
+
         "tool_move": "Перемещение и выделение (V)",
+
         "tool_select": "Выделение объектов (выбор фигур рамкой или кликом)",
+
         "tool_more": "Дополнительные инструменты",
+
         "action_more": "Дополнительные действия",
+
         "tool_pen": "Карандаш (P)",
+
         "tool_line": "Прямая линия (L)",
+
         "tool_arrow": "Стрелка с зазубринами (A)",
+
         "tool_rect": "Прямоугольник (R)",
+
         "tool_circle": "Эллипс / Окружность (C)",
+
         "tool_highlighter": "Маркер-выделитель (H)",
+
         "tool_text": "Текст (T)",
+
         "tool_step": "Нумератор шагов (1, 2, 3...) (S)",
+
         "tool_mosaic": "Цензура / Размытие (M)",
+
         "tool_capture_mask": "Маска области записи",
+
         "capture_mask_name": "Маска области записи",
+
         "capture_mask_freeform": "Произвольный контур",
+
         "capture_mask_rect": "Прямоугольная маска",
+
         "capture_mask_circle": "Овальная маска",
+
         "capture_mask_fit_region": "Установить область по размеру маски",
+
         "tool_undo": "Отменить последнее действие (Ctrl+Z)",
+
         "tool_redo": "Повторить отменённое действие (Ctrl+Y)",
+
         "tool_clear": "Очистить все фигуры",
+
         "action_save": "Сохранить скриншот на диск (Ctrl+S)",
+
         "action_copy": "Копировать в буфер обмена (Ctrl+C)",
+
         "action_copy_text": "Копировать текст с изображения в буфер обмена (Ctrl+T)",
+
         "action_search": "Поиск картинки в Google",
+
         "action_add_region": "Добавить зону выделения (+ / Ctrl)",
+
         "action_add_region_active": "Режим добавления зон включён — выделите следующую область",
+
         "action_all_regions": "Действия для всех зон",
+
         "action_all_save": "Сохранить скриншоты всех зон",
+
         "action_all_copy": "Скопировать все зоны",
+
         "action_all_copy_text": "Скопировать текст со всех зон (OCR)",
+
         "action_all_video": "Записывать видео всех зон",
+
         "action_all_gif": "Записывать GIF всех зон",
+
         "action_all_filter": "Эффект для всех зон",
+
         "region_header_title": "Зоны · массовые действия",
+
         "region_header_title_count": "Зоны · массовые действия ({available}/{total})",
+
         "action_region_header_close": "Отменить добавление / закрыть выделения",
+
         "region_mass_save_short": "Сохранить",
+
         "region_mass_copy_short": "Копировать",
+
         "region_mass_copy_text_short": "Текст",
+
         "region_mass_video_short": "Видео",
+
         "region_ui_snapshot_short": "Интерфейс",
+
         "region_ui_snapshot_title": "Снимок интерфейса",
+
         "action_ui_snapshot": "Сделать снимок экрана с текущим оверлеем программы",
+
         "ui_snapshot_action_save": "Сохранить в файл...",
+
         "ui_snapshot_action_copy": "Копировать в буфер обмена",
+
         "dialog_save_ui_snapshot": "Сохранить снимок интерфейса",
+
         "notif_ui_snapshot_copied_title": "Снимок интерфейса скопирован",
+
         "notif_ui_snapshot_copied_body": "Снимок экрана с текущим оверлеем программы помещён в буфер обмена.",
+
         "notif_ui_snapshot_saved_title": "Снимок интерфейса сохранён",
+
         "notif_ocr_copied_title": "Текст скопирован в буфер обмена",
+
         "notif_ocr_no_text_title": "Текст не найден",
+
         "notif_ocr_no_text_body": "На выбранной области изображения текст не обнаружен.",
+
         "popup_ocr_auto": "Текст (Автоопределение)",
+
         "mass_recording_title": "Массовая запись",
+
         "mass_recording_active": "Активных зон: {count}",
+
         "mass_recording_stop": "Остановить всё",
+
         "mass_recording_stop_tip": "Остановить все видео и GIF",
+
         "mass_recording_active_types": "Видео: {video} · GIF: {gif}",
+
         "mass_video_pause": "Видео",
+
         "mass_video_pause_tip": "Поставить видео на паузу",
+
         "mass_video_resume": "Видео",
+
         "mass_video_resume_tip": "Продолжить видео",
+
         "mass_video_stop": "Видео",
+
         "mass_video_stop_tip": "Остановить только видео",
+
         "mass_gif_pause": "GIF",
+
         "mass_gif_pause_tip": "Поставить GIF на паузу",
+
         "mass_gif_resume": "GIF",
+
         "mass_gif_resume_tip": "Продолжить GIF",
+
         "mass_gif_stop": "GIF",
+
         "mass_gif_stop_tip": "Остановить только GIF",
+
         "region_recent_image": "Скриншот зоны {index}",
+
         "region_add_mode": "Режим добавления зон: выделите следующую область",
+
         "action_close": "Закрыть выделение (Esc)",
+
         "action_close_region": "Удалить активную зону (Esc / Ctrl+W)",
+
         "action_dynamic_bg": "Динамический фон (живое видео под рамкой)",
+
         "action_passthrough": "Защита зоны: клики внутри рамки не взаимодействуют с фоновыми окнами",
+
         "rec_tip_passthrough": "Защита зоны: клики внутри рамки заблокированы от попадания в фоновые окна (вкл/выкл)",
+
         "tool_lbl_cursor": "Курсор",
+
         "tool_lbl_select": "Выделение",
+
         "tool_lbl_pen": "Карандаш",
+
         "tool_lbl_highlighter": "Маркер",
+
         "tool_lbl_shapes": "Фигуры",
+
         "tool_lbl_mask": "Маска",
+
         "tool_lbl_text": "Текст",
+
         "tool_lbl_properties": "Свойства",
+
         "tool_lbl_more": "Ещё",
+
         "tool_lbl_undo": "Отмена",
+
         "tool_lbl_redo": "Повтор",
+
         "tool_lbl_censor": "Цензура",
+
         "action_lbl_layers": "Слои",
+
         "action_lbl_history": "История",
 
+
+
         # --- Контекстное меню фигур и слои ---
+
         "shape_menu_props": "Изменить свойства ({name})...",
+
         "shape_menu_props_clean": "Параметры фигуры...",
+
         "shape_menu_text_props": "Параметры текста (шрифт, цвет)...",
+
         "text_editor_move": "Текст",
+
         "text_editor_close_tip": "Отмена (Esc)",
+
         "shape_menu_dup": "Дублировать (Ctrl+D)",
+
         "shape_menu_order": "Порядок слоёв",
+
         "shape_menu_front": "На передний план",
+
         "shape_menu_up": "Переместить выше",
+
         "shape_menu_down": "Переместить ниже",
+
         "shape_menu_back": "На задний план",
+
         "shape_menu_delete": "Удалить фигуру (Del)",
+
         "layers_dialog_title": "Слои фигур",
+
         "layers_visible_tip": "Вкл/Выкл видимость слоя",
+
         "layers_up_tip": "Переместить выше",
+
         "layers_down_tip": "Переместить ниже",
+
         "layers_del_tip": "Удалить слой",
 
+
+
         # --- Всплывающее окно редактирования фигуры (ShapeEditPopup) ---
+
         "shape_edit_title": "Свойства фигуры: {name}",
+
         "shape_edit_color": "Цвет:",
+
         "shape_edit_width": "Толщина: {val} px",
+
         "shape_edit_opacity": "Непрозрачность: {val}%",
+
         "shape_edit_style": "Стиль стрелки:",
+
         "shape_edit_custom_color": "Другой цвет...",
+
         "shape_edit_del": "Удалить",
+
         "shape_edit_done": "Готово",
 
+
+
         # --- Палитра цветов (ColorPalettePopup) ---
+
         "palette_title": "Выбор цвета и пера",
+
         "palette_thickness": "Толщина линии: {val} px",
+
         "palette_custom_tip": "Выбрать произвольный цвет из расширенной палитры Windows",
 
+
+
         # --- Диалог настроек (SettingsDialog) ---
+
         "settings_title": "Настройки Framio",
+
         "settings_tab_storage": "Папки сохранения",
+
         "settings_tab_media": "Запись (Видео, GIF, Звук)",
+
         "settings_tab_hotkeys": "Горячие клавиши",
+
         "settings_tab_general": "Общие и снимки",
+
         "settings_tab_help": "Справка и инструкция",
 
+
+
         "settings_lang_label": "Язык интерфейса / Language:",
+
         "settings_lang_auto": "Авто (Системный)",
+
         "settings_lang_ru": "Русский",
+
         "settings_lang_en": "English",
+
+
 
         "settings_btn_apply": "Применить",
+
         "settings_btn_close": "Закрыть",
+
         "settings_btn_record": "Назначить",
+
         "settings_btn_recording": "Нажмите...",
+
         "settings_btn_browse": "Обзор...",
+
         "settings_btn_reset": "Сбросить",
 
+
+
         "settings_storage_group": "Расположение сохраняемых файлов",
+
         "settings_screenshots_dir": "Папка скриншотов:",
+
         "settings_videos_dir": "Папка видео (MP4):",
+
         "settings_gifs_dir": "Папка анимаций (GIF):",
+
         "settings_portable_badge": "Режим: {mode} • {path}",
 
+
+
         "settings_video_group": "Параметры видеозаписи (MP4)",
+
         "settings_video_fps": "Частота кадров (FPS):",
+
         "settings_video_codec": "Видеокодек:",
+
         "settings_compress_video": "Оптимизировать размер MP4 после записи (H.264 CRF)",
 
+
+
         "settings_gif_group": "Параметры GIF-анимаций",
+
         "settings_gif_fps": "Частота кадров GIF (FPS):",
+
         "settings_gif_colors": "Палитра цветов GIF:",
+
         "settings_gif_dither": "Алгоритм дизеринга (сглаживания цветов):",
+
         "settings_compress_gif": "Оптимизировать размер GIF (FFmpeg PaletteGen)",
 
+
+
         "settings_audio_group": "Запись звука",
+
         "settings_record_mic": "Записывать микрофон по умолчанию",
+
         "settings_record_system": "Записывать системный звук (игры, видео, браузер WASAPI loopback)",
 
+
+
         "settings_countdown_group": "Таймер перед началом записи",
+
         "settings_countdown_enable": "Включить обратный отсчёт перед началом записи",
+
         "settings_countdown_delay": "Задержка таймера:",
 
+
+
         "settings_hotkeys_group": "Глобальные комбинации клавиш",
+
         "settings_hk_capture": "Захват области экрана (скриншот):",
+
         "settings_hk_quick_screen": "Быстрый скриншот всего экрана сразу в папку:",
+
         "settings_hk_screenshot": "Обычный скриншот всего экрана:",
+
         "settings_hk_screenshot_desc": "Сохраняет весь экран сразу в папку скриншотов без выделения и диалога",
+
         "settings_hk_rec_fs": "Запись всего экрана (видео):",
+
         "settings_hk_stop_rec": "Остановка активной записи экрана:",
 
+
+
         "settings_general_group": "Поведение приложения",
+
         "settings_auto_copy": "Автоматически копировать скриншот в буфер обмена",
+
         "settings_auto_copy_desc": "Сразу помещать изображение в буфер обмена после выделения",
+
         "settings_play_sound": "Воспроизводить звуки затвора и уведомлений",
+
         "settings_play_sound_desc": "Звуковой щелчок затвора при снимке экрана",
+
         "settings_open_folder": "Открывать папку с файлом после сохранения",
+
         "settings_open_folder_desc": "Показывать созданный файл в проводнике Windows",
+
         "settings_save_on_search": "Сохранять скриншот при поиске по картинке",
+
         "settings_save_on_search_desc": "Автоматически сохранять файл на диск при отправке в Яндекс / Google",
+
         "settings_autostart": "Запускать Framio вместе с Windows (в трей)",
+
         "settings_autostart_desc": "Автоматически запускать свернутым в трей при входе в систему",
 
+
+
         "settings_screenshots_group": "Скриншоты и буфер обмена",
+
         "settings_save_format": "Формат скриншотов по умолчанию:",
+
         "settings_copy_format": "Формат копирования в буфер обмена:",
+
         "settings_copy_format_dib": "DIB / Растровый (Универсально для мессенджеров)",
+
         "settings_copy_format_png": "PNG (С сохранением прозрачности)",
+
         "settings_copy_format_jpg": "JPEG (Компактный размер)",
+
         "settings_copy_format_data_uri": "Data URI (Base64 текст)",
 
+
+
         "settings_annotations_group": "Аннотирование по умолчанию",
+
         "settings_default_color": "Основной цвет инструментов:",
+
         "settings_default_stroke": "Толщина линий:",
+
         "settings_highlighter_alpha": "Прозрачность маркера:",
 
+
+
         # --- Справка и инструкция (Markdown / Rich Text) ---
+
         "help_title": "Руководство пользователя Framio",
+
         "help_content": """
+
 <h2>Framio — Руководство пользователя</h2>
+
 <p>Framio — приложение для скриншотов, аннотаций и записи видео или GIF со звуком в Windows.</p>
 
+
+
 <hr/>
+
+
 
 <h3>1. Создание скриншотов</h3>
+
 <ul>
+
   <li><b>Захват области:</b> Нажмите <code>{hk_capture}</code> или кликните по иконке в трее. Зажмите левую кнопку мыши и выделите нужную область экрана.</li>
+
   <li><b>Быстрый скриншот всего экрана:</b> Нажмите <code>{hk_quick}</code>. Снимок всех мониторов мгновенно сохранится в папку со скриншотами и скопируется в буфер обмена — без открытия рамок и лишних кликов!</li>
+
   <li><b>Обычный Print Screen:</b> Нажмите <code>{hk_screenshot}</code>, чтобы сохранить полный экран в папку скриншотов без выбора области и диалога сохранения.</li>
+
   <li><b>Точная подгонка:</b> Потяните за маркеры по краям рамки для изменения размера или зажмите центр (при активном инструменте «Перемещение») для сдвига выделения.</li>
+
   <li><b>Быстрые действия:</b> <code>Ctrl+C</code> — копировать в буфер обмена, <code>Ctrl+S</code> — сохранить в файл, <code>Esc</code> — закрыть.</li>
+
 </ul>
+
 <p><b>Несколько зон:</b> после первого выделения нажмите <b>+</b> в нижней или верхней панели. Верхний переключатель показывает состояние режима добавления и позволяет его выключить. Новая зона создаётся через <b>+</b>; для быстрого добавления можно удерживать <code>Ctrl</code>. Если зона одна, внешний drag заменяет её новым выделением, а одиночный внешний клик безопасен. Если зон несколько, внешний drag без <b>+</b> и <code>Ctrl</code> их не изменяет. Уже созданные зоны можно выбирать и перемещать даже в режиме добавления.</p>
+
 <p><b>Массовые действия:</b> верхняя панель предлагает сохранить, скопировать, записать видео или GIF для всех зон, которые не записываются в данный момент. Настройки совпадают с нижней панелью. Запись каждой зоны независима, а после запуска массового видео/GIF overlay выделения скрывается — остаются только рамки записи.</p>
+
 <p><b>Буфер Framio:</b> в контекстном меню значка Framio в трее доступен список последних скриншотов, видео и GIF с увеличенными миниатюрами. <code>Ctrl+C</code> при нескольких зонах копирует отдельные изображения всех зон через multi-image payload и file-drop URLs, а не общий прямоугольник.</p>
+
 <p><b>Выбор окна:</b> после запуска захвата наведите курсор на окно. Когда появится синяя рамка с названием, кликните по окну — его границы будут выбраны целиком. В окне записи тот же выбор доступен через шестерёнку и кнопку «Выбрать окно кликом мыши».</p>
 
+
+
 <hr/>
+
+
 
 <h3>2. Инструменты аннотирования</h3>
+
 <ul>
+
   <li><b>Карандаш (P)</b> — свободное рисование гладких векторных линий.</li>
+
   <li><b>Стрелка с зазубринами (A)</b> — аккуратные направляющие стрелки с заострёнными усиками.</li>
+
   <li><b>Прямоугольник (R) и Эллипс (C)</b> — геометрические фигуры для выделения областей.</li>
+
   <li><b>Маркер-хайлайтер (H)</b> — полупрозрачное выделение текста и ключевых участков.</li>
+
   <li><b>Текст (T)</b> — надписи с контрастным тёмным фоном.</li>
+
   <li><b>Нумератор шагов (S)</b> — цветные кружки с цифрами (1, 2, 3...) для пошаговых инструкций.</li>
+
   <li><b>Мозаика / Размытие (M)</b> — сокрытие паролей, лиц и конфиденциальных данных.</li>
+
 </ul>
 
+
+
 <hr/>
+
+
 
 <h3>3. Интерактивное управление фигурами</h3>
+
 <ul>
+
   <li><b>Перемещение фигур:</b> Наведите курсор на любую нарисованную фигуру, <b>зажмите правую кнопку мыши (ПКМ)</b> и перетащите фигуру в любое место!</li>
+
   <li><b>Управление и свойства:</b> Кликните <b>ПКМ по фигуре</b> (или задержите на 0.35 сек), чтобы открыть контекстное меню: изменение цвета, толщины линии, прозрачности, стиля стрелки, дублирование (<code>Ctrl+D</code>) или удаление (<code>Del</code>).</li>
+
   <li><b>Панель слоёв:</b> Кнопка «Слои» позволяет переключать видимость элементов, поднимать их выше или опускать ниже других фигур.</li>
+
 </ul>
 
+
+
 <hr/>
+
+
 
 <h3>4. Запись видео (MP4) и анимаций (GIF)</h3>
+
 <ul>
+
   <li><b>Старт записи:</b> Нажмите <code>{hk_rec_fs}</code> для записи всего экрана или выберите «Записать видео/GIF» в нижней панели выделения.</li>
+
   <li><b>Динамическое масштабирование:</b> Рамку записи можно свободно перемещать по экрану и изменять её размер во время записи без чёрных полос.</li>
+
   <li><b>Изолированный захват окна:</b> Нажмите на иконку шестерёнки в шапке записи и выберите конкретное приложение. Записываться будет только оно, даже если поверх него открыты другие окна!</li>
+
   <li><b>Звук (WASAPI Loopback + Микрофон):</b> Запись звука из игр/системы и голоса с микрофона. Отключайте и включайте микрофон и системный звук прямо во время записи по клику на иконки в шапке.</li>
+
   <li><b>Живое рисование поверх видео:</b> Нажмите на кнопку пера в шапке записи. Вы сможете рисовать стрелки, текст и маркеры прямо по ходу записи.</li>
+
   <li><b>Закрепление рисунков (Pin):</b> При включенном Pin рисунки остаются на экране, а при выключенном — плавно перемещаются вместе с рамкой записи.</li>
+
   <li><b>Остановка записи:</b> Нажмите красную кнопку «Стоп» в шапке или горячую клавишу <code>{hk_stop}</code>. Видео или GIF мгновенно оптимизируются в фоне.</li>
+
 </ul>
 
+
+
 <hr/>
+
+
 
 <h3>5. Дополнительные режимы</h3>
+
 <ul>
+
   <li><b>Неосязаемая рамка:</b> Кнопка в панели скриншота позволяет кликать мышью сквозь выделение в фоновые окна рабочего стола, сохраняя контур рамки.</li>
+
   <li><b>Динамический фон:</b> Позволяет сделать скриншот живого видеопотока без замирания рабочего стола.</li>
+
 </ul>
+
 """
+
     ,
+
         "scroll_saved_toast": "Длинный скриншот сохранён: {path}",
+
         "scroll_hud_snap": "Сделать кадр",
+
         "scroll_copied_toast": "Длинный скриншот скопирован в буфер обмена!",
+
         "action_save_tip": "Сохранить скриншот (клик — выбор PNG, JPG, WebP) [Ctrl+S]",
+
         "action_copy_tip": "Скопировать скриншот (клик — выбор формата) [Ctrl+C]",
+
         "action_copy_text_tip": "Копировать текст с изображения в буфер обмена (клик — выбор языка) [Ctrl+T]",
+
         "action_scroll_tip": "Длинный скриншот с автопрокруткой [S]",
+
         "action_search_tip": "Искать в Google Lens или Яндекс Картинках",
+
         "action_video_tip": "Запись видео MP4 (настройки звука и кодека)",
+
         "action_gif_tip": "Запись GIF (настройки качества и FPS)",
+
         "action_filter_tip": "Эффекты и цветовые фильтры всего экрана",
+
         "action_lock_tip": "Зафиксировать рамку от случайных сдвигов",
+
         "action_lock_active_tip": "Рамка зафиксирована (кликните, чтобы разблокировать)",
+
         "action_dynamic_bg_tip": "Динамический фон: живой рабочий стол внутри рамки (вкл/выкл)",
+
         "action_passthrough_tip": "Защита зоны: клики внутри рамки не взаимодействуют с фоновыми окнами (вкл/выкл)",
+
         "action_settings_tip": "Настройки Framio",
+
         "action_close_tip": "Закрыть выделение (Esc)",
+
         "shape_arrow": "Стрелка",
+
         "shape_line": "Прямая линия",
+
         "shape_rect": "Прямоугольник (контур)",
+
         "shape_rect_rounded": "Скруглённый прямоугольник",
+
         "shape_filled_rect": "Залитый прямоугольник",
+
         "shape_circle": "Круг / Овал (контур)",
+
         "shape_circle_filled": "Залитый круг / Овал",
+
         "censor_mosaic": "Мозаика (Пикселизация области)",
+
         "censor_blur": "Размытие (Блюр области)",
+
         "censor_grayscale": "Чёрно-белый (Grayscale области)",
+
         "censor_invert": "Инверсия цветов (Область)",
+
         "censor_vibrant": "Повышенная контрастность / Насыщенность (Область)",
+
         "censor_sepia": "Тёплая сепия (Винтаж области)",
+
         "filter_none": "Без фильтра",
+
         "filter_grayscale": "Оттенки серого (Чёрно-белый)",
+
         "filter_blur": "Мягкое размытие (Блюр)",
+
         "filter_pixelate": "Мозаика (Зернистость)",
+
         "whole_filter_title": "Эффект всей области",
+
         "filter_blur_radius": "Сила блюра: {val} px",
+
         "filter_pixel_size": "Зернистость мозаики: {val} px",
+
         "filter_invert": "Инверсия цветов (Негатив)",
+
         "filter_vibrant": "Повышенная контрастность",
+
         "filter_sepia": "Тёплая сепия (Винтаж)",
+
         "popup_video_source": "Источник захвата:",
+
         "popup_video_all_screens": "Весь экран / Все окна",
+
         "popup_video_all_screens_tip": "Записывать всю область экрана под рамкой со всеми окнами",
+
         "popup_video_mic": "Запись звука с микрофона",
+
         "popup_video_system": "Запись звука из игр / системы (динамики)",
+
         "popup_video_codec": "Кодек:",
+
         "popup_video_codec_mp4v": "mp4v (Стандарт)",
+
         "popup_video_codec_avc1": "avc1 (H.264)",
+
         "popup_video_codec_xvid": "XVID",
+
         "popup_video_timer": "Таймер перед записью:",
+
         "popup_video_timer_sec": " сек",
+
         "popup_video_timer_tip": "Длительность обратного отсчёта (1–60 сек)",
+
         "popup_video_start": "Начать запись видео",
+
         "popup_gif_fps": "Частота кадров (FPS):",
+
         "popup_gif_colors": "Палитра цветов:",
+
         "popup_gif_colors_256": "256 цветов (Максимум)",
+
         "popup_gif_colors_128": "128 цветов (Высокое)",
+
         "popup_gif_colors_64": "64 цвета (Оптимально)",
+
         "popup_gif_colors_32": "32 цвета (Компактно)",
+
         "popup_gif_dither": "Дизеринг (сглаживание):",
+
         "popup_gif_dither_none": "none (Минимальный размер)",
+
         "popup_gif_dither_bayer": "bayer (Мягкие полутона)",
+
         "popup_gif_opt": "Оптимизация размера GIF (PaletteGen)",
+
         "popup_gif_start": "Начать запись GIF",
+
         "popup_fmt_png": "PNG (Без потерь)",
+
         "popup_fmt_jpg": "JPG / JPEG",
+
         "popup_fmt_webp": "WebP",
+
         "popup_fmt_quality": "Качество:",
+
         "popup_copy_dib": "DIB / Растровый (Мессенджеры)",
+
         "popup_copy_png": "PNG (С сохранением прозрачности)",
+
         "popup_copy_jpg": "JPEG (Компактный размер)",
+
         "popup_copy_data_uri": "Data URI (Base64 текст)",
+
         "popup_search_google": "Google Lens",
+
         "popup_search_yandex": "Яндекс Картинки",
+
         "prop_palette_color": "Палитра и цвет",
+
         "prop_color_custom": "Другой цвет...",
+
         "prop_fill_gradient": "Градиентная заливка",
+
         "prop_line_style": "Стиль линии:",
+
         "prop_line_solid": "Сплошная",
+
         "prop_line_dash": "Пунктир",
+
         "prop_line_dot": "Точечная",
+
         "prop_arrow_style": "Стиль стрелки:",
+
         "prop_arrow_classic": "Классическая",
+
         "prop_arrow_barbed": "С вырезом (усиками)",
+
         "prop_arrow_double": "Двусторонняя",
+
         "prop_stroke_width": "Толщина: {val} px",
+
         "prop_mosaic_size": "Размер мозаики: {val} px",
+
         "prop_font_size": "Размер шрифта: {val} pt",
+
         "prop_highlighter_size": "Толщина маркера: {val} px",
+
         "prop_blur_radius": "Степень размытия: {val} px",
+
         "badge_fullscreen": "Развернуть на весь экран",
+
         "settings_btn_open": "Открыть",
+
         "settings_btn_reset_port": "Сбросить к папке Captures",
+
         "settings_btn_reset_std": "Сбросить к стандартным Windows",
+
         "settings_hk_highlight_objects": "Подсветка интерактивных объектов (удержание):",
+
         "settings_hk_highlight_desc": "Подсвечивает рамками и названиями все подвижные объекты на экране",
+
         "settings_video_fps_desc": "Плавность записи видеопотока (рекомендуется 30 или 60 FPS)",
+
         "settings_video_codec_desc": "Аппаратный или программный кодек упаковки кадров в MP4",
+
         "settings_video_quality": "Качество записи:",
+
         "settings_video_quality_desc": "Битрейт и четкость сжатия видео",
+
         "settings_quality_high": "Высокое",
+
         "settings_quality_medium": "Среднее",
+
         "settings_quality_ultra": "Максимальное",
+
         "settings_compress_video_title": "Фоновая оптимизация MP4",
+
         "settings_compress_video_desc": "Автоматическое сжатие FFmpeg без потери визуального качества",
+
         "settings_gif_fps_desc": "Плавность анимации GIF",
+
         "settings_gif_colors_desc": "Количество цветов в палитре (меньше = меньше вес файла)",
+
         "settings_gif_dither_desc": "Алгоритм дизеринга полутонов",
+
         "settings_compress_gif_title": "Фоновая оптимизация GIF",
+
         "settings_compress_gif_desc": "Генерация оптимальной палитры PaletteGen без артефактов",
+
         "settings_record_mic_desc": "Автоматически включать захват микрофона при старте записи",
+
         "settings_record_system_desc": "Захват динамиков, игр и браузера через WASAPI Loopback",
+
         "settings_countdown_desc": "Дает время подготовить окно или игру перед стартом захвата",
+
         "settings_countdown_delay_desc": "Длительность обратного отсчета в секундах",
+
         "settings_save_format_desc": "Формат сохранения файлов на диск по умолчанию",
+
         "settings_copy_format_desc": "Тип данных изображения, помещаемых в буфер обмена Windows",
+
         "settings_default_color_desc": "Цвет карандаша, стрелок, рамок и текста при запуске",
+
         "settings_default_stroke_desc": "Базовая толщина обводки для векторных фигур",
+
         "settings_highlighter_alpha_desc": "Степень прозрачности маркера (чем меньше, тем прозрачнее)",
+
         "settings_font_size": "Размер шрифта по умолчанию:",
+
         "settings_font_size_desc": "Базовый кегль для текстовых заметок",
+
         "settings_hk_translator": "Плавающая рамка перевода:",
+
         "settings_hk_translator_desc": "Глобальная клавиша вызова экранного переводчика субтитров (по умолчанию не назначена)",
+
         "settings_hk_none": "Не назначено",
+
         "settings_btn_clear": "Очистить",
+
+        "settings_mouse_gesture_group": "Быстрый захват мышью (Drag & Drop)",
+        "settings_qd_screenshot": "Быстрый скриншот области:",
+        "settings_qd_screenshot_desc": "Зажмите комбинацию клавиш + кнопку мыши на экране, выделите область и отпустите для моментального снимка в буфер",
+        "settings_qd_ocr": "Быстрое распознавание текста (OCR):",
+        "settings_qd_ocr_desc": "Зажмите комбинацию клавиш + кнопку мыши, выделите текст и отпустите — распознанный текст сразу скопируется в буфер",
+        "settings_qd_btn_left": "Левая кнопка мыши (ЛКМ)",
+        "settings_qd_btn_right": "Правая кнопка мыши (ПКМ)",
+        "settings_qd_btn_middle": "Средняя кнопка мыши (СКМ / Колёсико)",
+        "settings_qd_format": "Формат буфера:",
+        "settings_qd_lang": "Язык распознавания:",
+        "settings_custom_notif": "Компактные всплывающие уведомления Framio над панелью задач",
+        "settings_notif_row": "Всплывающие уведомления:",
+        "settings_custom_notif_desc": "Показывать стильные карточки Framio с превью и кнопками над системным треем вместо стандартных уведомлений Windows",
+        "notif_quick_screen_copied": "Скриншот скопирован в буфер",
+        "notif_action_copy": "Копировать",
+        "notif_action_copied": "Скопировано!",
+        "notif_action_open_folder": "В папке",
         "settings_hk_info_title": "Справка по горячим клавишам",
+
         "settings_hk_info_text": "• Поддерживаются сочетания с <b>Ctrl</b>, <b>Shift</b>, <b>Alt</b>, <b>Win</b> и клавишами <b>Print Screen</b>, <b>F1–F12</b>, буквами и цифрами.<br>• Чтобы назначить новую клавишу, нажмите кнопку <b>«Назначить»</b> и зажмите желаемую комбинацию на клавиатуре.<br>• Для возврата к стандартным значениям используйте кнопку <b>«Сбросить»</b>.",
+
         "settings_applied_toast": "Настройки успешно применены!",
+
         "settings_reg_enabled": "Включен в реестре",
+
         "settings_reg_disabled": "Отключен в реестре",
+
         "settings_reg_status": "Текущий статус в реестре Windows: {status}",
+
         "settings_mode_portable": "Портативный",
+
         "settings_mode_system": "Системный",
+
         "obj_arrow": "Стрелка",
+
         "obj_line": "Линия",
+
         "obj_rect": "Прямоугольник",
+
         "obj_circle": "Круг / Овал",
+
         "obj_text": "Текст",
+
         "obj_pen": "Карандаш",
+
         "obj_highlighter": "Маркер",
+
         "obj_step": "Нумератор",
+
         "obj_mosaic": "Мозаика (Цензура)",
+
         "obj_blur": "Размытие (Блюр)",
+
         "obj_grayscale": "Чёрно-белый (Область)",
+
         "obj_invert": "Инверсия (Область)",
+
         "obj_vibrant": "Насыщенность (Область)",
+
         "obj_sepia": "Сепия (Область)",
+
         "obj_interactive": "Объект",
+
         "notif_scroll_saved_title": "Длинный скриншот сохранен",
+
         "notif_scroll_saved_body": "Файл: {filename}\nВысота: {height} px\nНажмите сюда, чтобы открыть файл в проводнике",
+
         "scroll_hud_step": "Сделать кадр",
+
         "scroll_guide_badge": "Область длинного скриншота [Крутите колесо мыши]",
 
+
+
         # --- Новые ключи интерфейса (v2.0) ---
+
         "popup_video_title": 'Параметры видеозаписи',
+
         "popup_video_fps": 'Кадры в секунду (FPS):',
+
         "popup_video_fps_tip": 'Частота кадров будущей записи видео',
+
         "popup_video_source": 'Источник захвата:',
+
         "popup_video_mic": 'Запись звука с микрофона',
+
         "popup_video_system": 'Запись звука из игр / системы (динамики)',
+
         "popup_video_codec": 'Кодек:',
+
         "popup_video_codec_mp4v": 'mp4v (Стандарт)',
+
         "popup_video_codec_avc1": 'avc1 (H.264)',
+
         "popup_video_timer": 'Таймер перед записью:',
+
         "popup_video_timer_sec": ' сек',
+
         "popup_video_timer_tip": 'Длительность обратного отсчёта (1–60 сек)',
+
         "popup_video_start": 'Начать запись видео',
+
         "popup_video_all_screens": 'Весь экран / Все окна',
+
         "popup_video_all_screens_tip": 'Записывать всю область экрана под рамкой со всеми окнами',
+
         "popup_gif_title": 'Параметры GIF-анимации',
+
         "popup_gif_compression": 'Сжатие / Цвета:',
+
         "popup_gif_opt_max": 'Максимальное (64 цвета)',
+
         "popup_gif_opt_high": 'Высокое (64 цвета, bayer)',
+
         "popup_gif_opt_balance": 'Баланс (128 цветов)',
+
         "popup_gif_opt_quality": 'Высокое качество (256 цв.)',
+
         "popup_gif_opt_extreme": 'Экстремальное (32 цвета)',
+
         "popup_gif_fps": 'Частота (FPS):',
+
         "popup_gif_start": 'Начать запись GIF',
+
         "popup_copy_standard": 'Изображение (Стандартный буфер)',
+
         "prop_tool_settings": 'Настройки инструмента',
+
         "prop_style": 'Стиль:',
+
         "prop_corners": 'Углы:',
+
         "prop_corners_sharp": 'Прямые углы',
+
         "prop_corners_rounded": 'Скруглённые углы',
+
         "prop_arrow_stealth": 'Стелс-стрелка',
+
         "prop_arrow_dashed": 'Пунктирная стрелка',
+
         "prop_line_dashed": 'Пунктирная линия',
+
         "prop_line_dotted": 'Точечная линия',
+
         "prop_outline": 'Контур',
+
         "prop_filled": 'Заливка',
+
         "prop_fill_solid": 'Сплошной',
+
         "prop_colors": 'Цвета:',
+
         "prop_grad1_tip": 'Первый цвет градиента',
+
         "prop_grad2_tip": 'Второй цвет градиента',
+
         "prop_fill_opacity": 'Прозрачность заливки: {pct}%',
+
         "prop_hl_opacity": 'Непрозрачность маркера: {pct}%',
+
         "prop_bold_tip": 'Жирный шрифт',
+
         "prop_underline_tip": 'Подчёркнутый шрифт',
+
         "prop_text_bg": 'Фон под текстом',
+
         "prop_text_bg_alpha": 'Непрозрачность фона: {pct}%',
+
         "prop_text_bg_col": 'Цвет фона:',
+
         "prop_mosaic_tip": 'Режим мозаики (цензура) для любого инструмента',
+
         "prop_blur_tip": 'Режим размытия (блюр) для любого инструмента',
+
         "prop_censor_mosaic": 'Мозаика',
+
         "prop_censor_blur": 'Блюр',
+
         "prop_drag_area": 'Перетаскивайте область мышью',
+
         "prop_placeholder_text": 'Введите текст...',
+
         "shape_edit_tip_label": 'Наконечник:',
+
         "action_filters": 'Эффекты и цветовые фильтры всего экрана',
+
         "action_lock": 'Зафиксировать рамку от случайных сдвигов',
+
         "action_locked_tip": 'Рамка зафиксирована (кликните, чтобы разблокировать)',
+
         "action_color_swatch": 'Палитра, цвет и свойства инструмента',
+
         "action_censor_tip": 'Цензура и фильтры (Мозаика / Размытие / Эффекты)',
+
         "action_layers": 'Управление слоями',
+
         "action_history": 'История действий',
+
         "settings_compress_video_desc": 'Автоматическое сжатие FFmpeg после окончания записи видео',
+
         "settings_gif_fps_desc": 'Частота кадров анимации для баланса плавности и размера GIF',
+
         "settings_gif_colors_desc": 'Количество уникальных цветов в палитре анимации',
+
         "settings_gif_opt_desc": 'Встроенное сжатие кадров алгоритмом LZW',
+
         "settings_compress_gif_desc": 'Построение оптимальной 256-цветной палитры без артефактов',
+
         "settings_record_mic_row": 'Микрофон',
+
         "settings_record_system_row": 'Системный звук',
+
         "settings_countdown_title": 'Таймер отсчёта',
+
         "settings_countdown_desc": 'Пауза перед началом захвата, чтобы подготовить окна',
+
         "settings_countdown_delay_desc": 'Длительность задержки перед стартом записи (1–60 сек)',
+
         "settings_hk_capture_desc": 'Глобальная клавиша или комбинация для захвата экрана',
+
         "settings_hk_quick_desc": 'Снимок всех мониторов сразу в папку и буфер обмена',
+
         "settings_hk_rec_desc": 'Запись всего экрана со всеми окнами и звуком',
+
         "settings_hk_stop_desc": 'Экстренная остановка активной видеозаписи или GIF',
+
         "settings_hk_highlight": 'Подсветка объектов (Alt):',
+
         "settings_hk_highlight_desc": 'Зажмите горячую клавишу для подсветки всех интерактивных фигур на экране',
+
         "settings_font_size_label": 'Размер шрифта:',
+
         "settings_font_size_desc": 'Базовый размер надписей в инструменте Текст',
+
         "settings_system_group": 'Интеграция с системой и звуки',
+
         "settings_autostart_row": 'Автозапуск Windows',
+
         "settings_sound_row": 'Звуки затвора',
+
         "settings_folder_row": 'Проводник',
+
         "settings_choose_color": 'Выберите цвет по умолчанию',
+
         "settings_choose_folder_screens": 'Выберите папку для скриншотов',
+
         "settings_choose_folder_videos": 'Выберите папку для видео',
+
         "settings_choose_folder_gifs": 'Выберите папку для GIF',
+
         "settings_folder_error_title": 'Ошибка создания папки',
+
         "settings_folder_error_msg": 'Не удалось создать папку:\n{path}\n\nОшибка: {err}',
+
         "settings_reset_confirm_title": 'Сброс настроек',
+
         "settings_reset_confirm_msg": 'Сбросить все настройки к значениям по умолчанию (Captures)?',
+
         "settings_hk_info_text": '• Комбинации могут включать <b>Ctrl</b>, <b>Shift</b>, <b>Alt</b>, <b>Win</b> и любую клавишу <b>Print Screen</b>, <b>F1–F12</b>, буквы или цифры.<br>• Чтобы назначить клавишу, нажмите на кнопку <b>Назначить</b> и нажмите желаемую комбинацию.<br>• Для сброса комбинации нажмите кнопку <b>Сброс</b>.',
+
         "settings_compress_mp4_row": 'Сжатие в MP4',
+
         "settings_lzw_row": 'LZW сжатие',
+
         "settings_palettegen_row": 'Оптимизация PaletteGen',
+
         "settings_auto_copy_row": 'Авто-буфер обмена',
+
         "settings_save_search_row": 'Сохранение при поиске',
+
         "settings_color_dialog_title": 'Выбор цвета по умолчанию',
+
         "shape_edit_title_simple": 'Свойства фигуры',
+
         "shape_edit_color_label": 'Цвет:',
+
         "shape_edit_custom_col": 'Другой цвет...',
+
         "shape_edit_text_default": 'Текст',
+
         "shape_edit_text_prefix": "Текст: '{txt}'",
+
         "shape_edit_bg_picker_title": 'Выбор цвета фона текста',
+
         "shape_edit_stroke_picker_title": 'Выбор цвета фигуры',
+
         "shape_edit_grad_picker_title": 'Выбор цвета градиента {idx}',
+
         "action_fullscreen_tip": "Выбрать весь экран (Ctrl+A)",
+
         "action_pause_rec": "Пауза записи",
+
         "action_stop_rec": "Стоп",
+
         "action_stop_rec_tip": "Завершить и сохранить запись",
+
         "flyout_tool": "Инструмент",
+
         "hist_btn_reset": "Сброс",
+
         "hist_cmd_add": "Добавлен {name}",
+
         "hist_cmd_back": "{name} на задний план",
+
         "hist_cmd_delete": "Удаление {name}",
+
         "hist_cmd_down": "{name} ниже",
+
         "hist_cmd_dup": "Дублирование {name}",
+
         "hist_cmd_front": "{name} на передний план",
+
         "hist_cmd_move": "Перемещение {name}",
+
         "hist_cmd_props": "Свойства: {name}",
+
         "hist_cmd_filter": "Фильтр: {name}",
+
         "hist_cmd_text": "Текст: {text}",
+
         "hist_cmd_transform": "Трансформация {name}",
+
         "hist_cmd_expand_object": "Объект развёрнут на зону",
+
         "hist_cmd_region_transform": "Изменение области записи",
+
         "hist_cmd_mask_fit_region": "Область по размеру маски",
+
         "hist_cmd_add_region": "Добавление области записи",
+
         "hist_cmd_delete_region": "Удаление области записи",
+
         "hist_cmd_up": "{name} выше",
+
         "hist_dialog_title": "История действий",
+
         "hist_empty": "История пуста",
+
         "hist_undone": "отменено",
+
         "layers_clear_all": "Очистить все",
+
         "layers_empty": "Нет слоев (нарисуйте фигуру)",
+
         "obj_arrow": "Стрелка",
+
         "obj_blur": "Размытие (Блюр)",
+
         "obj_circle": "Круг / Овал",
+
         "obj_clone_name": "{name} (копия)",
+
         "obj_filled_circle": "Залитый круг",
+
         "obj_filled_rect": "Залитый прямоугольник",
+
         "obj_grayscale": "Чёрно-белый (Область)",
+
         "obj_highlighter": "Маркер",
+
         "obj_invert": "Инверсия (Область)",
+
         "obj_line": "Линия",
+
         "obj_mosaic": "Мозаика (Цензура)",
+
         "obj_pen": "Карандаш",
+
         "obj_rect": "Прямоугольник",
+
         "obj_sepia": "Сепия (Область)",
+
         "obj_shape": "Фигура",
+
         "obj_step": "Нумерация (Шаг)",
+
         "obj_text": "Текст",
+
         "obj_vibrant": "Насыщенность (Область)",
+
         "rec_exporting_wait": "Идёт оптимизация и кодирование в высоком качестве (в фоне)...",
+
         "rec_status_active": "Индикатор активной записи",
+
         "rec_tip_all_screens": "Записывается вся область экрана под рамкой",
+
         "rec_tip_cancel": "Отменить запись без сохранения и удалить файл [Esc]",
+
         "rec_tip_drag": "Потяните за шапку, чтобы переместить рамку записи по экрану",
+
         "rec_tip_duration": "Длительность текущей записи и число записанных кадров",
+
         "rec_tip_lock": "Зафиксировать рамку от случайного изменения размера",
+
         "rec_tip_mic_off": "Микрофон отключен (кликните для включения)",
+
         "rec_tip_mic_on": "Микрофон включен (кликните для отключения)",
+
         "rec_tip_resolution": "Текущий размер выделенной области записи в пикселях",
+
         "rec_tip_sys_off": "Системный звук отключен (кликните для включения)",
+
         "rec_tip_sys_on": "Системный звук включен (кликните для отключения)",
+
         "rec_tip_target_win": "Параметры записи (выбор приложения / отдельного окна)",
+
         "rec_tip_unlock": "Разблокировать рамку для изменения размера",
+
         "scroll_err_grab": "Не удалось захватить начальную область экрана.",
+
         "scroll_err_title": "Ошибка длинного скриншота",
+
         "scroll_step_tip": "Захватить текущий экран и склеить с предыдущими (по высоте рамки)",
+
         "settings_annot_picker_title": "Выберите цвет аннотаций",
+
         "settings_base_dir": "Каталог программы",
+
         "settings_btn_assign": "Назначить",
+
         "settings_btn_listening": "Нажмите...",
+
         "settings_btn_listening_key": "Нажмите клавишу...",
+
         "settings_btn_open_base": "Открыть папку программы",
+
         "settings_btn_reset_port": "Сбросить на папку программы",
+
         "settings_btn_reset_std": "Сбросить на стандартную папку",
+
         "settings_hk_tooltip": "Нажмите для записи комбинации клавиш (Ctrl, Shift, Alt, F1-F12, буквы, Print Screen)",
+
         "settings_lang_auto": "Автоматически (системный) / Auto (System)",
+
         "settings_lang_desc": "Язык меняется сразу после выбора",
+
         "settings_lang_en": "English (Английский)",
+
         "settings_lang_group": "Язык интерфейса / Interface Language",
+
         "settings_lang_ru": "Русский (Russian)",
+
         "settings_slider_shift_tip": ", при нажатии Shift — ",
+
         "settings_storage_portable_chk": "Включить портативный режим (хранить настройки и снимки в папке программы)",
+
         "settings_storage_portable_group": "Портативный режим",
+
         "tool_blur": "Размытие (Блюр)",
+
         "tool_shapes": "Фигуры (Линия, Стрелка, Прямоугольник, Круг)",
+
         "app_already_running_title": "Framio уже запущен",
+
         "app_already_running_msg": "Приложение уже работает в системном трее. Нажмите {hotkey} для захвата экрана.",
+
         "prop_eyedropper_tip": "Пипетка (выбрать цвет с экрана)",
+
         "eyedropper_loupe_hint": "ЛКМ: выбрать цвет | Esc / ПКМ: отмена",
+
         "action_edit_text": "Редактировать текст...",
+
         "prop_text_italic": "Курсив",
 
+
+
         # --- Рамка живого перевода экрана ---
+
         "trans_frame_title": "Live Перевод",
+
         "trans_mode_hud": "Субтитры",
+
         "trans_mode_inplace": "Поверх текста",
+
         "trans_mode_tooltip": "Режим: Субтитры внизу / Наложение поверх слов",
+
         "trans_pause_tooltip": "Приостановить / возобновить сканирование",
+
         "trans_copy_tooltip": "Скопировать текущий перевод в буфер",
+
         "trans_close_tooltip": "Закрыть рамку перевода",
+
         "trans_stealth_tooltip": "Свернуть панель (Игровой режим)",
+
         "trans_unfold_tooltip": "Развернуть панель управления",
+
         "trans_passthrough_tooltip": "Сквозной клик для игр (клики мыши проходят в игру). Клик по глазику ЛКМ вернёт панель",
+
         "trans_passthrough_active": "Сквозной клик активен. Нажмите на плавающую иконку глазика для возврата панели.",
+
         "trans_copied": "Перевод скопирован в буфер!",
+
         "trans_waiting_text": "Ожидание текста в рамке...",
+
         "trans_no_text": "Текст не обнаружен",
+
         "trans_lang_btn": "Язык: {src} → {tgt} ▾",
+
         "trans_mode_btn": "Режим: {mode} ▾",
+
         "trans_settings_btn": "Настройки ▾",
+
         "trans_eye_tooltip": "Скрыть рамку и панель (оставить только значок глазика)",
+
         "trans_unlock_tooltip": "Нажмите на глазик, чтобы вернуть настройки",
+
         "trans_menu_opacity": "Прозрачность фона",
+
         "trans_menu_theme": "Цвет фона",
+
         "trans_menu_font_size": "Размер шрифта субтитров",
+
         "trans_menu_fps": "Скорость сканирования",
+
         "trans_menu_smart_diff": "Умная пауза при статичном кадре",
+
         "trans_op_100": "100% (Непрозрачный)",
+
         "trans_op_85": "85% (Оптимальный)",
+
         "trans_op_60": "60% (Полупрозрачный)",
+
         "trans_op_30": "30% (Слабый)",
+
         "trans_op_0": "0% (Без фона)",
+
         "trans_theme_slate": "Тёмный сланец (Slate)",
+
         "trans_theme_oled": "Глубокий чёрный (OLED)",
+
         "trans_theme_cyber": "Кибер-синий (Cyber)",
+
         "trans_font_auto": "Авто (по тексту)",
+
         "trans_font_small": "Мелкий (11 px)",
+
         "trans_font_medium": "Средний (14 px)",
+
         "trans_font_large": "Крупный (18 px)",
+
         "trans_font_xlarge": "Очень крупный (22 px)",
+
         "trans_fps_fast": "Быстро (150 мс)",
+
         "trans_fps_opt": "Оптимально (300 мс)",
+
         "trans_fps_eco": "Энергосбережение (600 мс)",
+
         "trans_opt_match_color": "Повторять цвет текста оригинала",
+
         "trans_opt_match_color_tip": "Окрашивать переведенные слова в цвета оригинала с экрана",
+
         "trans_opt_match_font": "Повторять шрифт и начертание оригинала",
+
         "trans_opt_match_font_tip": "Подбирать жирность и гарнитуру шрифта, как в исходном тексте",
+
     },
 
+
+
     "en": {
+
         # --- System Tray & Main Menu ---
+
         "app_title": "Framio — Screenshots & Recording",
+
         "tray_ready": "Ready",
+
         "tray_recording_active": "Framio — Recording: {count} active (video/GIF)",
+
         "tray_processing": "Framio — Processing ({count} items):",
+
         "tray_hotkey_capture": "• Area Capture: {key}",
+
         "tray_hotkey_fullscreen": "• Screen Recording: {key}",
+
         "tray_hotkey_stop": "• Stop Recording: {key}",
+
         "tray_hotkey_quick_screen": "• Quick Fullscreen Screenshot: {key}",
+
         "tray_hotkey_screenshot": "• Standard fullscreen screenshot: {key}",
+
         "tray_menu_capture": "Capture Area ({key})",
+
         "tray_menu_quick_fullscreen": "Quick Fullscreen Screenshot ({key})",
+
         "tray_menu_screenshot": "Standard Fullscreen Screenshot ({key})",
+
         "tray_menu_rec_fullscreen": "Record Entire Screen ({key})",
+
         "tray_menu_rec_video": "Record Area Video MP4",
+
         "tray_menu_rec_gif": "Record Area GIF",
+
         "tray_menu_live_translator": "Screen & Subtitle Translator ({key})",
+
         "tray_menu_live_translator_no_key": "Screen & Subtitle Translator",
+
         "tray_menu_status_rec": "Recording in progress ({count} active)",
+
         "tray_menu_stop_all": "Stop Recording ({key})",
+
         "tray_menu_folder_screens": "Screenshots Folder",
+
         "tray_menu_folder_videos": "Videos Folder",
+
         "tray_menu_folder_gifs": "GIFs Folder",
+
         "tray_menu_recent_media": "Framio — Recent Media",
+
         "tray_menu_recent_empty": "No saved media yet",
+
         "tray_menu_recent_copy_image": "Copy image: {name}",
+
         "tray_menu_recent_copy_file": "Copy file: {name}",
+
         "recent_media_title": "Recent Media",
+
         "recent_filter_all": "All",
+
         "recent_filter_screenshots": "Screenshots",
+
         "recent_filter_gifs": "GIFs",
+
         "recent_filter_videos": "Videos",
+
         "recent_filter_empty": "No media of this type",
+
         "recent_preview_unavailable": "No preview",
+
         "recent_kind_screenshot": "Screenshot",
+
         "recent_kind_gif": "GIF",
+
         "recent_kind_video": "Video",
+
         "recent_action_copy": "Copy",
+
         "recent_action_view": "View",
+
         "recent_action_copy_tip": "Copy this material",
+
         "recent_action_view_tip": "Open this material for viewing",
+
         "recent_action_google": "Google",
+
         "recent_action_yandex": "Yandex",
+
         "recent_action_google_tip": "Search this image with Google Lens",
+
         "recent_action_yandex_tip": "Search this image with Yandex Images",
+
         "recent_action_open_with": "Open with...",
+
         "recent_action_open_with_tip": "Choose an application to open this file",
+
         "recent_search_title": "Image search",
+
         "recent_search_started": "Sending material to {engine}...",
+
         "recent_context_open": "Open",
+
         "recent_context_open_with": "Open with...",
+
         "recent_context_copy_path": "Copy path",
+
         "tray_menu_settings": "Settings",
+
         "tray_menu_help": "Help & Guide",
+
         "tray_menu_exit": "Exit",
 
+
+
         # --- Notifications ---
+
         "notif_screen_saved_title": "Screenshot Saved",
+
         "notif_screen_saved_body": "File: {filename}\nFolder: {folder}\nClick here to show in File Explorer",
+
         "notif_screen_saved_count": "\nZones saved: {count}",
+
         "notif_screen_save_failed_title": "Could Not Save Screenshot",
+
         "notif_screen_save_failed_body": "The selected images could not be written to disk.",
+
         "dialog_save_screenshot": "Save screenshots of selected zones",
+
         "notif_quick_screen_saved_title": "Quick Fullscreen Screenshot",
+
         "notif_quick_screen_saved_body": "Entire screen saved to {filename}\nClick here to open file",
+
         "notif_video_saved_title": "Video Saved Successfully",
+
         "notif_video_saved_body": "File: {filename}\nFolder: {folder}\nClick here to show in File Explorer",
+
         "notif_gif_saved_title": "GIF Saved Successfully",
+
         "notif_gif_saved_body": "File: {filename}\nFolder: {folder}\nClick here to show in File Explorer",
+
         "notif_rec_saving_video": "Saving Video...",
+
         "notif_rec_saving_gif": "Saving GIF...",
+
         "notif_rec_saving_body": "Optimizing and encoding high quality file in background...",
+
         "notif_mass_saved_title": "Mass recording saved",
+
         "notif_mass_saved_body": "Video: {video}\nGIF: {gif}",
+
         "storage_warning_title": "Application folder is protected",
+
         "storage_warning_body": "The application folder is not writable. Recordings are saved to:\n{path}",
+
         "notif_rec_cancelled_title": "Recording Cancelled",
+
         "notif_rec_cancelled_body": "Screen recording was discarded without saving.",
+
         "notif_rec_started_title": "Fullscreen Recording Started",
+
         "notif_rec_started_body": "Screen recording started!\nTo stop, press: {key}",
+
         "notif_clipboard_copied": "Copied to clipboard",
+
         "notif_clipboard_multi_images": "{count} separate images were placed in the clipboard as a file list.",
+
         "notif_clipboard_png": "PNG image copied to the clipboard.",
+
         "notif_clipboard_jpeg": "JPEG image copied to the clipboard.",
+
         "notif_clipboard_standard": "Image copied to the clipboard (ready to paste with Ctrl+V).",
+
         "notif_clipboard_data_uri_many": "{count} Data URIs copied to the clipboard as text.",
+
         "notif_clipboard_data_uri_one": "Data URI (Base64) copied to the clipboard as text.",
+
         "image_search_google_ready": "Direct upload to Google Lens has started.",
+
         "image_search_google_failed": "Could not open the direct Google Lens upload.",
+
         "image_search_yandex_fallback": "The screenshot was copied to the clipboard. Press Ctrl+V in Yandex Images.",
+
         "image_search_google_preparing": "Preparing a direct upload to Google Lens.",
+
         "image_search_direct_preparing": "Sending the screenshot to {engine}. Results will open in the browser.",
 
+
+
         # --- Recording Window (RecordingFrameWindow) ---
+
         "rec_mode_video": "REC MP4",
+
         "rec_mode_gif": "REC GIF",
+
         "rec_mode_pause": "PAUSE",
+
         "rec_drag_hint": "Drag by the header to move recording frame across screen",
+
         "rec_target_screen": "Recording entire desktop area under frame",
+
         "rec_target_window": "Recording window: {title}",
+
         "rec_mic_on": "Microphone is ON (click to mute)",
+
         "rec_mic_off": "Microphone is MUTED (click to unmute)",
+
         "rec_system_on": "System audio is ON (click to mute)",
+
         "rec_system_off": "System audio is MUTED (click to unmute)",
+
         "rec_timer_tip": "Current recording duration and captured frame count",
+
         "rec_size_tip": "Current recording dimensions in pixels",
+
         "rec_draw_btn_tip": "Live drawing & annotation toolbar [Ctrl+Z undo]",
+
         "rec_pause_tip": "Pause recording [Space]",
+
         "rec_resume_tip": "Resume recording [Space]",
+
         "rec_stop_tip": "Finish recording and save file [Enter / Space]",
+
         "rec_lock_tip": "Lock frame from accidental resize",
+
         "rec_unlock_tip": "Unlock frame to enable resizing",
+
         "rec_settings_tip": "Recording options (select target app / single window)",
+
         "rec_cancel_tip": "Cancel recording without saving [Esc]",
+
         "rec_header_collapse_tip": "Collapse recording header",
+
         "rec_header_expand_tip": "Expand recording header",
+
         "rec_source_label": "Capture Source",
+
         "rec_source_all_windows": "Entire Screen / All Windows",
+
         "rec_source_all_desc": "Capture entire desktop area under frame including all windows",
+
         "rec_refresh_windows": "Refresh Windows List",
+
         "rec_pick_window_btn": "Select window by clicking",
+
         "rec_snap_window_tip": "Click window to snap selection frame",
+
         "rec_window_hover_badge": "{title} (Click to snap)",
+
         "rec_mode_countdown": "COUNTDOWN",
+
         "rec_mode_countdown_prefix": "START: {sec}s",
+
         "rec_countdown_status": "Starting in {sec}s...",
+
         "rec_countdown_hint": "Get ready... (Esc to cancel)",
 
+
+
         # --- Scrolling Screenshot ---
+
         "action_scroll": "Scrolling screenshot with auto-scroll [S]",
+
         "scroll_hud_title": "Scrolling Screenshot",
+
         "scroll_hud_status": "Frames: {frames} | Height: {height} px",
+
         "scroll_hud_done": "Finish (Enter)",
+
         "scroll_hud_autoscroll": "Auto-scroll",
+
         "scroll_hud_autoscroll_off": "Auto-scroll: Off",
+
         "scroll_hud_autoscroll_on": "Auto-scroll: On",
+
         "scroll_hud_autoscroll_tip": "Toggle automatic smooth page scrolling",
+
         "scroll_hud_pause": "Pause",
+
         "scroll_hud_resume": "Resume",
+
         "scroll_hud_step": "Capture Step",
+
         "scroll_hud_cancel": "Cancel (Esc)",
+
         "scroll_hud_hint": "Scroll page with mouse wheel or click 'Capture Step'. Press Enter to save.",
+
         "scroll_guide_badge": "Scrolling Capture Area [Scroll mouse wheel]",
+
         "notif_scroll_saved_title": "Scrolling Screenshot Saved",
+
         "notif_scroll_saved_body": "File: {filename}\nHeight: {height} px\nClick here to open file in explorer",
 
+
+
         # --- Live Drawing Toolbar (RecordingDrawingToolbar) ---
+
         "draw_cursor": "Cursor (Screen interaction / clicks pass through frame)",
+
         "draw_pen": "Pen (freehand drawing)",
+
         "draw_arrow": "Barbed Arrow",
+
         "draw_rect": "Rectangle",
+
         "draw_mosaic": "Mosaic Blur (Censorship)",
+
         "draw_highlighter": "Highlighter marker (translucent)",
+
         "draw_text": "Text with background",
+
         "draw_undo": "Undo last action (Ctrl+Z)",
+
         "draw_clear": "Clear all drawn shapes",
+
         "draw_color": "Choose drawing color and stroke width",
+
         "draw_layers": "Shape layers (management & visibility)",
+
         "draw_pin_on": "Drawings pinned to screen (stay stationary when moving frame)",
+
         "draw_pin_off": "Drawings attached to frame (move along with frame)",
 
+
+
         # --- Screenshot Overlay & Toolbars ---
+
         "tool_move": "Move & select (V)",
+
         "tool_select": "Select objects (drag to box select or click)",
+
         "tool_more": "Additional tools",
+
         "action_more": "Additional actions",
+
         "tool_pen": "Pen (P)",
+
         "tool_line": "Straight Line (L)",
+
         "tool_arrow": "Barbed Arrow (A)",
+
         "tool_rect": "Rectangle (R)",
+
         "tool_circle": "Ellipse / Circle (C)",
+
         "tool_highlighter": "Highlighter marker (H)",
+
         "tool_text": "Text (T)",
+
         "tool_step": "Step counter (1, 2, 3...) (S)",
+
         "tool_mosaic": "Censorship / Mosaic blur (M)",
+
         "tool_capture_mask": "Capture area mask",
+
         "capture_mask_name": "Capture area mask",
+
         "capture_mask_freeform": "Freeform contour",
+
         "capture_mask_rect": "Rectangular mask",
+
         "capture_mask_circle": "Oval mask",
+
         "capture_mask_fit_region": "Set capture area to mask bounds",
+
         "tool_undo": "Undo last action (Ctrl+Z)",
+
         "tool_redo": "Redo action (Ctrl+Y)",
+
         "tool_clear": "Clear all shapes",
+
         "action_save": "Save screenshot to disk (Ctrl+S)",
+
         "action_copy": "Copy to clipboard (Ctrl+C)",
+
         "action_copy_text": "Copy text from image to clipboard (Ctrl+T)",
+
         "action_search": "Search image on Google",
+
         "action_add_region": "Add selection zone (+ / Ctrl)",
+
         "action_add_region_active": "Add-zone mode is on — select the next area",
+
         "action_all_regions": "Actions for all zones",
+
         "action_all_save": "Save screenshots for all zones",
+
         "action_all_copy": "Copy all zones",
+
         "action_all_copy_text": "Copy text from all zones (OCR)",
+
         "action_all_video": "Record video for all zones",
+
         "action_all_gif": "Record GIFs for all zones",
+
         "action_all_filter": "Effect for all zones",
+
         "region_header_title": "Zones · mass actions",
+
         "region_header_title_count": "Zones · mass actions ({available}/{total})",
+
         "action_region_header_close": "Cancel adding / close selections",
+
         "region_mass_save_short": "Save",
+
         "region_mass_copy_short": "Copy",
+
         "region_mass_copy_text_short": "Text",
+
         "region_mass_video_short": "Video",
+
         "region_ui_snapshot_short": "UI Snapshot",
+
         "region_ui_snapshot_title": "UI Snapshot",
+
         "action_ui_snapshot": "Take a screenshot with the current program overlay",
+
         "ui_snapshot_action_save": "Save to file...",
+
         "ui_snapshot_action_copy": "Copy to clipboard",
+
         "dialog_save_ui_snapshot": "Save UI Snapshot",
+
         "notif_ui_snapshot_copied_title": "UI Snapshot copied",
+
         "notif_ui_snapshot_copied_body": "Screenshot with current program overlay copied to clipboard.",
+
         "notif_ui_snapshot_saved_title": "UI Snapshot saved",
+
         "notif_ocr_copied_title": "Text copied to clipboard",
+
         "notif_ocr_no_text_title": "No text detected",
+
         "notif_ocr_no_text_body": "No readable text found in the selected region.",
+
         "popup_ocr_auto": "Text (Auto detect)",
+
         "mass_recording_title": "Mass recording",
+
         "mass_recording_active": "Active zones: {count}",
+
         "mass_recording_stop": "Stop all",
+
         "mass_recording_stop_tip": "Stop all video and GIF recordings",
+
         "mass_recording_active_types": "Video: {video} · GIF: {gif}",
+
         "mass_video_pause": "Video",
+
         "mass_video_pause_tip": "Pause video recordings",
+
         "mass_video_resume": "Video",
+
         "mass_video_resume_tip": "Resume video recordings",
+
         "mass_video_stop": "Video",
+
         "mass_video_stop_tip": "Stop video recordings only",
+
         "mass_gif_pause": "GIF",
+
         "mass_gif_pause_tip": "Pause GIF recordings",
+
         "mass_gif_resume": "GIF",
+
         "mass_gif_resume_tip": "Resume GIF recordings",
+
         "mass_gif_stop": "GIF",
+
         "mass_gif_stop_tip": "Stop GIF recordings only",
+
         "region_recent_image": "Zone screenshot {index}",
+
         "region_add_mode": "Add-zone mode: select the next area",
+
         "action_close": "Close selection (Esc)",
+
         "action_close_region": "Remove active zone (Esc / Ctrl+W)",
+
         "action_dynamic_bg": "Dynamic background (live video behind frame)",
+
         "action_passthrough": "Protected zone: clicks inside selection do not interact with background apps",
+
         "rec_tip_passthrough": "Protected zone: clicks inside the frame are blocked from reaching background windows (on/off)",
+
         "tool_lbl_cursor": "Cursor",
+
         "tool_lbl_select": "Select",
+
         "tool_lbl_pen": "Pen",
+
         "tool_lbl_highlighter": "Marker",
+
         "tool_lbl_shapes": "Shapes",
+
         "tool_lbl_mask": "Mask",
+
         "tool_lbl_text": "Text",
+
         "tool_lbl_properties": "Properties",
+
         "tool_lbl_more": "More",
+
         "tool_lbl_undo": "Undo",
+
         "tool_lbl_redo": "Redo",
+
         "tool_lbl_censor": "Censor",
+
         "action_lbl_layers": "Layers",
+
         "action_lbl_history": "History",
 
+
+
         # --- Shape Context Menu & Layers ---
+
         "shape_menu_props": "Edit properties ({name})...",
+
         "shape_menu_props_clean": "Shape parameters...",
+
         "shape_menu_text_props": "Text parameters (font, color)...",
+
         "text_editor_move": "Text",
+
         "text_editor_close_tip": "Cancel (Esc)",
+
         "shape_menu_dup": "Duplicate (Ctrl+D)",
+
         "shape_menu_order": "Layer Order",
+
         "shape_menu_front": "Bring to Front",
+
         "shape_menu_up": "Move Up",
+
         "shape_menu_down": "Move Down",
+
         "shape_menu_back": "Send to Back",
+
         "shape_menu_delete": "Delete shape (Del)",
+
         "layers_dialog_title": "Shape Layers",
+
         "layers_visible_tip": "Toggle layer visibility",
+
         "layers_up_tip": "Move layer up",
+
         "layers_down_tip": "Move layer down",
+
         "layers_del_tip": "Delete layer",
 
+
+
         # --- Shape Properties Popup (ShapeEditPopup) ---
+
         "shape_edit_title": "Shape Properties: {name}",
+
         "shape_edit_color": "Color:",
+
         "shape_edit_width": "Width: {val} px",
+
         "shape_edit_opacity": "Opacity: {val}%",
+
         "shape_edit_style": "Arrow style:",
+
         "shape_edit_custom_color": "Custom color...",
+
         "shape_edit_del": "Delete",
+
         "shape_edit_done": "Done",
 
+
+
         # --- Color Palette Popup (ColorPalettePopup) ---
+
         "palette_title": "Color & Pen Palette",
+
         "palette_thickness": "Stroke width: {val} px",
+
         "palette_custom_tip": "Pick custom color from Windows color palette",
 
+
+
         # --- Settings Dialog ---
+
         "settings_title": "Framio Settings",
+
         "settings_tab_storage": "Storage Locations",
+
         "settings_tab_media": "Recording (Video, GIF, Audio)",
+
         "settings_tab_hotkeys": "Hotkeys",
+
         "settings_tab_general": "General & Captures",
+
         "settings_tab_help": "Help & Guide",
 
+
+
         "settings_lang_label": "Interface Language / Язык интерфейса:",
+
         "settings_lang_auto": "Auto (System)",
+
         "settings_lang_ru": "Русский",
+
         "settings_lang_en": "English",
 
+
+
         "settings_btn_apply": "Apply",
+
         "settings_btn_close": "Close",
+
         "settings_btn_record": "Assign",
+
         "settings_btn_recording": "Press keys...",
+
         "settings_btn_browse": "Browse...",
+
         "settings_btn_reset": "Reset",
 
+
+
         "settings_storage_group": "File Storage Directories",
+
         "settings_screenshots_dir": "Screenshots folder:",
+
         "settings_videos_dir": "Videos folder (MP4):",
+
         "settings_gifs_dir": "GIFs folder:",
+
         "settings_portable_badge": "Mode: {mode} • {path}",
 
+
+
         "settings_video_group": "Video Recording Options (MP4)",
+
         "settings_video_fps": "Framerate (FPS):",
+
         "settings_video_codec": "Video codec:",
+
         "settings_compress_video": "Optimize MP4 file size after recording (H.264 CRF)",
 
+
+
         "settings_gif_group": "GIF Animation Options",
+
         "settings_gif_fps": "GIF Framerate (FPS):",
+
         "settings_gif_colors": "GIF Color Palette:",
+
         "settings_gif_dither": "Color dithering algorithm:",
+
         "settings_compress_gif": "Optimize GIF size (FFmpeg PaletteGen)",
 
+
+
         "settings_audio_group": "Audio Recording",
+
         "settings_record_mic": "Record microphone by default",
+
         "settings_record_system": "Record system sound (games, videos, browser WASAPI loopback)",
 
+
+
         "settings_countdown_group": "Pre-recording Timer",
+
         "settings_countdown_enable": "Enable countdown timer before recording starts",
+
         "settings_countdown_delay": "Timer delay:",
 
+
+
         "settings_hotkeys_group": "Global Hotkey Shortcuts",
+
         "settings_hk_capture": "Screen area capture (screenshot):",
+
         "settings_hk_quick_screen": "Quick fullscreen screenshot to folder:",
+
         "settings_hk_screenshot": "Standard fullscreen screenshot:",
+
         "settings_hk_screenshot_desc": "Saves the entire screen directly to the screenshots folder without selection or a dialog",
+
         "settings_hk_rec_fs": "Record entire screen (video):",
+
         "settings_hk_stop_rec": "Stop active screen recording:",
 
+
+
         "settings_general_group": "Application Behavior",
+
         "settings_auto_copy": "Automatically copy screenshot to clipboard",
+
         "settings_auto_copy_desc": "Immediately place captured image into Windows clipboard",
+
         "settings_play_sound": "Play camera shutter and notification sounds",
+
         "settings_play_sound_desc": "Audio shutter click on screenshot capture",
+
         "settings_open_folder": "Open destination folder after saving file",
+
         "settings_open_folder_desc": "Highlight newly saved file in Windows Explorer",
+
         "settings_save_on_search": "Save screenshot when searching by image",
+
         "settings_save_on_search_desc": "Automatically save file to disk before reverse image search",
+
         "settings_autostart": "Launch Framio on Windows startup (system tray)",
+
         "settings_autostart_desc": "Automatically launch minimized to tray when signing into Windows",
 
+
+
         "settings_screenshots_group": "Screenshots & Clipboard",
+
         "settings_save_format": "Default screenshot save format:",
+
         "settings_copy_format": "Clipboard copy format:",
+
         "settings_copy_format_dib": "DIB / Bitmap (Standard for messengers & apps)",
+
         "settings_copy_format_png": "PNG (Preserves alpha transparency)",
+
         "settings_copy_format_jpg": "JPEG (Compressed compact)",
+
         "settings_copy_format_data_uri": "Data URI (Base64 string)",
 
+
+
         "settings_annotations_group": "Default Annotation Settings",
+
         "settings_default_color": "Default tool color:",
+
         "settings_default_stroke": "Stroke width:",
+
         "settings_highlighter_alpha": "Highlighter marker opacity:",
 
+
+
         # --- Help & Guide Content ---
+
         "help_title": "Framio User Guide",
+
         "help_content": """
+
 <h2>Framio — User Guide</h2>
+
 <p>Framio is a Windows app for screenshots, annotations, and video or GIF recording with audio.</p>
 
+
+
 <hr/>
+
+
 
 <h3>1. Taking Screenshots</h3>
+
 <ul>
+
   <li><b>Capture Area:</b> Press <code>{hk_capture}</code> or click the tray icon. Click and drag left mouse button to select any screen area.</li>
+
   <li><b>Quick Fullscreen Screenshot:</b> Press <code>{hk_quick}</code>. A screenshot of all monitors will be saved directly into your screenshots folder and copied to your clipboard instantly — without showing overlay or extra clicks!</li>
+
   <li><b>Standard Print Screen:</b> Press <code>{hk_screenshot}</code> to save the full screen into the screenshots folder without selecting an area or opening a save dialog.</li>
+
   <li><b>Fine Tuning:</b> Drag handles on the borders to resize, or drag from the center (with the Move tool selected) to reposition.</li>
+
   <li><b>Quick Shortcuts:</b> <code>Ctrl+C</code> to copy, <code>Ctrl+S</code> to save to disk, <code>Esc</code> to cancel.</li>
+
 </ul>
+
 <p><b>Multiple zones:</b> after the first selection, click <b>+</b> in the bottom or top panel. The top toggle shows whether add-zone mode is active and can turn it off. Create a new zone with <b>+</b>, or hold <code>Ctrl</code> for fast repeated additions. With one zone, an outside drag replaces it and a plain outside click is safe. With multiple zones, an outside drag without <b>+</b> or <code>Ctrl</code> leaves them unchanged. Existing zones can still be selected and moved while add mode is on.</p>
+
 <p><b>Mass actions:</b> the top panel can save, copy, record video, or record GIF for every zone that is not currently recording. It uses the same format and recording settings as the bottom toolbar. Each recording is independent; once mass video/GIF starts, the selection overlay is hidden and only recording frames remain.</p>
+
 <p><b>Framio clipboard:</b> the Framio tray context menu includes recent screenshots, videos, and GIFs with larger thumbnails. <code>Ctrl+C</code> with multiple zones copies separate images for every zone through a multi-image payload and file-drop URLs instead of one combined rectangle.</p>
+
 <p><b>Window selection:</b> after starting capture, move the cursor over a window. When the blue border and title appear, click it to select the complete window. The recording window also has the same option under the gear button: “Select window by clicking”.</p>
 
+
+
 <hr/>
+
+
 
 <h3>2. Annotation Tools</h3>
+
 <ul>
+
   <li><b>Pen (P)</b> — smooth freehand vector drawing.</li>
+
   <li><b>Barbed Arrow (A)</b> — precise directional arrows with sharp barbed arrowheads.</li>
+
   <li><b>Rectangle (R) & Ellipse (C)</b> — geometric annotation shapes.</li>
+
   <li><b>Highlighter (H)</b> — translucent marker to emphasize text and key areas.</li>
+
   <li><b>Text (T)</b> — text with a dark contrasting background.</li>
+
   <li><b>Step Counter (S)</b> — numbered circular badges (1, 2, 3...) for tutorial walkthroughs.</li>
+
   <li><b>Mosaic Blur (M)</b> — censor passwords, emails, and sensitive personal information.</li>
+
 </ul>
 
+
+
 <hr/>
+
+
 
 <h3>3. Interactive Shape Manipulation</h3>
+
 <ul>
+
   <li><b>Move Shapes:</b> Hover any shape, <b>click and hold Right Mouse Button (RMB)</b> and drag it anywhere across the screen!</li>
+
   <li><b>Shape Properties:</b> Click <b>RMB on any shape</b> (or hold for 0.35s) to open the property popup: adjust color, stroke thickness, opacity, arrow style, duplicate (<code>Ctrl+D</code>) or delete (<code>Del</code>).</li>
+
   <li><b>Layers Dialog:</b> Click the Layers button to view, toggle visibility, reorder or remove individual shape layers.</li>
+
 </ul>
 
+
+
 <hr/>
+
+
 
 <h3>4. Recording Video (MP4) and Animated GIFs</h3>
+
 <ul>
+
   <li><b>Start Recording:</b> Press <code>{hk_rec_fs}</code> for fullscreen, or select "Record Video / GIF" from the bottom toolbar after selecting an area.</li>
+
   <li><b>Dynamic Resizing:</b> Drag and resize the recording frame freely in real-time without black letterboxing or stuttering.</li>
+
   <li><b>Isolated Window Capture:</b> Click the gear icon in the recording header and pick a specific application window. Framio records only that window even if other windows overlap it!</li>
+
   <li><b>Audio (WASAPI Loopback + Mic):</b> Capture game/system audio and microphone voice. Toggle audio on/off during live recording by clicking the header icons.</li>
+
   <li><b>Live Drawing:</b> Click the pen icon in the header. Draw arrows, write notes, and highlight key moments live during video recording.</li>
+
   <li><b>Pinning (Pin):</b> Pinned drawings stay fixed on the screen, while unpinned drawings move with the recording frame.</li>
+
   <li><b>Stop & Save:</b> Click the red Stop button or press <code>{hk_stop}</code>. Files are optimized and saved automatically in background.</li>
+
 </ul>
+
+
 
 <hr/>
 
+
+
 <h3>5. Advanced Modes</h3>
+
 <ul>
+
   <li><b>Pass-through Frame:</b> Toggle pass-through mode in the bottom toolbar to interact with desktop apps directly through the screenshot frame.</li>
+
   <li><b>Dynamic Background:</b> Capture live animations and moving desktop windows without freezing the background.</li>
+
 </ul>
+
 """
+
 ,
+
         "scroll_saved_toast": "Scrolling screenshot saved: {path}",
+
         "scroll_hud_snap": "Capture frame",
+
         "scroll_copied_toast": "Scrolling screenshot copied to clipboard!",
+
         "action_save_tip": "Save screenshot (click to choose PNG, JPG, WebP) [Ctrl+S]",
+
         "action_copy_tip": "Copy screenshot (click to choose format) [Ctrl+C]",
+
         "action_copy_text_tip": "Copy text from image to clipboard (click to choose language) [Ctrl+T]",
+
         "action_scroll_tip": "Scrolling screenshot with auto-scroll [S]",
+
         "action_search_tip": "Search image with Google Lens or Yandex",
+
         "action_video_tip": "Record MP4 video (audio & codec settings)",
+
         "action_gif_tip": "Record GIF (quality & FPS settings)",
+
         "action_filter_tip": "Whole-screen effects and color filters",
+
         "action_lock_tip": "Lock frame to prevent accidental moves",
+
         "action_lock_active_tip": "Frame is locked (click to unlock)",
+
         "action_dynamic_bg_tip": "Dynamic background: live desktop inside frame (on/off)",
+
         "action_passthrough_tip": "Protected zone: clicks inside selection do not interact with background apps (on/off)",
+
         "action_settings_tip": "Framio Settings",
+
         "action_close_tip": "Close selection (Esc)",
+
         "shape_arrow": "Arrow",
+
         "shape_line": "Straight Line",
+
         "shape_rect": "Rectangle (outline)",
+
         "shape_rect_rounded": "Rounded Rectangle",
+
         "shape_filled_rect": "Filled Rectangle",
+
         "shape_circle": "Circle / Ellipse (outline)",
+
         "shape_circle_filled": "Filled Circle / Ellipse",
+
         "censor_mosaic": "Mosaic (Pixelate area)",
+
         "censor_blur": "Blur (Gaussian blur area)",
+
         "censor_grayscale": "Grayscale (Black & white area)",
+
         "censor_invert": "Invert colors (Area)",
+
         "censor_vibrant": "High contrast / Vibrant (Area)",
+
         "censor_sepia": "Vintage Sepia (Warm tone area)",
+
         "filter_none": "No Filter",
+
         "filter_grayscale": "Grayscale (Black & White)",
+
         "filter_blur": "Soft Blur",
+
         "filter_pixelate": "Mosaic (Grain)",
+
         "whole_filter_title": "Whole-area effect",
+
         "filter_blur_radius": "Blur strength: {val} px",
+
         "filter_pixel_size": "Mosaic grain: {val} px",
+
         "filter_invert": "Invert Colors (Negative)",
+
         "filter_vibrant": "Vibrant Contrast",
+
         "filter_sepia": "Vintage Sepia",
+
         "popup_video_source": "Capture source:",
+
         "popup_video_all_screens": "Entire Screen / All Windows",
+
         "popup_video_all_screens_tip": "Record entire screen area under frame with all windows",
+
         "popup_video_mic": "Record microphone audio",
+
         "popup_video_system": "Record system audio (speakers)",
+
         "popup_video_codec": "Codec:",
+
         "popup_video_codec_mp4v": "mp4v (Standard)",
+
         "popup_video_codec_avc1": "avc1 (H.264)",
+
         "popup_video_codec_xvid": "XVID",
+
         "popup_video_timer": "Pre-recording timer:",
+
         "popup_video_timer_sec": " sec",
+
         "popup_video_timer_tip": "Countdown duration (1–60 sec)",
+
         "popup_video_start": "Start Video Recording",
+
         "popup_gif_fps": "Framerate (FPS):",
+
         "popup_gif_colors": "Color palette:",
+
         "popup_gif_colors_256": "256 colors (Maximum)",
+
         "popup_gif_colors_128": "128 colors (High)",
+
         "popup_gif_colors_64": "64 colors (Optimal)",
+
         "popup_gif_colors_32": "32 colors (Compact)",
+
         "popup_gif_dither": "Dithering:",
+
         "popup_gif_dither_none": "none (Smallest size)",
+
         "popup_gif_dither_bayer": "bayer (Smooth halftones)",
+
         "popup_gif_opt": "Optimize GIF size (PaletteGen)",
+
         "popup_gif_start": "Start GIF Recording",
+
         "popup_fmt_png": "PNG (Lossless)",
+
         "popup_fmt_jpg": "JPG / JPEG",
+
         "popup_fmt_webp": "WebP",
+
         "popup_fmt_quality": "Quality:",
+
         "popup_copy_dib": "DIB / Bitmap (Messengers)",
+
         "popup_copy_png": "PNG (Preserve transparency)",
+
         "popup_copy_jpg": "JPEG (Compact size)",
+
         "popup_copy_data_uri": "Data URI (Base64 text)",
+
         "popup_search_google": "Google Lens",
+
         "popup_search_yandex": "Yandex Images",
+
         "prop_palette_color": "Palette & Color",
+
         "prop_color_custom": "Custom color...",
+
         "prop_fill_gradient": "Gradient Fill",
+
         "prop_line_style": "Line style:",
+
         "prop_line_solid": "Solid",
+
         "prop_line_dash": "Dashed",
+
         "prop_line_dot": "Dotted",
+
         "prop_arrow_style": "Arrow style:",
+
         "prop_arrow_classic": "Classic",
+
         "prop_arrow_barbed": "Barbed",
+
         "prop_arrow_double": "Double-headed",
+
         "prop_stroke_width": "Thickness: {val} px",
+
         "prop_mosaic_size": "Mosaic size: {val} px",
+
         "prop_font_size": "Font size: {val} pt",
+
         "prop_highlighter_size": "Marker thickness: {val} px",
+
         "prop_blur_radius": "Blur radius: {val} px",
+
         "badge_fullscreen": "Fullscreen",
+
         "settings_btn_open": "Open",
+
         "settings_btn_reset_port": "Reset to Captures folder",
+
         "settings_btn_reset_std": "Reset to Windows defaults",
+
         "settings_hk_highlight_objects": "Highlight interactive objects (hold):",
+
         "settings_hk_highlight_desc": "Shows bounding boxes and names for all movable objects on screen",
+
         "settings_video_fps_desc": "Video recording smoothness (30 or 60 FPS recommended)",
+
         "settings_video_codec_desc": "Hardware or software codec for MP4 frames",
+
         "settings_video_quality": "Recording quality:",
+
         "settings_video_quality_desc": "Bitrate and compression quality",
+
         "settings_quality_high": "High",
+
         "settings_quality_medium": "Medium",
+
         "settings_quality_ultra": "Maximum",
+
         "settings_compress_video_title": "Background MP4 Optimization",
+
         "settings_compress_video_desc": "Automatic FFmpeg compression with no visual loss",
+
         "settings_gif_fps_desc": "GIF animation smoothness",
+
         "settings_gif_colors_desc": "Palette size (fewer colors = smaller file)",
+
         "settings_gif_dither_desc": "Halftone dithering algorithm",
+
         "settings_compress_gif_title": "Background GIF Optimization",
+
         "settings_compress_gif_desc": "PaletteGen optimal palette generation without artifacts",
+
         "settings_record_mic_desc": "Enable microphone recording by default",
+
         "settings_record_system_desc": "Capture speakers, games and browser via WASAPI Loopback",
+
         "settings_countdown_desc": "Gives time to prepare window or game before recording",
+
         "settings_countdown_delay_desc": "Countdown duration in seconds",
+
         "settings_save_format_desc": "Default format when saving files to disk",
+
         "settings_copy_format_desc": "Image data type placed on Windows clipboard",
+
         "settings_default_color_desc": "Color for pen, arrows, shapes, and text on launch",
+
         "settings_default_stroke_desc": "Default stroke thickness for vector shapes",
+
         "settings_highlighter_alpha_desc": "Marker transparency level",
+
         "settings_font_size": "Default font size:",
+
         "settings_font_size_desc": "Default font size for text notes",
+
         "settings_hk_translator": "Screen Translator:",
+
         "settings_hk_translator_desc": "Global shortcut for Screen & Subtitle Translator (unassigned by default)",
+
         "settings_hk_none": "Unassigned",
+
         "settings_btn_clear": "Clear",
+
+        "settings_mouse_gesture_group": "Quick Mouse Drag Capture (Drag & Drop)",
+        "settings_qd_screenshot": "Quick Screenshot Drag:",
+        "settings_qd_screenshot_desc": "Hold key combination + mouse button, drag an area and release to immediately copy screenshot to clipboard",
+        "settings_qd_ocr": "Quick Text Recognition (OCR):",
+        "settings_qd_ocr_desc": "Hold key combination + mouse button, drag text and release to immediately copy extracted text to clipboard",
+        "settings_qd_btn_left": "Left Mouse Button (LMB)",
+        "settings_qd_btn_right": "Right Mouse Button (RMB)",
+        "settings_qd_btn_middle": "Middle Mouse Button (MMB / Wheel)",
+        "settings_qd_format": "Clipboard format:",
+        "settings_qd_lang": "OCR Language:",
+        "settings_custom_notif": "Compact Framio toast notifications above the taskbar",
+        "settings_notif_row": "Toast notifications:",
+        "settings_custom_notif_desc": "Show sleek Framio toast cards with preview and action buttons above the tray instead of standard Windows notifications",
+        "notif_quick_screen_copied": "Screenshot copied to clipboard",
+        "notif_action_copy": "Copy",
+        "notif_action_copied": "Copied!",
+        "notif_action_open_folder": "In folder",
         "settings_hk_info_title": "Hotkey Reference",
+
         "settings_hk_info_text": "• Supports shortcuts with <b>Ctrl</b>, <b>Shift</b>, <b>Alt</b>, <b>Win</b> and <b>Print Screen</b>, <b>F1–F12</b>, letters and digits.<br>• To assign a new key, click <b>'Assign'</b> and press the desired combination on your keyboard.<br>• To revert to defaults, click <b>'Reset'</b>.",
+
         "settings_applied_toast": "Settings applied successfully!",
+
         "settings_reg_enabled": "Enabled in registry",
+
         "settings_reg_disabled": "Disabled in registry",
+
         "settings_reg_status": "Current Windows registry status: {status}",
+
         "settings_mode_portable": "Portable",
+
         "settings_mode_system": "Installed",
+
         "obj_arrow": "Arrow",
+
         "obj_line": "Line",
+
         "obj_rect": "Rectangle",
+
         "obj_circle": "Circle / Ellipse",
+
         "obj_text": "Text",
+
         "obj_pen": "Pen",
+
         "obj_highlighter": "Highlighter",
+
         "obj_step": "Step Counter",
+
         "obj_mosaic": "Mosaic (Censor)",
+
         "obj_blur": "Blur",
+
         "obj_grayscale": "Grayscale (Area)",
+
         "obj_invert": "Invert (Area)",
+
         "obj_vibrant": "Vibrant (Area)",
+
         "obj_sepia": "Sepia (Area)",
+
         "obj_interactive": "Object",
+
     
+
         # --- New UI keys (v2.0) ---
+
         "popup_video_title": 'Video Recording Settings',
+
         "popup_video_fps": 'Frames per second (FPS):',
+
         "popup_video_fps_tip": 'Frame rate for the next video recording',
+
         "popup_video_source": 'Capture source:',
+
         "popup_video_mic": 'Record microphone audio',
+
         "popup_video_system": 'Record system audio (speakers)',
+
         "popup_video_codec": 'Codec:',
+
         "popup_video_codec_mp4v": 'mp4v (Standard)',
+
         "popup_video_codec_avc1": 'avc1 (H.264)',
+
         "popup_video_timer": 'Pre-recording timer:',
+
         "popup_video_timer_sec": ' sec',
+
         "popup_video_timer_tip": 'Countdown duration (1–60 sec)',
+
         "popup_video_start": 'Start Video Recording',
+
         "popup_video_all_screens": 'Entire Screen / All Windows',
+
         "popup_video_all_screens_tip": 'Record entire screen area under frame with all windows',
+
         "popup_gif_title": 'GIF Animation Settings',
+
         "popup_gif_compression": 'Compression / Colors:',
+
         "popup_gif_opt_max": 'Max compression (64 colors)',
+
         "popup_gif_opt_high": 'High (64 colors, bayer)',
+
         "popup_gif_opt_balance": 'Balanced (128 colors)',
+
         "popup_gif_opt_quality": 'High quality (256 colors)',
+
         "popup_gif_opt_extreme": 'Extreme (32 colors)',
+
         "popup_gif_fps": 'Framerate (FPS):',
+
         "popup_gif_start": 'Start GIF Recording',
+
         "popup_copy_standard": 'Image (Standard clipboard)',
+
         "prop_tool_settings": 'Tool Settings',
+
         "prop_style": 'Style:',
+
         "prop_corners": 'Corners:',
+
         "prop_corners_sharp": 'Sharp corners',
+
         "prop_corners_rounded": 'Rounded corners',
+
         "prop_arrow_stealth": 'Stealth arrow',
+
         "prop_arrow_dashed": 'Dashed arrow',
+
         "prop_line_dashed": 'Dashed line',
+
         "prop_line_dotted": 'Dotted line',
+
         "prop_outline": 'Outline',
+
         "prop_filled": 'Filled',
+
         "prop_fill_solid": 'Solid',
+
         "prop_colors": 'Colors:',
+
         "prop_grad1_tip": 'First gradient color',
+
         "prop_grad2_tip": 'Second gradient color',
+
         "prop_fill_opacity": 'Fill opacity: {pct}%',
+
         "prop_hl_opacity": 'Highlighter opacity: {pct}%',
+
         "prop_bold_tip": 'Bold text',
+
         "prop_underline_tip": 'Underline text',
+
         "prop_text_bg": 'Text background',
+
         "prop_text_bg_alpha": 'Background opacity: {pct}%',
+
         "prop_text_bg_col": 'Background color:',
+
         "prop_mosaic_tip": 'Mosaic mode (censor) for any tool',
+
         "prop_blur_tip": 'Blur mode for any tool',
+
         "prop_censor_mosaic": 'Mosaic',
+
         "prop_censor_blur": 'Blur',
+
         "prop_drag_area": 'Drag area with mouse',
+
         "prop_placeholder_text": 'Type text here...',
+
         "shape_edit_tip_label": 'Tip / Head:',
+
         "action_filters": 'Fullscreen effects and color filters',
+
         "action_lock": 'Lock selection frame against accidental moves',
+
         "action_locked_tip": 'Frame is locked (click to unlock)',
+
         "action_color_swatch": 'Palette, color and tool properties',
+
         "action_censor_tip": 'Censorship & filters (Mosaic / Blur / Effects)',
+
         "action_layers": 'Manage layers',
+
         "action_history": 'Action history',
+
         "settings_compress_video_desc": 'Automatic FFmpeg compression after video recording',
+
         "settings_gif_fps_desc": 'Animation framerate for balance between smoothness and size',
+
         "settings_gif_colors_desc": 'Number of unique colors in animation palette',
+
         "settings_gif_opt_desc": 'Built-in frame compression with LZW algorithm',
+
         "settings_compress_gif_desc": 'Generate optimal 256-color palette without artifacts',
+
         "settings_record_mic_row": 'Microphone',
+
         "settings_record_system_row": 'System Sound',
+
         "settings_countdown_title": 'Countdown Timer',
+
         "settings_countdown_desc": 'Pause before capture start to prepare windows',
+
         "settings_countdown_delay_desc": 'Countdown delay before recording starts (1–60 sec)',
+
         "settings_hk_capture_desc": 'Global hotkey shortcut to capture screen',
+
         "settings_hk_quick_desc": 'Capture all monitors directly to folder and clipboard',
+
         "settings_hk_rec_desc": 'Record entire screen with all windows and audio',
+
         "settings_hk_stop_desc": 'Emergency stop active video or GIF recording',
+
         "settings_hk_highlight": 'Highlight objects (Alt):',
+
         "settings_hk_highlight_desc": 'Hold hotkey to highlight all movable shapes on screen',
+
         "settings_font_size_label": 'Font size:',
+
         "settings_font_size_desc": 'Default text size in Text tool',
+
         "settings_system_group": 'System Integration & Sounds',
+
         "settings_autostart_row": 'Windows Autostart',
+
         "settings_sound_row": 'Shutter Sounds',
+
         "settings_folder_row": 'Windows Explorer',
+
         "settings_choose_color": 'Choose default color',
+
         "settings_choose_folder_screens": 'Select screenshots folder',
+
         "settings_choose_folder_videos": 'Select videos folder',
+
         "settings_choose_folder_gifs": 'Select GIFs folder',
+
         "settings_folder_error_title": 'Folder Creation Error',
+
         "settings_folder_error_msg": 'Failed to create folder:\n{path}\n\nError: {err}',
+
         "settings_reset_confirm_title": 'Reset Settings',
+
         "settings_reset_confirm_msg": 'Reset all settings to default values (Captures)?',
+
         "settings_hk_info_text": '• Combinations can include <b>Ctrl</b>, <b>Shift</b>, <b>Alt</b>, <b>Win</b> and any key like <b>Print Screen</b>, <b>F1–F12</b>, letters or digits.<br>• To assign a hotkey, click the <b>Assign</b> button and press the desired combination.<br>• To reset a combination to default, click the <b>Reset</b> button.',
+
         "settings_compress_mp4_row": 'MP4 Compression',
+
         "settings_lzw_row": 'LZW Compression',
+
         "settings_palettegen_row": 'PaletteGen Optimization',
+
         "settings_auto_copy_row": 'Auto-Clipboard',
+
         "settings_save_search_row": 'Save on Search',
+
         "settings_color_dialog_title": 'Select Default Color',
+
         "shape_edit_title_simple": 'Shape Properties',
+
         "shape_edit_color_label": 'Color:',
+
         "shape_edit_custom_col": 'Custom color...',
+
         "shape_edit_text_default": 'Text',
+
         "shape_edit_text_prefix": "Text: '{txt}'",
+
         "shape_edit_bg_picker_title": 'Select Text Background Color',
+
         "shape_edit_stroke_picker_title": 'Select Shape Color',
+
         "shape_edit_grad_picker_title": 'Select Gradient Color {idx}',
+
         "action_fullscreen_tip": "Select entire screen (Ctrl+A)",
+
         "action_pause_rec": "Pause recording",
+
         "action_stop_rec": "Stop",
+
         "action_stop_rec_tip": "Finish and save recording",
+
         "flyout_tool": "Tool",
+
         "hist_btn_reset": "Reset",
+
         "hist_cmd_add": "Added {name}",
+
         "hist_cmd_back": "{name} to Back",
+
         "hist_cmd_delete": "Delete {name}",
+
         "hist_cmd_down": "{name} Send Backward",
+
         "hist_cmd_dup": "Duplicate {name}",
+
         "hist_cmd_front": "{name} to Front",
+
         "hist_cmd_move": "Move {name}",
+
         "hist_cmd_props": "Properties: {name}",
+
         "hist_cmd_filter": "Filter: {name}",
+
         "hist_cmd_text": "Text: {text}",
+
         "hist_cmd_transform": "Transform {name}",
+
         "hist_cmd_expand_object": "Expand object to capture area",
+
         "hist_cmd_region_transform": "Change capture area",
+
         "hist_cmd_mask_fit_region": "Capture area to mask bounds",
+
         "hist_cmd_add_region": "Add capture area",
+
         "hist_cmd_delete_region": "Delete capture area",
+
         "hist_cmd_up": "{name} Bring Forward",
+
         "hist_dialog_title": "Action History",
+
         "hist_empty": "History is empty",
+
         "hist_undone": "undone",
+
         "layers_clear_all": "Clear All",
+
         "layers_empty": "No layers (draw a shape)",
+
         "obj_arrow": "Arrow",
+
         "obj_blur": "Blur (Censor)",
+
         "obj_circle": "Circle / Ellipse",
+
         "obj_clone_name": "{name} (copy)",
+
         "obj_filled_circle": "Filled Circle",
+
         "obj_filled_rect": "Filled Rectangle",
+
         "obj_grayscale": "Grayscale (Area)",
+
         "obj_highlighter": "Highlighter",
+
         "obj_invert": "Invert (Area)",
+
         "obj_line": "Line",
+
         "obj_mosaic": "Mosaic (Censor)",
+
         "obj_pen": "Pen",
+
         "obj_rect": "Rectangle",
+
         "obj_sepia": "Sepia (Area)",
+
         "obj_shape": "Shape",
+
         "obj_step": "Step Number",
+
         "obj_text": "Text",
+
         "obj_vibrant": "Vibrant (Area)",
+
         "rec_exporting_wait": "Optimizing and encoding in high quality (background)...",
+
         "rec_status_active": "Active recording indicator",
+
         "rec_tip_all_screens": "Recording entire screen area under frame",
+
         "rec_tip_cancel": "Cancel recording without saving and delete file [Esc]",
+
         "rec_tip_drag": "Drag title bar to move recording frame",
+
         "rec_tip_duration": "Duration of current recording and captured frames",
+
         "rec_tip_lock": "Lock recording frame from accidental resize",
+
         "rec_tip_mic_off": "Microphone muted (click to enable)",
+
         "rec_tip_mic_on": "Microphone enabled (click to mute)",
+
         "rec_tip_resolution": "Current recording area resolution in pixels",
+
         "rec_tip_sys_off": "System audio muted (click to enable)",
+
         "rec_tip_sys_on": "System audio enabled (click to mute)",
+
         "rec_tip_target_win": "Recording options (select app / window)",
+
         "rec_tip_unlock": "Unlock recording frame to resize",
+
         "scroll_err_grab": "Failed to capture initial screen area.",
+
         "scroll_err_title": "Scrolling Screenshot Error",
+
         "scroll_step_tip": "Capture current screen and stitch with previous (frame height)",
+
         "settings_annot_picker_title": "Select Annotation Color",
+
         "settings_base_dir": "Application directory",
+
         "settings_btn_assign": "Assign",
+
         "settings_btn_listening": "Press...",
+
         "settings_btn_listening_key": "Press a key...",
+
         "settings_btn_open_base": "Open App Folder",
+
         "settings_btn_reset_port": "Reset to App Folder",
+
         "settings_btn_reset_std": "Reset to Standard Folder",
+
         "settings_hk_tooltip": "Click to record shortcut key combination (Ctrl, Shift, Alt, F1-F12, letters, Print Screen)",
+
         "settings_lang_auto": "Auto (System) / Автоматически (системный)",
+
         "settings_lang_desc": "The language changes immediately after selection",
+
         "settings_lang_en": "English (Английский)",
+
         "settings_lang_group": "Interface Language / Язык интерфейса",
+
         "settings_lang_ru": "Russian (Русский)",
+
         "settings_slider_shift_tip": ", hold Shift for ",
+
         "settings_storage_portable_chk": "Enable portable mode (store settings and captures in application folder)",
+
         "settings_storage_portable_group": "Portable Mode",
+
         "tool_blur": "Blur (Censor)",
+
         "tool_shapes": "Shapes (Line, Arrow, Rectangle, Circle)",
+
         "app_already_running_title": "Framio is already running",
+
         "app_already_running_msg": "Application is already running in system tray. Press {hotkey} to capture screen.",
+
         "prop_eyedropper_tip": "Eyedropper (Pick color from screen)",
+
         "eyedropper_loupe_hint": "LMB: pick color | Esc / RMB: cancel",
+
         "action_edit_text": "Edit text...",
+
         "prop_text_italic": "Italic",
 
+
+
         # --- Live Screen Translator Frame ---
+
         "trans_frame_title": "Live Translator",
+
         "trans_mode_hud": "Subtitles",
+
         "trans_mode_inplace": "In-place Text",
+
         "trans_mode_tooltip": "Display Mode: Bottom Subtitles HUD / In-place overlay",
+
         "trans_pause_tooltip": "Pause / Resume scanning",
+
         "trans_copy_tooltip": "Copy current translation to clipboard",
+
         "trans_close_tooltip": "Close translation frame",
+
         "trans_stealth_tooltip": "Collapse panel (Gaming / Stealth mode)",
+
         "trans_unfold_tooltip": "Unfold control panel",
+
         "trans_passthrough_tooltip": "Click-through mode for games (mouse clicks pass through). Click the eye pill to restore panel",
+
         "trans_passthrough_active": "Click-through is active. Click the floating eye pill to restore controls.",
+
         "trans_copied": "Translation copied to clipboard!",
+
         "trans_waiting_text": "Waiting for text in frame...",
+
         "trans_no_text": "No text detected",
+
         "trans_lang_btn": "Lang: {src} → {tgt} ▾",
+
         "trans_mode_btn": "Mode: {mode} ▾",
+
         "trans_settings_btn": "Settings ▾",
+
         "trans_eye_tooltip": "Hide frame and panel (leave only eye icon)",
+
         "trans_unlock_tooltip": "Click the eye to restore panel and settings",
+
         "trans_menu_opacity": "Background Opacity",
+
         "trans_menu_theme": "Background Style",
+
         "trans_menu_font_size": "Subtitle Font Size",
+
         "trans_menu_fps": "Scan Speed",
+
         "trans_menu_smart_diff": "Smart pause on static screen",
+
         "trans_op_100": "100% (Opaque)",
+
         "trans_op_85": "85% (Optimal)",
+
         "trans_op_60": "60% (Semi-transparent)",
+
         "trans_op_30": "30% (Light)",
+
         "trans_op_0": "0% (No background)",
+
         "trans_theme_slate": "Dark Slate",
+
         "trans_theme_oled": "Deep Black (OLED)",
+
         "trans_theme_cyber": "Cyber Blue",
+
         "trans_font_auto": "Auto (Match text)",
+
         "trans_font_small": "Small (11 px)",
+
         "trans_font_medium": "Medium (14 px)",
+
         "trans_font_large": "Large (18 px)",
+
         "trans_font_xlarge": "Extra Large (22 px)",
+
         "trans_fps_fast": "Fast (150 ms)",
+
         "trans_fps_opt": "Optimal (300 ms)",
+
         "trans_fps_eco": "Power Saver (600 ms)",
+
         "trans_opt_match_color": "Match original text color",
+
         "trans_opt_match_color_tip": "Render translated text in the original colors detected on screen",
+
         "trans_opt_match_font": "Match original font & weight",
+
         "trans_opt_match_font_tip": "Match font family and boldness of the original on-screen text",
+
     }
+
 }
 
 
+
+
+
 def get_system_language() -> str:
+
     """Определяет язык операционной системы Windows."""
+
     try:
+
         lang_id = ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0xFF
+
         if lang_id in (0x19, 0x22, 0x23):  # 0x19 = Russian, 0x22 = Ukrainian, 0x23 = Belarusian
+
             return "ru"
+
     except Exception:
+
         pass
+
     try:
+
         name = QLocale.system().name().lower()
+
         if name.startswith(("ru", "uk", "be")):
+
             return "ru"
+
     except Exception:
+
         pass
+
     return "en"
+
+
+
 
 
 _LANGUAGE_OVERRIDE = None
 
 
+
+
+
 def set_language(lang: str = None):
+
     """Принудительно устанавливает язык интерфейса ('ru', 'en' или None/'auto' для сброса)."""
+
     global _LANGUAGE_OVERRIDE
+
     if lang in ("ru", "en"):
+
         _LANGUAGE_OVERRIDE = lang
+
     else:
+
         _LANGUAGE_OVERRIDE = None
 
 
+
+
+
 def get_current_language() -> str:
+
     """Возвращает текущий активный язык интерфейса с учетом настроек пользователя."""
+
     global _LANGUAGE_OVERRIDE
+
     if _LANGUAGE_OVERRIDE in ("ru", "en"):
+
         return _LANGUAGE_OVERRIDE
+
     try:
+
         from config import ConfigManager
+
         cfg = ConfigManager.get_instance().config
+
         pref = getattr(cfg, "language", "auto")
+
         if pref in ("ru", "en"):
+
             return pref
+
     except Exception:
+
         pass
+
     return get_system_language()
 
 
+
+
+
 def tr(_key: str, _default: str = None, **kwargs) -> str:
+
     """
+
     Возвращает локализованную строку по ключу для текущего языка.
+
     Поддерживает подстановку именованных параметров через str.format().
+
     """
+
     lang = get_current_language()
+
     dictionary = TRANSLATIONS.get(lang, TRANSLATIONS["ru"])
+
     fallback_dict = TRANSLATIONS["ru"]
 
+
+
     text = dictionary.get(_key)
+
     if text is None:
+
         text = fallback_dict.get(_key, _default or _key)
 
+
+
     if kwargs and isinstance(text, str):
+
         try:
+
             return text.format(**kwargs)
+
         except Exception:
+
             return text
+
     return text
+

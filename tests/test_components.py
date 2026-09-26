@@ -4711,10 +4711,65 @@ def test_close_overlay_does_not_steal_focus_from_active_window():
     print("  -> close_overlay() не вызывает SetForegroundWindow и сохраняет фокус за текущим окном пользователя.")
 
 
+def test_shutter_sound_and_quick_drag_and_toast():
+    """Тестирует генерацию звука затвора, парсинг/сплит жестов мыши и работу кастомных тостов."""
+    print("[TEST] Проверка звука затвора, жестов мыши и всплывающих уведомлений...")
+    from utils.sound import get_shutter_sound_bytes, play_capture_sound
+    from utils.hotkey_manager import parse_mouse_gesture_string, MOD_CONTROL, MOD_SHIFT, MOD_ALT
+    from ui.settings_dialog import split_mouse_gesture, join_mouse_gesture
+    from ui.toast_notification import ToastNotification, ToastManager
+
+    # 1. Звук затвора
+    wav_bytes = get_shutter_sound_bytes()
+    assert len(wav_bytes) > 1000
+    assert wav_bytes.startswith(b"RIFF")
+    assert b"WAVE" in wav_bytes
+    play_capture_sound()
+
+    # 2. Жесты мыши
+    mods, btn = parse_mouse_gesture_string("Ctrl+Shift+LButton")
+    assert mods == (MOD_CONTROL | MOD_SHIFT)
+    assert btn == "left"
+
+    mods_ocr, btn_ocr = parse_mouse_gesture_string("Ctrl+Alt+RButton")
+    assert mods_ocr == (MOD_CONTROL | MOD_ALT)
+    assert btn_ocr == "right"
+
+    k, b = split_mouse_gesture("Ctrl+Shift+LButton")
+    assert k == "Ctrl+Shift"
+    assert b == "LButton"
+    assert join_mouse_gesture(k, b) == "Ctrl+Shift+LButton"
+
+    k2, b2 = split_mouse_gesture("Ctrl+Alt+MButton")
+    assert k2 == "Ctrl+Alt"
+    assert b2 == "MButton"
+    assert join_mouse_gesture(k2, b2) == "Ctrl+Alt+MButton"
+
+    # 3. Toast Notifications
+    pix = QPixmap(100, 100)
+    pix.fill(QColor(255, 0, 0))
+    toast = ToastNotification("Test Title", "Test Message", thumbnail_pixmap=pix, copy_data="test_data", timeout=5000)
+    assert toast.windowFlags() & Qt.WindowType.Tool
+    assert toast.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+    toast.show()
+    QApplication.processEvents()
+    toast.close()
+    toast.deleteLater()
+    QApplication.processEvents()
+
+    mgr = ToastManager.instance()
+    mgr.show_toast("Manager Test", "Body Test", thumbnail_pixmap=pix)
+    QApplication.processEvents()
+    mgr.close_all()
+    QApplication.processEvents()
+    print("  -> Звук затвора, жесты мыши и тост-уведомления работают корректно.")
+
+
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
         tmp_p = Path(tmp_dir)
+        test_shutter_sound_and_quick_drag_and_toast()
         test_dynamic_text_editing_and_filter_history()
         test_region_filters_are_isolated_mass_filter_and_escape_closes_all()
         test_mosaic_offset_export_interactive_text_and_flyout_positions()
