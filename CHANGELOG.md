@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.17] - 2026-09-26
+
+### English
+
+- **Window Focus Management**: Fixed an issue where completing a screenshot capture or closing the overlay would forcefully steal window focus and activate the previously captured window, even if the user had already switched to another application.
+
+### Русский
+
+- **Управление фокусом окон**: Исправлена ошибка, из-за которой завершение обработки скриншота или закрытие оверлея принудительно возвращало фокус на окно, в котором делался скриншот, даже если пользователь уже переключился в другое приложение.
+
 ## [1.0.16] - 2026-09-26
 
 ### English

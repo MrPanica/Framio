@@ -4688,6 +4688,27 @@ def test_translation_frame_and_translator():
     print("  -> Плавающая рамка перевода создаётся, управляется динамически, поддерживает кэш и разные режимы отображения.")
 
 
+def test_close_overlay_does_not_steal_focus_from_active_window():
+    """Проверка, что закрытие оверлея после скриншота не крадет фокус у активного окна пользователя."""
+    print("[TEST] Проверка ненарушения фокуса активного окна при закрытии оверлея...")
+    from unittest.mock import patch
+    from types import SimpleNamespace
+    from ui.overlay import OverlayWindow
+
+    app = QApplication.instance() or QApplication([])
+    overlay = OverlayWindow()
+    try:
+        overlay._prev_active_hwnd = 12345
+        with patch("ctypes.windll.user32.SetForegroundWindow") as mock_set_fg:
+            overlay.close_overlay()
+            mock_set_fg.assert_not_called()
+        assert overlay._prev_active_hwnd is None
+    finally:
+        overlay.deleteLater()
+        QApplication.processEvents()
+    print("  -> close_overlay() не вызывает SetForegroundWindow и сохраняет фокус за текущим окном пользователя.")
+
+
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
@@ -4789,6 +4810,7 @@ if __name__ == "__main__":
         test_ocr_copy_text_tool_and_speedup()
         test_magnifier_tool_and_filter()
         test_translation_frame_and_translator()
+        test_close_overlay_does_not_steal_focus_from_active_window()
         import time
         time.sleep(0.3)
         QApplication.processEvents()

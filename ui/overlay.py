@@ -5058,7 +5058,10 @@ class OverlayWindow(QWidget):
         if prev_hwnd and sys.platform == "win32":
             try:
                 import ctypes
-                ctypes.windll.user32.SetForegroundWindow(prev_hwnd)
+                curr_fg = ctypes.windll.user32.GetForegroundWindow()
+                overlay_hwnd = int(self.winId()) if hasattr(self, "winId") else 0
+                if curr_fg in (0, overlay_hwnd, prev_hwnd):
+                    ctypes.windll.user32.SetForegroundWindow(prev_hwnd)
             except Exception:
                 pass
 
@@ -6002,11 +6005,5 @@ class OverlayWindow(QWidget):
             pass
         for _ in range(3):
             QApplication.processEvents()
-        if getattr(self, "_prev_active_hwnd", None):
-            try:
-                import ctypes
-                ctypes.windll.user32.SetForegroundWindow(self._prev_active_hwnd)
-            except Exception:
-                pass
-            self._prev_active_hwnd = None
+        self._prev_active_hwnd = None
         self.capture_closed.emit()
