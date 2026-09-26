@@ -1839,6 +1839,8 @@ def test_i18n_and_video_drawing_enhancements(tmp_path):
     assert dlg.tabs.currentIndex() == 4
     assert hasattr(dlg, "edit_hotkey_quick_screen")
     assert dlg.edit_hotkey_quick_screen.text() != ""
+    assert hasattr(dlg, "edit_hotkey_translator")
+    assert dlg.edit_hotkey_translator.text() == ""
 
     # Проверка смены языка через SettingsDialog
     idx_en = dlg.combo_lang.findData("en")

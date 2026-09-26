@@ -2562,7 +2562,7 @@ class RegionActionHeader(QFrame):
         self.btn_mass_copy_text.clicked.connect(self._show_ocr_popup)
         layout.addWidget(self.btn_mass_copy_text)
 
-        self.btn_mass_translate = ModernButton(tr("region_mass_translate_short", "Перевод"), tr("action_all_translate", "Открыть рамку динамического перевода для зоны [Ctrl+Shift+T]"))
+        self.btn_mass_translate = ModernButton(tr("region_mass_translate_short", "Перевод"), tr("action_all_translate", "Открыть рамку динамического перевода для зоны"))
         self.btn_mass_translate.setIcon(create_themed_icon("translate", self.is_dark, size=14))
         self.btn_mass_translate.clicked.connect(self.live_translate_clicked.emit)
         layout.addWidget(self.btn_mass_translate)
@@ -2867,7 +2867,7 @@ class BottomActionToolbar(QFrame):
         layout.addWidget(self.btn_copy_text)
 
         # 2.2 Перманентная рамка динамического перевода экрана
-        self.btn_translate = ModernButton("", tr("action_translate_tip", "Динамический перевод текста в рамке (плавающая рамка перевода) [Ctrl+Shift+T]"))
+        self.btn_translate = ModernButton("", tr("action_translate_tip", "Динамический перевод текста в рамке (плавающая рамка перевода)"))
         self.btn_translate.setFixedSize(28, 28)
         self.btn_translate.setIcon(create_themed_icon("translate", self.is_dark, size=16))
         self.btn_translate.setIconSize(QSize(16, 16))

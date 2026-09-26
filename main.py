@@ -946,7 +946,10 @@ class FramioApp(QObject):
         menu.addAction(act_gif)
 
         trans_key = getattr(self.cfg, "hotkey_live_translator", DEFAULT_HOTKEY_LIVE_TRANSLATOR)
-        act_translator = QAction(tr("tray_menu_live_translator", "Плавающая рамка перевода ({key})", key=trans_key), menu)
+        if trans_key and trans_key.strip():
+            act_translator = QAction(tr("tray_menu_live_translator", "Плавающая рамка перевода ({key})", key=trans_key), menu)
+        else:
+            act_translator = QAction(tr("tray_menu_live_translator_no_key", "Плавающая рамка перевода"), menu)
         act_translator.triggered.connect(self.start_translation_frame)
         menu.addAction(act_translator)
 

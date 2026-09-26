@@ -97,7 +97,7 @@ class GlobalHotkeyManager(QObject):
                  hotkey_record_fullscreen="Ctrl+Shift+F9",
                  hotkey_stop_recording="Ctrl+Shift+F10", parent=None,
                  hotkey_screenshot="Print Screen",
-                 hotkey_live_translator="Ctrl+Shift+T"):
+                 hotkey_live_translator=""):
         super().__init__(parent)
         self.hotkey_capture = hotkey_capture
         self.hotkey_quick_fullscreen = hotkey_quick_fullscreen
