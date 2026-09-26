@@ -4546,129 +4546,145 @@ def test_translation_frame_and_translator():
 
     # 2. Проверка TranslationFrameWindow
     frame_win = TranslationFrameWindow(initial_rect=QRectF(100, 100, 450, 220).toRect())
-    assert frame_win.isWindow()
-    assert frame_win.width() >= 300
-    assert frame_win.height() >= 120
-    assert frame_win.worker is not None
+    try:
+        assert frame_win.isWindow()
+        assert frame_win.width() >= 300
+        assert frame_win.height() >= 120
+        assert frame_win.worker is not None
 
-    # Проверка внешней верхней панели управления и неосязаемости рамки
-    assert frame_win.header_frame is not None
-    assert frame_win.control_bar.isWindow()
-    assert frame_win.passthrough_enabled
-    # Переключение неосязаемости (сквозной клик / режим настройки)
-    frame_win.set_passthrough(False)
-    assert not frame_win.passthrough_enabled
-    frame_win.set_passthrough(True)
-    assert frame_win.passthrough_enabled
+        # Проверка внешней верхней панели управления и неосязаемости рамки
+        assert frame_win.header_frame is not None
+        assert frame_win.control_bar.isWindow()
+        assert frame_win.passthrough_enabled
+        # Переключение неосязаемости (сквозной клик / режим настройки)
+        frame_win.set_passthrough(False)
+        assert not frame_win.passthrough_enabled
+        frame_win.set_passthrough(True)
+        assert frame_win.passthrough_enabled
 
-    # Режим по умолчанию: "inplace" (поверх текста)
-    assert frame_win.current_mode == "inplace"
-    assert frame_win.worker._mode == "inplace"
-    assert frame_win.hud_window.isWindow()
-    # HUD окно субтитров свободно перемещается по всему экрану
-    frame_win.hud_window.move(QPoint(500, 700))
-    assert frame_win.hud_window.pos() == QPoint(500, 700)
+        # Режим по умолчанию: "inplace" (поверх текста)
+        assert frame_win.current_mode == "inplace"
+        assert frame_win.worker._mode == "inplace"
+        assert frame_win.hud_window.isWindow()
+        # HUD окно субтитров свободно перемещается по всему экрану
+        frame_win.hud_window.move(QPoint(500, 700))
+        assert frame_win.hud_window.pos() == QPoint(500, 700)
 
-    # Проверка интеллектуального объединения строк (сохранение контекста)
-    from ui.translation_window import group_multiline_blocks
-    raw_lines = [
-        {"text": "What's your favorite", "x": 100, "y": 150, "width": 180, "height": 22},
-        {"text": "talk show host?", "x": 100, "y": 174, "width": 150, "height": 22}
-    ]
-    grouped = group_multiline_blocks(raw_lines)
-    assert len(grouped) == 1
-    assert grouped[0]["text"] == "What's your favorite talk show host?"
-    assert grouped[0]["lines_count"] == 2
+        # Проверка интеллектуального объединения строк (сохранение контекста)
+        from ui.translation_window import group_multiline_blocks
+        raw_lines = [
+            {"text": "What's your favorite", "x": 100, "y": 150, "width": 180, "height": 22},
+            {"text": "talk show host?", "x": 100, "y": 174, "width": 150, "height": 22}
+        ]
+        grouped = group_multiline_blocks(raw_lines)
+        assert len(grouped) == 1
+        assert grouped[0]["text"] == "What's your favorite talk show host?"
+        assert grouped[0]["lines_count"] == 2
 
-    # Проверка объединения при большем реалистичном межстрочном интервале субтитров (gap 16-20 px)
-    raw_subtitles = [
-        {"text": "What is your favorite", "x": 100, "y": 150, "width": 250, "height": 24},
-        {"text": "talk show host?", "x": 100, "y": 190, "width": 200, "height": 24}
-    ]
-    sub_grouped = group_multiline_blocks(raw_subtitles)
-    assert len(sub_grouped) == 1
-    # Проверка разделения единого контекстного перевода по физическим строкам экрана
-    from ui.translation_window import split_translation_to_lines
-    lines_split = split_translation_to_lines(
-        ["What is your favorite", "talk show host?"],
-        "Какой ваш любимый ведущий ток-шоу?"
-    )
-    assert len(lines_split) == 2
-    assert "любимый" in lines_split[0]
-    assert "ток-шоу" in lines_split[1]
-    assert len(sub_grouped[0]["lines"]) == 2
+        # Проверка объединения при большем реалистичном межстрочном интервале субтитров (gap 16-20 px)
+        raw_subtitles = [
+            {"text": "What is your favorite", "x": 100, "y": 150, "width": 250, "height": 24},
+            {"text": "talk show host?", "x": 100, "y": 190, "width": 200, "height": 24}
+        ]
+        sub_grouped = group_multiline_blocks(raw_subtitles)
+        assert len(sub_grouped) == 1
+        # Проверка разделения единого контекстного перевода по физическим строкам экрана
+        from ui.translation_window import split_translation_to_lines
+        lines_split = split_translation_to_lines(
+            ["What is your favorite", "talk show host?"],
+            "Какой ваш любимый ведущий ток-шоу?"
+        )
+        assert len(lines_split) == 2
+        assert "любимый" in lines_split[0]
+        assert "ток-шоу" in lines_split[1]
+        assert len(sub_grouped[0]["lines"]) == 2
 
-    # Проверка _layout_text_block (адаптивная подгонка размера шрифта под оригинал)
-    from PyQt6.QtGui import QFont
-    f_1l, w_1l, h_1l, mult_1l = frame_win._layout_text_block(
-        "Привет", "Segoe UI", QFont.Weight.DemiBold, False,
-        ideal_ps=16, bw=100, bh=24, lines_cnt=1, line_h=24,
-        max_frame_w=500, max_frame_h=200
-    )
-    assert not mult_1l
-    assert f_1l.pixelSize() == 16
-    assert w_1l < 200
+        # Проверка _layout_text_block (адаптивная подгонка размера шрифта под оригинал)
+        from PyQt6.QtGui import QFont
+        f_1l, w_1l, h_1l, mult_1l = frame_win._layout_text_block(
+            "Привет", "Segoe UI", QFont.Weight.DemiBold, False,
+            ideal_ps=16, bw=100, bh=24, lines_cnt=1, line_h=24,
+            max_frame_w=500, max_frame_h=200
+        )
+        assert not mult_1l
+        assert f_1l.pixelSize() == 16
+        assert w_1l < 200
 
-    # Проверка переноса длинного предложения без сжатия в нечитаемый шрифт
-    f_wl, w_wl, h_wl, mult_wl = frame_win._layout_text_block(
-        "Вы действительно хотите навсегда удалить этот выбранный файл?",
-        "Segoe UI", QFont.Weight.DemiBold, False,
-        ideal_ps=16, bw=200, bh=24, lines_cnt=1, line_h=24,
-        max_frame_w=500, max_frame_h=200
-    )
-    assert mult_wl
-    assert f_wl.pixelSize() >= 12  # Сохраняет читаемый размер шрифта оригинала, а не сжимает до 8 px
-    assert w_wl <= 500
+        # Проверка переноса длинного предложения без сжатия в нечитаемый шрифт
+        f_wl, w_wl, h_wl, mult_wl = frame_win._layout_text_block(
+            "Вы действительно хотите навсегда удалить этот выбранный файл?",
+            "Segoe UI", QFont.Weight.DemiBold, False,
+            ideal_ps=16, bw=200, bh=24, lines_cnt=1, line_h=24,
+            max_frame_w=500, max_frame_h=200
+        )
+        assert mult_wl
+        assert f_wl.pixelSize() >= 12  # Сохраняет читаемый размер шрифта оригинала, а не сжимает до 8 px
+        assert w_wl <= 500
 
-    # Переключение режимов (HUD vs In-place)
-    frame_win._toggle_display_mode()
-    assert frame_win.current_mode == "hud"
-    assert frame_win.worker._mode == "hud"
-    frame_win._toggle_display_mode()
-    assert frame_win.current_mode == "inplace"
-    assert frame_win.worker._mode == "inplace"
+        # Переключение режимов (HUD vs In-place)
+        frame_win._toggle_display_mode()
+        assert frame_win.current_mode == "hud"
+        assert frame_win.worker._mode == "hud"
+        frame_win._toggle_display_mode()
+        assert frame_win.current_mode == "inplace"
+        assert frame_win.worker._mode == "inplace"
 
-    # Пауза / возобновление
-    frame_win._toggle_pause()
-    assert frame_win.is_paused
-    assert frame_win.worker._paused
-    frame_win._toggle_pause()
-    assert not frame_win.is_paused
-    assert not frame_win.worker._paused
+        # Пауза / возобновление
+        frame_win._toggle_pause()
+        assert frame_win.is_paused
+        assert frame_win.worker._paused
+        frame_win._toggle_pause()
+        assert not frame_win.is_paused
+        assert not frame_win.worker._paused
 
-    # Переключаем в HUD для проверки видимости субтитров при маскировке и паузе
-    frame_win._set_display_mode("hud")
+        # Переключаем в HUD для проверки видимости субтитров при маскировке и паузе
+        frame_win._set_display_mode("hud")
 
-    # Проверка скрытия в режим глазика (Stealth mode) и управление через ПКМ/ЛКМ
-    frame_win.set_stealth_lock(True)
-    assert frame_win.is_locked_stealth
-    assert frame_win.header_frame.isHidden()
-    assert frame_win.unlock_pill is not None
+        # Проверка скрытия в режим глазика (Stealth mode) и управление через ПКМ/ЛКМ
+        frame_win.set_stealth_lock(True)
+        assert frame_win.is_locked_stealth
+        assert frame_win.header_frame.isHidden()
+        assert frame_win.unlock_pill is not None
 
-    # Проверка клика ПКМ по глазику: отключает функцию перевода (пауза) и включает eye_off
-    frame_win.unlock_pill._on_right_clicked()
-    assert frame_win.is_paused
-    assert frame_win.worker._paused
-    assert frame_win.hud_frame.isHidden()
+        # Проверка клика ПКМ по глазику: отключает функцию перевода (пауза) и включает eye_off
+        frame_win.unlock_pill._on_right_clicked()
+        assert frame_win.is_paused
+        assert frame_win.worker._paused
+        assert frame_win.hud_frame.isHidden()
 
-    # Повторный клик ПКМ по зачеркнутому глазику: возобновляет перевод
-    frame_win.unlock_pill._on_right_clicked()
-    assert not frame_win.is_paused
-    assert not frame_win.worker._paused
-    assert not frame_win.hud_frame.isHidden()
+        # Повторный клик ПКМ по зачеркнутому глазику: возобновляет перевод
+        frame_win.unlock_pill._on_right_clicked()
+        assert not frame_win.is_paused
+        assert not frame_win.worker._paused
+        assert not frame_win.hud_frame.isHidden()
 
-    # Клик ЛКМ по глазику: возвращает панель настроек обратно
-    frame_win.unlock_pill._on_clicked()
-    assert not frame_win.is_locked_stealth
-    assert not frame_win.header_frame.isHidden()
+        # Клик ЛКМ по глазику: возвращает панель настроек обратно
+        frame_win.unlock_pill._on_clicked()
+        assert not frame_win.is_locked_stealth
+        assert not frame_win.header_frame.isHidden()
 
-    # Проверка флагов неперехвата фокуса (WindowDoesNotAcceptFocus)
-    assert frame_win.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
-    assert frame_win.control_bar.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
-    assert frame_win.hud_window.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
-    assert frame_win.unlock_pill.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
+        # Проверка флагов неперехвата фокуса (WindowDoesNotAcceptFocus)
+        assert frame_win.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
+        assert frame_win.control_bar.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
+        assert frame_win.hud_window.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
+        assert frame_win.unlock_pill.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
+    finally:
+        if hasattr(frame_win, "worker") and frame_win.worker:
+            frame_win.worker.stop()
+            frame_win.worker.wait(2000)
+        if hasattr(frame_win, "control_bar") and frame_win.control_bar:
+            frame_win.control_bar.close()
+            frame_win.control_bar.deleteLater()
+        if hasattr(frame_win, "hud_window") and frame_win.hud_window:
+            frame_win.hud_window.close()
+            frame_win.hud_window.deleteLater()
+        if hasattr(frame_win, "unlock_pill") and frame_win.unlock_pill:
+            frame_win.unlock_pill.close()
+            frame_win.unlock_pill.deleteLater()
+        frame_win.close()
+        frame_win.deleteLater()
+        QApplication.processEvents()
 
-    frame_win.close()
     print("  -> Плавающая рамка перевода создаётся, управляется динамически, поддерживает кэш и разные режимы отображения.")
 
 
@@ -4774,8 +4790,10 @@ if __name__ == "__main__":
         test_magnifier_tool_and_filter()
         test_translation_frame_and_translator()
         import time
-        time.sleep(0.5)
+        time.sleep(0.3)
         QApplication.processEvents()
     print("\n[OK] ВСЕ ТЕСТЫ УСПЕШНО ПРОЙДЕНЫ!")
-    import sys
-    sys.exit(0)
+    import os, sys
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
