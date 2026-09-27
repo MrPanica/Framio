@@ -5208,7 +5208,15 @@ class OverlayWindow(QWidget):
             app_inst = QApplication.instance()
             if not hasattr(app_inst, "_active_translation_windows"):
                 app_inst._active_translation_windows = []
-            win = TranslationFrameWindow(initial_rect=rect_to_use)
+            else:
+                for old_win in list(app_inst._active_translation_windows):
+                    try:
+                        old_win.close()
+                    except Exception:
+                        pass
+                app_inst._active_translation_windows.clear()
+
+            win = TranslationFrameWindow(initial_rect=rect_to_use, target_hwnd=prev_hwnd)
             app_inst._active_translation_windows.append(win)
 
             def _on_closed(w=win):
@@ -5218,7 +5226,7 @@ class OverlayWindow(QWidget):
             win.closed.connect(_on_closed)
             win.frame_closed.connect(_on_closed)
             win.show()
-            win.raise_()
+            win.raise_to_topmost()
         except Exception:
             import traceback
             traceback.print_exc()
@@ -6136,6 +6144,8 @@ class OverlayWindow(QWidget):
                 pass
         self.setWindowOpacity(0.0)
         self.hide()
+        self.setGeometry(0, 0, 1, 1)
+        self.setWindowOpacity(1.0)
         try:
             import ctypes
             ctypes.windll.dwmapi.DwmFlush()
@@ -6144,4 +6154,24 @@ class OverlayWindow(QWidget):
         for _ in range(3):
             QApplication.processEvents()
         self._prev_active_hwnd = None
+
+        # Восстанавливаем z-order активных рамок перевода, чтобы они не проваливались под активное приложение
+        def re_raise_translations():
+            app_inst = getattr(QApplication.instance(), "app_instance", None)
+            active_trans = (
+                getattr(app_inst, "_active_translation_windows", None)
+                or getattr(QApplication.instance(), "_active_translation_windows", None)
+                or []
+            )
+            for tw in list(active_trans):
+                try:
+                    if hasattr(tw, "raise_to_topmost") and tw.isVisible():
+                        tw.raise_to_topmost()
+                except Exception:
+                    pass
+
+        re_raise_translations()
+        QTimer.singleShot(50, re_raise_translations)
+        QTimer.singleShot(200, re_raise_translations)
+
         self.capture_closed.emit()

@@ -461,23 +461,33 @@ class FramioApp(QObject):
     def start_translation_frame(self, rect=None):
         """Открывает или выводит на передний план плавающую рамку динамического перевода."""
         from ui.translation_window import TranslationFrameWindow
-        if not hasattr(self, "_active_translation_windows"):
-            self._active_translation_windows = []
+        app_inst = QApplication.instance()
+        if not hasattr(app_inst, "_active_translation_windows"):
+            app_inst._active_translation_windows = []
+        self._active_translation_windows = app_inst._active_translation_windows
+
         if rect is None and self._active_translation_windows:
-            for win in self._active_translation_windows:
-                if getattr(win, "is_click_through", False):
-                    win.set_click_through(False)
-                if hasattr(win, "unfold_controls"):
-                    win.unfold_controls()
-                win.show()
-                win.raise_()
+            for win in list(self._active_translation_windows):
+                try:
+                    if hasattr(win, "set_passthrough"):
+                        win.set_passthrough(False)
+                    if hasattr(win, "unfold_controls"):
+                        win.unfold_controls()
+                    win.show()
+                    if hasattr(win, "raise_to_topmost"):
+                        win.raise_to_topmost()
+                    else:
+                        win.raise_()
+                except Exception:
+                    pass
             return
 
         win = TranslationFrameWindow(initial_rect=rect)
-        self._active_translation_windows.append(win)
-        win.frame_closed.connect(lambda w=win: self._active_translation_windows.remove(w) if hasattr(self, "_active_translation_windows") and w in self._active_translation_windows else None)
+        if win not in self._active_translation_windows:
+            self._active_translation_windows.append(win)
+        win.frame_closed.connect(lambda w=win: self._active_translation_windows.remove(w) if w in self._active_translation_windows else None)
         win.show()
-        win.raise_()
+        win.raise_to_topmost()
 
     def add_recent_media(self, path: str = None, image: QImage = None, label: str = None, refresh: bool = True):
         """Добавляет материал в историю последних файлов и снимков."""
@@ -1231,6 +1241,11 @@ class FramioApp(QObject):
                 self.single_instance_mgr.cleanup()
             except Exception:
                 pass
+
+        try:
+            cleanup_stale_pyinstaller_temp_dirs(max_age_hours=0.0)
+        except Exception:
+            pass
 
         QApplication.quit()
 

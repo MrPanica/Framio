@@ -84,6 +84,7 @@ class AppConfig:
     hotkey_stop_recording: str = DEFAULT_HOTKEY_STOP_RECORDING
     hotkey_highlight_objects: str = DEFAULT_HOTKEY_HIGHLIGHT_OBJECTS
     hotkey_live_translator: str = DEFAULT_HOTKEY_LIVE_TRANSLATOR
+    live_translator_interval_ms: int = 300     # Интервал сканирования живого переводчика по умолчанию (150, 300, 600 мс)
     quick_drag_screenshot_hotkey: str = DEFAULT_HOTKEY_QUICK_DRAG_SCREENSHOT
     quick_drag_screenshot_format: str = "png"  # png, jpg, webp
     quick_drag_ocr_hotkey: str = DEFAULT_HOTKEY_QUICK_DRAG_OCR

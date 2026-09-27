@@ -14,6 +14,7 @@ import urllib.request
 import urllib.parse
 import json
 import re
+import concurrent.futures
 
 _TRANSLATION_CACHE: dict[tuple[str, str, str], str] = {}
 _CACHE_LOCK = threading.Lock()
@@ -134,8 +135,18 @@ def _translate_argos(text: str, src_lang: str, target_lang: str) -> str | None:
 def _translate_google_gtx(text: str, src_lang: str, target_lang: str) -> str | None:
     """Высокоскоростной бесплатный HTTP перевод через Google GTX."""
     try:
-        sl = "auto" if src_lang == "auto" else src_lang.split("-")[0].lower()
-        tl = target_lang.split("-")[0].lower()
+        if src_lang == "auto":
+            sl = "auto"
+        elif "zh" in src_lang.lower():
+            sl = "zh-CN"
+        else:
+            sl = src_lang.split("-")[0].lower()
+
+        if "zh" in target_lang.lower():
+            tl = "zh-CN"
+        else:
+            tl = target_lang.split("-")[0].lower()
+
         q = urllib.parse.quote(text)
         url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl={sl}&tl={tl}&dt=t&q={q}"
         req = urllib.request.Request(
@@ -186,19 +197,42 @@ def translate_text(
     if not re.search(r"[a-zA-Z\u0400-\u04FF\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]", stripped):
         return stripped
 
+    # Если целевой язык — русский, и текст уже полностью на кириллице (без латиницы) — перевод не требуется
+    if target_lang == "ru" and re.search(r"[\u0400-\u04FF]", stripped) and not re.search(r"[a-zA-Z]", stripped):
+        return stripped
+
+    # Если целевой язык — английский, и текст уже полностью на латинице (без других письменностей) — перевод не требуется
+    if target_lang == "en" and re.search(r"[a-zA-Z]", stripped) and not re.search(r"[\u0400-\u04FF\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]", stripped):
+        return stripped
+
+    effective_sl = source_lang
+    if source_lang == "auto":
+        has_latin = bool(re.search(r"[a-zA-Z]", stripped))
+        has_cyrillic = bool(re.search(r"[\u0400-\u04FF]", stripped))
+        if has_latin and not has_cyrillic:
+            effective_sl = "en"
+        elif re.search(r"[\u3040-\u309F\u30A0-\u30FF]", stripped):
+            effective_sl = "ja"
+        elif re.search(r"[\u4E00-\u9FFF]", stripped):
+            effective_sl = "zh-CN"
+
     cache_key = (stripped.lower(), source_lang, target_lang)
     with _CACHE_LOCK:
         if cache_key in _TRANSLATION_CACHE:
             return _TRANSLATION_CACHE[cache_key]
 
     # 1. Попытка перевода через оффлайн Argos Translate
-    res = _translate_argos(stripped, source_lang, target_lang)
+    res = _translate_argos(stripped, effective_sl, target_lang)
 
     # 2. Если оффлайн-движок не установлен — используем быстрый Google GTX (~40-80 мс)
     if not res:
-        res = _translate_google_gtx(stripped, source_lang, target_lang)
+        res = _translate_google_gtx(stripped, effective_sl, target_lang)
 
-    # 3. Если сеть недоступна — используем локальный глоссарий
+    # 3. Резервный перевод с принудительным 'en', если перевод с 'auto' вернул исходный текст без изменений
+    if target_lang == "ru" and re.search(r"[a-zA-Z]{2,}", stripped) and (not res or res.strip().lower() == stripped.lower()):
+        res = _translate_google_gtx(stripped, "en", "ru")
+
+    # 4. Если сеть недоступна — используем локальный глоссарий
     if not res:
         res = _translate_offline_glossary(stripped, target_lang)
 
@@ -250,6 +284,16 @@ def translate_batch(
             results[idx] = raw
             continue
 
+        # Если целевой язык — русский, и строка уже полностью на кириллице (без латиницы) — перевод не требуется
+        if target_lang == "ru" and re.search(r"[\u0400-\u04FF]", s) and not re.search(r"[a-zA-Z]", s):
+            results[idx] = raw
+            continue
+
+        # Если целевой язык — английский, и строка уже на латинице (без других письменностей) — перевод не требуется
+        if target_lang == "en" and re.search(r"[a-zA-Z]", s) and not re.search(r"[\u0400-\u04FF\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]", s):
+            results[idx] = raw
+            continue
+
         cache_key = (s.lower(), source_lang, target_lang)
         with _CACHE_LOCK:
             if cache_key in _TRANSLATION_CACHE:
@@ -262,30 +306,67 @@ def translate_batch(
     if not uncached_texts:
         return [r if r is not None else "" for r in results]
 
+    # Определяем эффективный исходный язык: если строки содержат латиницу при source_lang='auto',
+    # явно указываем 'en', чтобы Google Translate не детектировал ошибочно 'ru'
+    effective_sl = source_lang
+    if source_lang == "auto":
+        has_latin = any(re.search(r"[a-zA-Z]", t) for t in uncached_texts)
+        has_cyrillic = any(re.search(r"[\u0400-\u04FF]", t) for t in uncached_texts)
+        if has_latin and not has_cyrillic:
+            effective_sl = "en"
+        elif any(re.search(r"[\u3040-\u309F\u30A0-\u30FF]", t) for t in uncached_texts):
+            effective_sl = "ja"
+        elif any(re.search(r"[\u4E00-\u9FFF]", t) for t in uncached_texts):
+            effective_sl = "zh-CN"
+
     if len(uncached_texts) == 1:
-        res = translate_text(uncached_texts[0], source_lang=source_lang, target_lang=target_lang)
+        res = translate_text(uncached_texts[0], source_lang=effective_sl, target_lang=target_lang)
         results[uncached_indices[0]] = res
         return [r if r is not None else "" for r in results]
 
     delimiter = "\n---\n"
     joined = delimiter.join(uncached_texts)
-    batch_res = translate_text(joined, source_lang=source_lang, target_lang=target_lang)
+    batch_res = translate_text(joined, source_lang=effective_sl, target_lang=target_lang)
 
-    parts = [p.strip() for p in batch_res.split(delimiter)]
+    parts = [p.strip() for p in re.split(r"\n\s*(?:---+|[—–]{1,}|={3,})\s*\n", batch_res)]
+    if len(parts) > len(uncached_texts) and not parts[0]:
+        parts.pop(0)
+    if len(parts) > len(uncached_texts) and not parts[-1]:
+        parts.pop()
+
     if len(parts) == len(uncached_texts):
         for idx_u, part in enumerate(parts):
             target_idx = uncached_indices[idx_u]
             orig_s = uncached_texts[idx_u]
+
+            # Проверка: если строка на латинице не перевелась (вернулась как есть на английском),
+            # делаем точечный индивидуальный перевод с принудительным sl=en
+            if (target_lang == "ru" and re.search(r"[a-zA-Z]{2,}", orig_s)
+                and (part.strip().lower() == orig_s.strip().lower() or not re.search(r"[\u0400-\u04FF]", part))):
+                fallback = translate_text(orig_s, source_lang="en", target_lang="ru")
+                if fallback and fallback.strip().lower() != orig_s.strip().lower():
+                    part = fallback
+
             results[target_idx] = part
-            cache_key = (orig_s.lower(), source_lang, target_lang)
-            with _CACHE_LOCK:
-                if len(_TRANSLATION_CACHE) >= _MAX_CACHE_ENTRIES:
-                    _TRANSLATION_CACHE.pop(next(iter(_TRANSLATION_CACHE)), None)
-                _TRANSLATION_CACHE[cache_key] = part
+            if part.strip().lower() != orig_s.strip().lower():
+                cache_key = (orig_s.lower(), source_lang, target_lang)
+                with _CACHE_LOCK:
+                    if len(_TRANSLATION_CACHE) >= _MAX_CACHE_ENTRIES:
+                        _TRANSLATION_CACHE.pop(next(iter(_TRANSLATION_CACHE)), None)
+                    _TRANSLATION_CACHE[cache_key] = part
     else:
-        for idx_u, orig_s in enumerate(uncached_texts):
+        # Fallback при нарушении структуры разделителей: переводим параллельно в потоках (ThreadPoolExecutor)
+        # за ~200-300 мс вместо последовательной задержки на 10-15 секунд!
+        def _fetch_single(orig_s: str) -> str:
+            item_sl = "en" if (source_lang == "auto" and re.search(r"[a-zA-Z]", orig_s)) else source_lang
+            return translate_text(orig_s, source_lang=item_sl, target_lang=target_lang)
+
+        max_workers = min(6, len(uncached_texts))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            fetched_results = list(executor.map(_fetch_single, uncached_texts))
+
+        for idx_u, res_item in enumerate(fetched_results):
             target_idx = uncached_indices[idx_u]
-            res_item = translate_text(orig_s, source_lang=source_lang, target_lang=target_lang)
             results[target_idx] = res_item
 
     return [r if r is not None else "" for r in results]

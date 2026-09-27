@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.22] - 2026-09-27
+
+### English
+
+- **Compact In-Bar Header Tooltips**: Redesigned translation frame tooltips into a sleek, non-intrusive banner located strictly within the 32px height of the control bar, preventing tooltips from overflowing onto the screen or interfering with game elements. Descriptions are concise and neatly aligned to opposite sides without cluttering the panel.
+- **Enhanced OCR on Color & Red Backgrounds (LAB CLAHE)**: Integrated luminance contrast adaptive histogram equalization (LAB CLAHE) into local OCR preprocessing. Text on bright, saturated, or gradient buttons (e.g. red, burgundy, yellow) is now recognized with high clarity.
+- **Spatial UI Slot Stability & Hover Preservation**: Fixed translation glitches when hovering menu items or buttons in games. Removed fragile block-count resets, added short-term slot retention (TTL hysteresis), and upgraded `_is_hover_match` to prevent mouse cursors and background color changes from disrupting on-screen translations.
+- **Immediate PyInstaller Temp Cleanup**: Reduced the stale `_MEI*` folder retention threshold from 24 hours to 12 minutes and added an automatic cleanup pass on application shutdown, preventing orphaned temp directories from consuming gigabytes of disk space on drive C:.
+
+### Русский
+
+- **Компактные подсказки на шапке панели перевода**: Подсказки элементов управления теперь отображаются в виде аккуратного баннера строго по высоте шапки (32 px) без вылезания на экран или в область игры. Тексты стали краткими и лаконичными, освобождая полезное пространство панели.
+- **Распознавание текста на цветных и красных плашках (LAB CLAHE)**: В локальный модуль OCR добавлена адаптивная нормализация контраста яркости (CLAHE в пространстве LAB). Светлый текст на ярких, цветных и градиентных кнопках (красных, бордовых, желтых) теперь считывается с максимальной четкостью.
+- **Пространственная стабильность интерфейса при наведении курсора**: Устранены искажения перевода при наведении мыши на кнопки в играх. Удален паразитный сброс кэша при изменении числа блоков, добавлен механизм удержания слотов меню (TTL-гистерезис) и улучшена функция `_is_hover_match` для устойчивости к смене фона и курсору.
+- **Быстрая автоочистка временных папок PyInstaller**: Порог удаления брошенных каталогов `_MEI*` снижен с 24 часов до 12 минут, а также добавлен вызов очистки при закрытии приложения, что предотвращает накопление гигабайтов временных данных на диске C:.
+
 ## [1.0.21] - 2026-09-27
 
 ### English

@@ -1417,6 +1417,26 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(card_auto)
 
+        # Карточка 5: Живой перевод экрана
+        card_trans = SettingCard(tr("settings_translator_group", "Живой перевод экрана"))
+        self.combo_trans_interval = QComboBox()
+        self.combo_trans_interval.addItem(tr("trans_fps_extreme", "Экстремально (50 мс)"), 50)
+        self.combo_trans_interval.addItem(tr("trans_fps_ultra", "Ультра (100 мс)"), 100)
+        self.combo_trans_interval.addItem(tr("trans_fps_fast", "Быстро (150 мс)"), 150)
+        self.combo_trans_interval.addItem(tr("trans_fps_opt", "Оптимально (300 мс)"), 300)
+        self.combo_trans_interval.addItem(tr("trans_fps_eco", "Энергосбережение (600 мс)"), 600)
+        cur_ti = getattr(self.cfg, "live_translator_interval_ms", 300)
+        idx_ti = self.combo_trans_interval.findData(cur_ti)
+        if idx_ti >= 0:
+            self.combo_trans_interval.setCurrentIndex(idx_ti)
+        self.combo_trans_interval.setFixedWidth(270)
+        card_trans.add_row(
+            tr("settings_trans_interval_title", "Скорость сканирования по умолчанию:"),
+            tr("settings_trans_interval_desc", "Интервал опроса экрана для живого переводчика (50/100 мс — ультра-отклик, 150 мс — быстрый, 300 мс — баланс, 600 мс — энергосбережение)"),
+            self.combo_trans_interval
+        )
+        layout.addWidget(card_trans)
+
         layout.addStretch()
         return create_scroll_page(container)
 
@@ -1575,6 +1595,17 @@ class SettingsDialog(QDialog):
             self.cfg.hotkey_highlight_objects = self.edit_hotkey_highlight.text().strip() or DEFAULT_HOTKEY_HIGHLIGHT_OBJECTS
         if hasattr(self, "edit_hotkey_translator"):
             self.cfg.hotkey_live_translator = self.edit_hotkey_translator.text().strip()
+        if hasattr(self, "combo_trans_interval"):
+            ti_val = self.combo_trans_interval.currentData()
+            if ti_val is not None:
+                self.cfg.live_translator_interval_ms = int(ti_val)
+                app_inst = QApplication.instance()
+                if app_inst and hasattr(app_inst, "_active_translation_windows"):
+                    for win in app_inst._active_translation_windows:
+                        try:
+                            win._set_scan_interval(self.cfg.live_translator_interval_ms)
+                        except Exception:
+                            pass
 
         # Быстрый захват мышью (Drag & Drop)
         if hasattr(self, "edit_qd_screen_keys") and hasattr(self, "combo_qd_screen_btn"):

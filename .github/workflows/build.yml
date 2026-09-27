@@ -63,7 +63,14 @@ jobs:
         shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -u tests/test_components.py
+        run: |
+          $out = python -u tests/test_components.py 2>&1
+          $out | Write-Output
+          if ($LASTEXITCODE -ne 0) {
+            $err = ($out | Select-Object -Last 30) -join "%0A"
+            Write-Output "::error title=Test Run Failure::$err"
+            exit 1
+          }
 
       - name: Build portable application
         run: python -m PyInstaller --noconfirm --distpath dist --workpath build-ci Framio.spec

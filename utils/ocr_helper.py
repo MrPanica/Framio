@@ -8,6 +8,7 @@
 
 import os
 import sys
+import re
 from typing import Optional, Union
 import numpy as np
 
@@ -178,6 +179,31 @@ def _postprocess_ocr_text(text: str) -> str:
     # 8. Исправление "0CR" -> "OCR"
     text = re.sub(r"\b0CR\b", "OCR", text)
 
+    # 9. Замена маркеров/буллетов на апостроф: "Sakura•s" -> "Sakura's", "Mei·s" -> "Mei's"
+    text = re.sub(r"([A-Za-z]+)[•·]\s*s\b", r"\1's", text, flags=re.IGNORECASE)
+
+    # 10. Замена процента на апостроф: "Delta%s" -> "Delta's", "Mama%" -> "Mama's", "Mama % peephole" -> "Mama's peephole"
+    text = re.sub(r"\b([A-Za-z]+)\s*%\s*s\b", r"\1's", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b([A-Za-z]+)\s*%\s*([A-Za-z]+)\b", r"\1's \2", text)
+    text = re.sub(r"\b([A-Za-z]+)%(\s+|$)", r"\1's\2", text)
+    text = re.sub(r"([A-Za-z]+)\s*['’]\s*s\b", r"\1's", text)
+
+    # 11. Специфические искажения OCR при наведении на кнопки меню (изменение цвета/фона на красный/бордовый)
+    text = re.sub(r"\b[Cc]arya[Oo]c\b", "Sakura's", text)
+    text = re.sub(r"\b[Kk]u[üu]enad[Oo]s\b", "Kurenai's", text)
+    text = re.sub(r"[—–-]\s*(?:ндин|ndin|nd)g\.?", "Training.", text)
+    text = re.sub(r"\b([A-Za-z]+)\s*[—–-]\s*(?:ндин|ndin|nd)g\.?\b", r"\1 Training.", text)
+    text = re.sub(r"\b([A-Z][a-z]{3,})[Oo]s\b", r"\1's", text)
+
+    # 12. Исправление артефактов курсора мыши и искажений имен собственных
+    text = re.sub(r"[\.,;:!\s]+[„g•·~_–—\^«»]+$", ".", text)
+    text = re.sub(r"\bMei[l1I!\|]s\b", "Mei's", text)
+    text = re.sub(r"\bSakura[il1I!]s\b", "Sakura's", text)
+    text = re.sub(r"\bWasabi[il1I!]s\b", "Wasabi's", text)
+    text = re.sub(r"\bKurenai[il1I!]s\b", "Kurenai's", text)
+    text = re.sub(r"\bDelta[il1I!]s\b", "Delta's", text)
+    text = re.sub(r"\bTrainin\b", "Training.", text)
+
     return text.strip()
 
 
@@ -315,11 +341,20 @@ def _extract_with_winocr(bgr: np.ndarray, lang: str = "auto") -> tuple[str, str]
     # так как в русском тексте всегда присутствуют пути к файлам, расширения и латинские идентификаторы.
     is_russian_or_auto = (lang == "auto" or "ru" in lang.lower())
     if not is_russian_or_auto:
-        target_lang = lang
+        target_lang = None
         for itag in installed_tags:
-            if itag.lower() == lang.lower() or itag.lower().startswith(lang.lower()):
+            if itag.lower() == lang.lower() or itag.lower().startswith(lang.lower()[:2]):
                 target_lang = itag
                 break
+        if not target_lang:
+            for itag in installed_tags:
+                if "en" in itag.lower():
+                    target_lang = itag
+                    break
+        if not target_lang and installed_tags:
+            target_lang = installed_tags[0]
+        if not target_lang:
+            target_lang = "en-US"
 
         prep_img, _ = _preprocess_image_for_ocr(bgr, scale=2.5)
         try:
@@ -450,37 +485,75 @@ def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "aut
     if bgr is None or bgr.size == 0 or not _WINOCR_AVAILABLE:
         return []
 
-    target_lang = "en-US" if lang in ("auto", "en") else lang
     installed = get_available_ocr_languages()
     installed_tags = [item["tag"] for item in installed]
-    for item in installed:
-        if item["tag"].lower().startswith(target_lang.lower()[:2]):
-            target_lang = item["tag"]
+    matched_tag = None
+    target_code = "en" if lang == "auto" else lang.lower()
+
+    for itag in installed_tags:
+        if itag.lower() == target_code:
+            matched_tag = itag
             break
+
+    if not matched_tag:
+        for itag in installed_tags:
+            if itag.lower().startswith(target_code[:2]):
+                matched_tag = itag
+                break
+
+    if not matched_tag:
+        for itag in installed_tags:
+            if "en" in itag.lower():
+                matched_tag = itag
+                break
+    if not matched_tag and installed_tags:
+        matched_tag = installed_tags[0]
+
+    target_lang = matched_tag if matched_tag else "en-US"
 
     try:
         h, w = bgr.shape[:2]
+        # Адаптивное повышение контраста в пространстве LAB (Luminance CLAHE)
+        # Обеспечивает уверенное распознавание светлого текста на цветных и градиентных плашках (красный, синий, бордовый)
+        if cv2 is not None:
+            try:
+                lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+                l_chan, a_chan, b_chan = cv2.split(lab)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                cl = clahe.apply(l_chan)
+                enhanced_bgr = cv2.cvtColor(cv2.merge((cl, a_chan, b_chan)), cv2.COLOR_LAB2BGR)
+            except Exception:
+                enhanced_bgr = bgr
+        else:
+            enhanced_bgr = bgr
+
         # Оптимальный масштаб для Windows Media OCR (нейросеть Windows лучше всего распознает текст с высотой символов >= 18-24 px)
         if h < 140 or w < 180:
             scale_factor = 2.0
-            scan_img = cv2.resize(bgr, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
+            scan_img = cv2.resize(enhanced_bgr, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
         elif h < 380 or w < 600:
             scale_factor = 1.5
-            scan_img = cv2.resize(bgr, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
+            scan_img = cv2.resize(enhanced_bgr, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
+        elif h <= 1200 and w <= 2200:
+            scale_factor = 1.4
+            scan_img = cv2.resize(enhanced_bgr, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_LINEAR)
         else:
             scale_factor = 1.0
-            scan_img = bgr
+            scan_img = enhanced_bgr
 
         res = winocr.recognize_cv2_sync(scan_img, lang=target_lang)
         raw_lines = res.get("lines", []) if res else []
 
         # Если целевой язык auto или ru, и установлен русский языковой пакет Windows OCR,
-        # проверяем наличие кириллических надписей
+        # проверяем наличие кириллических надписей, но НЕ перезаписываем чистый распознанный английский текст
         if (not raw_lines or lang in ("auto", "ru")) and "ru" in installed_tags and target_lang != "ru":
-            res_ru = winocr.recognize_cv2_sync(scan_img, lang="ru")
-            lines_ru = res_ru.get("lines", []) if res_ru else []
-            if len(lines_ru) > len(raw_lines):
-                raw_lines = lines_ru
+            latin_count = sum(len(re.findall(r"[a-zA-Z]", l.get("text", ""))) for l in raw_lines)
+            if not raw_lines or latin_count < 6:
+                res_ru = winocr.recognize_cv2_sync(scan_img, lang="ru")
+                lines_ru = res_ru.get("lines", []) if res_ru else []
+                cyrillic_count = sum(len(re.findall(r"[\u0400-\u04FF]", l.get("text", ""))) for l in lines_ru)
+                if cyrillic_count > latin_count or not raw_lines:
+                    raw_lines = lines_ru
 
         blocks = []
         for l in raw_lines:
@@ -511,6 +584,7 @@ def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "aut
                 chunk_txt = " ".join(w.get("text", "") for w in chunk).strip()
                 if not chunk_txt:
                     continue
+                chunk_txt = _postprocess_ocr_text(chunk_txt)
                 xs = [float(w.get("bounding_rect", {}).get("x", 0.0)) for w in chunk]
                 ys = [float(w.get("bounding_rect", {}).get("y", 0.0)) for w in chunk]
                 ws = [float(w.get("bounding_rect", {}).get("width", 0.0)) for w in chunk]

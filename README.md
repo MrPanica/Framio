@@ -2,7 +2,7 @@
 
 Framio is a portable Windows app for taking screenshots, recording screen areas as MP4 or GIF, extracting text offline with local Windows OCR, and translating on-screen text in real-time. It can work with one area, several areas, the whole desktop, or a complete application window.
 
-The current release is `1.0.21`. See [CHANGELOG.md](CHANGELOG.md) for the release history.
+The current release is `1.0.22`. See [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## English
 
@@ -153,7 +153,7 @@ The GitHub Actions workflow runs the tests, builds all three Windows packages, u
 
 ## Русский
 
-Текущая версия — `1.0.21`. История изменений находится в [CHANGELOG.md](CHANGELOG.md).
+Текущая версия — `1.0.22`. История изменений находится в [CHANGELOG.md](CHANGELOG.md).
 
 ### Быстрый запуск
 

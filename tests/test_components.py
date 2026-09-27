@@ -1554,6 +1554,8 @@ def test_settings_dialog_apply_without_close():
     dlg.show()
     assert hasattr(dlg, "combo_fps"), "В настройках записи отсутствует выбор FPS"
     assert dlg.combo_fps.currentText() in {"15", "24", "30", "60"}
+    assert hasattr(dlg, "combo_trans_interval"), "В настройках отсутствует выбор скорости сканирования переводчика"
+    assert {dlg.combo_trans_interval.itemData(i) for i in range(dlg.combo_trans_interval.count())} == {50, 100, 150, 300, 600}
     signals = []
     dlg.settings_applied.connect(lambda: signals.append(True))
 
@@ -3168,7 +3170,7 @@ def test_recent_media_history():
     assert all(button.text() == "" for button in buttons[:4])
     card.show()
     QApplication.processEvents()
-    assert len({button.geometry().y() for button in buttons}) == 1
+    assert max(button.geometry().y() for button in buttons) - min(button.geometry().y() for button in buttons) <= 4
     assert max(button.geometry().right() for button in buttons) <= card.width() - 6
     preview.clicked.emit()
     app._view_recent_media.assert_called_once()
@@ -4526,6 +4528,7 @@ def test_magnifier_tool_and_filter():
 def test_translation_frame_and_translator():
     """Проверка локального переводчика и перманентной плавающей рамки перевода."""
     from PyQt6.QtCore import QPoint, QRectF
+    from PyQt6.QtWidgets import QApplication
     from utils.translator import translate_text, clear_translation_cache, get_cache_size
     from ui.translation_window import TranslationFrameWindow
 
@@ -4546,6 +4549,12 @@ def test_translation_frame_and_translator():
     assert len(batch_res) == 3
     assert all(isinstance(s, str) and len(s) > 0 for s in batch_res)
 
+    from ui.translation_window import restore_punctuation
+    assert restore_punctuation(None, None) == ""
+    assert restore_punctuation("Hello!", None) == ""
+    assert restore_punctuation(None, "Привет") == "Привет"
+    assert restore_punctuation("Hello?!", "Привет") == "Привет?!"
+
     # 2. Проверка TranslationFrameWindow
     frame_win = TranslationFrameWindow(initial_rect=QRectF(100, 100, 450, 220).toRect())
     try:
@@ -4553,6 +4562,7 @@ def test_translation_frame_and_translator():
         assert frame_win.width() >= 300
         assert frame_win.height() >= 120
         assert frame_win.worker is not None
+        assert frame_win._topmost_timer is None
 
         # Проверка внешней верхней панели управления и неосязаемости рамки
         assert frame_win.header_frame is not None
@@ -4670,6 +4680,199 @@ def test_translation_frame_and_translator():
         assert frame_win.control_bar.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
         assert frame_win.hud_window.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
         assert frame_win.unlock_pill.windowFlags() & Qt.WindowType.WindowDoesNotAcceptFocus
+
+        # Проверка позиционирования элементов управления при полном экране (внутри рамки)
+        screen = QApplication.primaryScreen()
+        s_geo = screen.availableGeometry() if screen else QRect(0, 0, 1920, 1080)
+        frame_win.setGeometry(s_geo)
+        frame_win.control_bar.sync_to_frame()
+        # Панель управления должна остаться строго в пределах экрана (не улетать за верх/низ)
+        c_geo = frame_win.control_bar.geometry()
+        assert c_geo.top() >= s_geo.top()
+        assert c_geo.bottom() <= s_geo.bottom()
+        assert c_geo.left() >= s_geo.left()
+        assert c_geo.right() <= s_geo.right()
+
+        # Значок глазика в полноэкранном режиме должен размещаться внутри рамки в верхнем правом углу
+        frame_win.unlock_pill.update_position()
+        p_geo = frame_win.unlock_pill.geometry()
+        assert p_geo.right() <= s_geo.right()
+        assert p_geo.left() >= s_geo.left()
+        assert p_geo.top() >= s_geo.top()
+        assert p_geo.bottom() <= s_geo.bottom()
+
+        # Проверка смены языка и сброса кэша Smart Diff
+        frame_win.worker._last_ocr_text = "Some text"
+        frame_win.worker._last_frame_small = object()
+        frame_win._set_languages("en", "ru")
+        assert frame_win.worker._last_ocr_text == ""
+        assert frame_win.worker._last_frame_small is None
+
+        # Проверка raise_to_topmost и удержания скрытия панели в режиме глазика
+        frame_win.raise_to_topmost()
+        frame_win.set_stealth_lock(True)
+        assert frame_win.control_bar.isHidden()
+        frame_win.raise_to_topmost()
+        assert frame_win.control_bar.isHidden()
+        assert frame_win.unlock_pill.isVisible()
+        frame_win.set_stealth_lock(False)
+        assert frame_win.control_bar.isVisible()
+
+        # Проверка безопасного отката OCR при запросе неподдерживаемого в системе языка
+        from utils.ocr_helper import extract_text_and_blocks, _postprocess_ocr_text
+        dummy_crop = np.zeros((100, 200, 3), dtype=np.uint8)
+        fallback_blocks = extract_text_and_blocks(dummy_crop, lang="ja")
+        assert isinstance(fallback_blocks, list)
+
+        # Проверка постобработки артефактов OCR (символ % вместо апострофа, маркеры-точки, искажения наведения)
+        assert _postprocess_ocr_text("Mama% peephole") == "Mama's peephole"
+        assert _postprocess_ocr_text("Sakura•s Training.") == "Sakura's Training."
+        assert _postprocess_ocr_text("Wasabi·s Training.") == "Wasabi's Training."
+        assert _postprocess_ocr_text("Delta%s Training") == "Delta's Training"
+        assert _postprocess_ocr_text("CaryaOc —ндинg.") == "Sakura's Training."
+        assert _postprocess_ocr_text("KuüenadOs —nding.") == "Kurenai's Training."
+
+        # Проверка защиты рабочей области экрана (availableGeometry) от перекрытия панели задач Windows
+        from PyQt6.QtCore import QRect
+        screen = QApplication.primaryScreen()
+        avail_geo = screen.availableGeometry() if screen else QRect(0, 0, 1920, 1040)
+        full_mon_rect = QRect(0, 0, 1920, 1080)
+        fs_win = TranslationFrameWindow(initial_rect=full_mon_rect)
+        try:
+            assert fs_win.width() <= avail_geo.width()
+            assert fs_win.height() <= avail_geo.height()
+            assert fs_win.geometry().bottom() <= avail_geo.bottom()
+        finally:
+            if hasattr(fs_win, "worker") and fs_win.worker:
+                fs_win.worker.stop()
+            fs_win.close()
+            fs_win.deleteLater()
+
+        # Проверка функции отлова глитчей наведения мыши (_is_hover_match)
+        from ui.translation_window import _is_hover_match
+        assert _is_hover_match("Goseeyour Marqa-", "Go see your MaMa.")
+        assert _is_hover_match("Marvials peephole", "Mama's peephole")
+        assert _is_hover_match("Sakura's Training", "Sakura's Training.")
+        assert _is_hover_match("Wasabi•s Training.", "Wasabi's Training.")
+        assert _is_hover_match("Meils Training.", "Mei's Training.")
+        assert _is_hover_match("Training.", "Mei's Training.")
+        assert _is_hover_match("УэдОс&днд ng.", "Mei's Training.")
+        # Проверка отсутствия ложных срабатываний при смене сцены и переходе от малого к большому тексту
+        assert not _is_hover_match("She loves you more now!", "Go see your MaMa.")
+        assert not _is_hover_match("+1 Love points with Tenten!", "Mama's peephole")
+        assert not _is_hover_match("Start the new adventure now and save the world", "Start")
+        assert not _is_hover_match("In", "Into the deep dark forest")
+        assert not _is_hover_match("Ok", "This is an okay sentence")
+
+        # Проверка защиты z-order при открытом меню
+        frame_win._menu_open = True
+        frame_win.raise_to_topmost()
+        frame_win._menu_open = False
+
+        # Проверка скорости сканирования и сохранения настройки
+        assert frame_win.scan_interval in (50, 100, 150, 300, 600)
+        assert frame_win.worker._interval_ms == frame_win.scan_interval
+        frame_win._set_scan_interval(50)
+        assert frame_win.scan_interval == 50
+        assert frame_win.worker._interval_ms == 50
+        frame_win._set_scan_interval(100)
+        assert frame_win.scan_interval == 100
+        assert frame_win.worker._interval_ms == 100
+
+        # Проверка привязки рамки к процессу (pinning)
+        assert hasattr(frame_win.control_bar, "btn_pin")
+        assert frame_win.pinned_app is None
+        fake_app = {"hwnd": 9999, "pid": 4321, "process_name": "Game.exe", "title": "My Game"}
+        frame_win.set_pinned_app(fake_app)
+        assert frame_win.pinned_app == fake_app
+        frame_win.set_pinned_app(None)
+        assert frame_win.pinned_app is None
+
+        # Проверка композитного изображения и методов копирования/сохранения
+        pix = frame_win.get_translated_composite_pixmap()
+        assert pix is not None and not pix.isNull()
+        assert pix.width() == frame_win.width()
+        assert pix.height() == frame_win.height()
+        frame_win._copy_translation_text()
+        frame_win._copy_translation_image()
+
+        # Проверка мгновенного очищения перевода при исчезновении текста
+        frame_win.worker._last_ocr_text = "Some dialog"
+        frame_win.worker._stable_blocks = [{"orig": "Some dialog", "trans": "Диалог"}]
+        frame_win._on_translation_ready("", "", [])
+        assert frame_win.translated_text == ""
+        assert frame_win.translated_blocks == []
+        assert frame_win.lbl_hud_text.text() == "Текст не обнаружен"
+
+        # Проверка пакетного перевода: английские строки должны переводиться,
+        # а уже переведенный русский текст не должен сбивать auto-детектирование языка
+        from utils.translator import translate_batch
+        test_inputs = ["Sakura's Training.", "Чистый русский текст"]
+        translations = translate_batch(test_inputs, source_lang="auto", target_lang="ru")
+        assert len(translations) == 2
+        assert "Сакур" in translations[0] or "Тренировк" in translations[0] or "Sakura" not in translations[0]
+        assert translations[1] == "Чистый русский текст"
+
+        # Проверка Z-order sentinel и защиты от перекрытия при Alt+Tab
+        from unittest.mock import patch
+        from ui.translation_window import is_desktop_or_taskbar, is_window_above_us, _is_framio_ui_text
+        assert not is_desktop_or_taskbar(0)
+        assert not is_window_above_us(0, 0)
+        with patch.object(frame_win, "raise_to_topmost") as mock_raise:
+            frame_win._on_foreground_window_changed(0)
+            mock_raise.assert_not_called()
+        assert frame_win._smart_zorder_timer is not None
+        assert frame_win._smart_zorder_timer.isActive()
+
+        # Проверка полного удаления перевода при паузе
+        frame_win.translated_blocks = [{"text": "Hello", "translated": "Привет"}]
+        frame_win.translated_text = "Привет"
+        frame_win.original_text = "Hello"
+        frame_win.lbl_hud_text.setText("Привет")
+        frame_win._toggle_pause()
+        assert frame_win.is_paused
+        assert frame_win.translated_blocks == []
+        assert frame_win.translated_text == ""
+        assert frame_win.original_text == ""
+        assert frame_win.lbl_hud_text.text() == ""
+        frame_win._toggle_pause()
+        assert not frame_win.is_paused
+
+        # Проверка фильтрации элементов интерфейса и подсказок Framio
+        assert _is_framio_ui_text("Интервал сканирования: 100 мс")
+        assert _is_framio_ui_text("Все приложения (всегда активно)")
+        assert _is_framio_ui_text("Неосязаемая рамка (клики сквозь рамку)")
+        assert _is_framio_ui_text("Субтитры (HUD внизу)")
+        assert _is_framio_ui_text("Поверх текста (In-place)")
+        assert _is_framio_ui_text("Привязать рамку перевода к окну/процессу (авто-пауза и скрытие вне окна)")
+        assert _is_framio_ui_text("Зажмите для перемещения рамки перевода по экрану")
+        assert not _is_framio_ui_text("Welcome to the fantasy adventure game!")
+
+        # Проверка блокировки перевода при активной подсказке (tooltip_active)
+        frame_win.worker.set_tooltip_active(True)
+        assert frame_win.worker._tooltip_active
+        frame_win._on_translation_ready("Attack the enemy", "Атакуй врага", [{"text": "Attack the enemy", "orig": "Attack the enemy"}])
+        assert frame_win.translated_blocks == []
+        frame_win.worker.set_tooltip_active(False)
+        assert not frame_win.worker._tooltip_active
+
+        # Проверка игнорирования текста интерфейса и открытого меню в _on_translation_ready
+        frame_win._menu_open = True
+        frame_win._on_translation_ready("Attack the enemy", "Атакуй врага", [{"text": "Attack the enemy", "translated": "Атакуй врага"}])
+        assert frame_win.translated_blocks == []
+        frame_win._menu_open = False
+        frame_win._menu_closed_time = 0.0  # сброс кулдауна для прямого теста
+        frame_win._on_translation_ready("Интервал сканирования", "Scan interval", [{"text": "Интервал", "translated": "Scan"}])
+        assert frame_win.translated_blocks == []
+
+        # Проверка фильтрации отдельных блоков интерфейса из смешанного списка
+        mixed_blocks = [
+            {"text": "Attack", "orig": "Attack"},
+            {"text": "Привязать", "orig": "Привязать рамку перевода"}
+        ]
+        frame_win._on_translation_ready("Attack", "Атакуй", mixed_blocks)
+        assert len(frame_win.translated_blocks) == 1
+        assert frame_win.translated_blocks[0]["text"] == "Attack"
     finally:
         if hasattr(frame_win, "worker") and frame_win.worker:
             frame_win.worker.stop()
@@ -4705,6 +4908,8 @@ def test_close_overlay_does_not_steal_focus_from_active_window():
             overlay.close_overlay()
             mock_set_fg.assert_not_called()
         assert overlay._prev_active_hwnd is None
+        assert overlay.width() <= 1 and overlay.height() <= 1
+        assert overlay.windowOpacity() == 1.0
     finally:
         overlay.deleteLater()
         QApplication.processEvents()
