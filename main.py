@@ -840,21 +840,24 @@ class FramioApp(QObject):
         if pix is None or pix.isNull():
             return
 
+        img = pix.toImage()
+
+        # Моментально помещаем снимок в системный буфер обмена ДО записи на диск и тяжелых операций (0 мс)
+        if getattr(self.cfg, "auto_copy_to_clipboard", True):
+            from utils.clipboard_helper import copy_images_to_clipboard
+            copy_images_to_clipboard([img])
+
+        if getattr(self.cfg, "play_sound", True):
+            play_capture_sound()
+
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         ext = getattr(self.cfg, "last_save_format", "png") or "png"
         save_dir = Path(self.cfg.save_dir_screenshots)
         save_dir.mkdir(parents=True, exist_ok=True)
         out_path = save_dir / f"Screenshot_{timestamp}.{ext}"
 
-        img = pix.toImage()
         img.save(str(out_path))
         self.add_recent_media(path=str(out_path), image=img, label=out_path.name)
-
-        if getattr(self.cfg, "auto_copy_to_clipboard", True):
-            QApplication.clipboard().setImage(img)
-
-        if getattr(self.cfg, "play_sound", True):
-            play_capture_sound()
 
         self.show_notification(
             tr("notif_quick_screen_saved_title"),

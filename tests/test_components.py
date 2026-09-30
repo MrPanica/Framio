@@ -5033,6 +5033,36 @@ def test_shutter_sound_and_quick_drag_and_toast():
     print("  -> Звук затвора, звук уведомления, жесты мыши, OCR-конвертер и тост-уведомления работают корректно.")
 
 
+def test_native_win32_clipboard_copy():
+    """Тестирует быстрое копирование изображений в буфер обмена Windows без задержек и файлов."""
+    import json
+    from utils.clipboard_helper import copy_images_to_clipboard
+
+    # 1. Одиночное изображение
+    test_img = QImage(160, 90, QImage.Format.Format_ARGB32)
+    test_img.fill(QColor(255, 128, 0))
+    success = copy_images_to_clipboard([test_img])
+    assert success is True
+
+    cb = QApplication.clipboard()
+    copied_img = cb.image()
+    assert not copied_img.isNull()
+    assert copied_img.width() == 160
+    assert copied_img.height() == 90
+
+    # 2. Множественные изображения (список зон)
+    img2 = QImage(80, 80, QImage.Format.Format_ARGB32)
+    img2.fill(QColor(0, 200, 100))
+    success_multi = copy_images_to_clipboard([test_img, img2])
+    assert success_multi is True
+
+    mime = cb.mimeData()
+    assert mime.hasFormat("application/x-framio-image-list")
+    payload = json.loads(bytes(mime.data("application/x-framio-image-list")).decode("ascii"))
+    assert len(payload["images"]) == 2
+    print("  -> Нативное копирование в буфер обмена Win32/Qt (CF_DIB, PNG, multi-region) успешно протестировано.")
+
+
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
@@ -5136,6 +5166,7 @@ if __name__ == "__main__":
         test_magnifier_tool_and_filter()
         test_translation_frame_and_translator()
         test_close_overlay_does_not_steal_focus_from_active_window()
+        test_native_win32_clipboard_copy()
         import time
         time.sleep(0.3)
         QApplication.processEvents()

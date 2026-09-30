@@ -4958,49 +4958,10 @@ class OverlayWindow(QWidget):
                 self.activateWindow()
 
     def _set_images_on_clipboard(self, images: list[QImage], fmt: str = "png"):
-        """Кладёт одну картинку или все зоны как список файлов clipboard."""
-        from PyQt6.QtCore import QMimeData, QBuffer, QIODevice
-        import base64
-        import json
+        """Кладёт одну картинку или все зоны в системный буфер обмена молниеносно через Win32 API и Qt."""
+        from utils.clipboard_helper import copy_images_to_clipboard
+        copy_images_to_clipboard(images, fmt)
 
-        if not images:
-            return
-        if len(images) == 1:
-            if fmt == "jpg":
-                mime_type, image_format = "image/jpeg", "JPEG"
-            else:
-                mime_type, image_format = "image/png", "PNG"
-            mime = QMimeData()
-            buf = QBuffer()
-            buf.open(QIODevice.OpenModeFlag.WriteOnly)
-            images[0].save(buf, image_format, 95 if image_format == "JPEG" else -1)
-            mime.setData(mime_type, buf.data())
-            mime.setImageData(images[0])
-            buf.close()
-            QApplication.clipboard().setMimeData(mime)
-            return
-
-        mime = QMimeData()
-        first_buffer = QBuffer()
-        first_buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-        images[0].save(first_buffer, "PNG")
-        mime.setData("image/png", first_buffer.data())
-        mime.setImageData(images[0])
-        first_buffer.close()
-
-        if len(images) > 1:
-            encoded = []
-            for image in images:
-                buf = QBuffer()
-                buf.open(QIODevice.OpenModeFlag.WriteOnly)
-                image.save(buf, "PNG")
-                encoded.append(base64.b64encode(bytes(buf.data())).decode("ascii"))
-                buf.close()
-            payload = json.dumps({"format": "png", "images": encoded}, separators=(",", ":"))
-            mime.setData("application/x-framio-image-list", payload.encode("ascii"))
-
-        # Моментально выставляем данные в системный буфер обмена
-        QApplication.clipboard().setMimeData(mime)
 
 
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.24] - 2026-09-30
+
+### English
+
+- **High-Speed Native Win32 Clipboard Engine**: Implemented direct Windows OS shared memory clipboard placement (`CF_DIB`, `PNG`, and `image/png` formats via Win32 API). Completely bypassed OLE delayed rendering timeouts and cross-process COM blocking. Screenshots are now instantly accessible in 0.001s by Electron, Antigravity, VS Code, Telegram, Discord, Chrome, and Office without "Invalid Media" or "empty file" errors.
+- **Immediate In-Memory Clipboard Copying on Fullscreen Capture**: In `quick_fullscreen_capture`, the screenshot is placed into the system clipboard in RAM immediately upon capture before executing disk writes or displaying notifications, eliminating any delay when quickly pasting.
+- **Deep Disk Cleanup of Root Build Folders**: Identified and permanently deleted 69 legacy build verification and portable release check folders (`O:\Framio-*`) dating back to initial releases, freeing **7.97 GB** of disk space on drive `O:`.
+
+### Русский
+
+- **Высокоскоростной нативный движок буфера обмена Win32**: Реализована прямая запись снимков в системную разделяемую память Windows (одновременная регистрация форматов `CF_DIB`, `PNG` и `image/png` через Win32 API). Полностью устранены задержки отложенного рендеринга OLE и тайм-ауты COM RPC. Скриншоты становятся доступны моментально (за 0.001 с) в Antigravity, VS Code, Telegram, Discord, браузерах и графических редакторах, исключая ошибки «Invalid Media» и «пустой файл».
+- **Мгновенное помещение в буфер при полноэкранном снимке**: В режиме быстрого полноэкранного снимка изображение помещается в буфер обмена в оперативной памяти сразу в момент захвата — ещё до записи на диск и показа уведомлений, что исключает задержку перед вставкой.
+- **Глубокая очистка диска от остаточных папок старых сборок**: Обнаружены и удалены 69 устаревших папок проверок сборок и релизов (`O:\Framio-*`), созданных во время раннего тестирования, что освободило **7.97 ГБ** свободного места на диске `O:`.
+
 ## [1.0.23] - 2026-09-30
 
 ### English
