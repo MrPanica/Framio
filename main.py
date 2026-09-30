@@ -483,11 +483,14 @@ class FramioApp(QObject):
             return
 
         win = TranslationFrameWindow(initial_rect=rect)
+        if hasattr(win, "set_passthrough"):
+            win.set_passthrough(False)
         if win not in self._active_translation_windows:
             self._active_translation_windows.append(win)
         win.frame_closed.connect(lambda w=win: self._active_translation_windows.remove(w) if w in self._active_translation_windows else None)
         win.show()
         win.raise_to_topmost()
+        return win
 
     def add_recent_media(self, path: str = None, image: QImage = None, label: str = None, refresh: bool = True):
         """Добавляет материал в историю последних файлов и снимков."""

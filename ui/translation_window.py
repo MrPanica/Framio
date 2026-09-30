@@ -44,7 +44,7 @@ from PyQt6.QtGui import (
 )
 
 from utils.screen_lock import safe_grab_screen_bgr, user32
-from utils.ocr_helper import extract_text_and_blocks, extract_text_from_image
+from utils.ocr_helper import extract_text_and_blocks, extract_text_from_image, is_valid_ocr_text
 from utils.translator import translate_text, translate_batch, get_available_translation_languages
 from utils.i18n import tr
 from utils.window_icon import get_window_qicon
@@ -788,15 +788,22 @@ class TranslationScannerWorker(QThread):
 
                 # Запуск OCR
                 raw_blocks = extract_text_and_blocks(frame_bgr, lang=src)
+                raw_blocks = [
+                    b for b in raw_blocks
+                    if is_valid_ocr_text(b.get("text", ""), b.get("width", 50), b.get("height", 20))
+                ]
                 blocks = group_multiline_blocks(raw_blocks)
                 full_text = " ".join(b["text"] for b in blocks if b.get("text")).strip()
 
                 if not full_text:
-                    full_text, _ = extract_text_from_image(frame_bgr, lang=src)
+                    ft, _ = extract_text_from_image(frame_bgr, lang=src)
+                    if is_valid_ocr_text(ft):
+                        full_text = ft
 
                 has_letters = bool(re.search(r"[\w\u0400-\u04FF\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]", full_text)) if full_text else False
+                is_valid = is_valid_ocr_text(full_text) if full_text else False
 
-                if not full_text or not has_letters:
+                if not full_text or not has_letters or not is_valid:
                     if self._last_ocr_text != "" or self._stable_blocks:
                         self._last_ocr_text = ""
                         self._stable_blocks = []
@@ -2099,15 +2106,16 @@ class TranslationControlBar(QWidget):
             delta = event.globalPosition().toPoint() - self._drag_start
             self.move(self._bar_start_pos + delta)
             self.frame_window.move(self._frame_start_pos + delta)
-            if hasattr(self.frame_window, "worker") and self.frame_window.worker.isRunning():
-                self.frame_window.worker.update_geometry(self.frame_window.geometry())
             event.accept()
             return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
+            was_dragging = self._is_dragging
             self._is_dragging = False
+            if was_dragging and hasattr(self.frame_window, "worker") and self.frame_window.worker.isRunning():
+                self.frame_window.worker.update_geometry(self.frame_window.geometry())
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -2207,7 +2215,7 @@ class TranslationFrameWindow(QWidget):
         self.tgt_lang = "ru"
         self.is_paused = False
         self.is_locked_stealth = False  # Режим скрытия по кнопке глазика
-        self.passthrough_enabled = True # Неосязаемая рамка (сквозные клики) ВКЛЮЧЕНА по умолчанию
+        self.passthrough_enabled = False # По умолчанию рамка создаётся осязаемой и готовой к изменению размера
 
         self.bg_opacity = 0.85
         self.bg_theme = "slate"
@@ -2638,11 +2646,16 @@ class TranslationFrameWindow(QWidget):
 
         app_inst = getattr(QApplication.instance(), "app_instance", None)
         if app_inst and hasattr(app_inst, "start_translation_frame"):
-            app_inst.start_translation_frame(new_geo)
+            win = app_inst.start_translation_frame(new_geo)
         else:
             win = TranslationFrameWindow(initial_rect=new_geo)
             win.show()
             win.raise_to_topmost()
+        if win:
+            win.set_passthrough(False)
+            if hasattr(win, "control_bar") and win.control_bar:
+                win.control_bar.update_passthrough_ui()
+        return win
 
     def _copy_translation(self):
         """Совместимость со старыми вызовами: копирует текст перевода."""
@@ -2809,21 +2822,23 @@ class TranslationFrameWindow(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_hud_geometry()
-        if hasattr(self, "control_bar") and self.control_bar:
+        if hasattr(self, "control_bar") and self.control_bar and not getattr(self.control_bar, "_is_dragging", False):
             self.control_bar.sync_to_frame()
         if hasattr(self, "unlock_pill") and self.unlock_pill.isVisible():
             self.unlock_pill.update_position()
-        if hasattr(self, "worker") and self.worker.isRunning():
-            self.worker.update_geometry(self.geometry())
+        if not self.is_moving_window and not self.is_resizing and not getattr(getattr(self, "control_bar", None), "_is_dragging", False):
+            if hasattr(self, "worker") and self.worker.isRunning():
+                self.worker.update_geometry(self.geometry())
 
     def moveEvent(self, event):
         super().moveEvent(event)
-        if hasattr(self, "control_bar") and self.control_bar:
+        if hasattr(self, "control_bar") and self.control_bar and not getattr(self.control_bar, "_is_dragging", False):
             self.control_bar.sync_to_frame()
         if hasattr(self, "unlock_pill") and self.unlock_pill.isVisible():
             self.unlock_pill.update_position()
-        if hasattr(self, "worker") and self.worker.isRunning():
-            self.worker.update_geometry(self.geometry())
+        if not self.is_moving_window and not self.is_resizing and not getattr(getattr(self, "control_bar", None), "_is_dragging", False):
+            if hasattr(self, "worker") and self.worker.isRunning():
+                self.worker.update_geometry(self.geometry())
 
     def _hit_test(self, pos: QPoint) -> int:
         margin = self.HANDLE_SIZE
@@ -2950,12 +2965,16 @@ class TranslationFrameWindow(QWidget):
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
+            was_busy = self.is_resizing or self.is_moving_window
             self.is_resizing = False
             self.is_moving_window = False
             self.active_handle = self.HANDLE_NONE
             self.setCursor(Qt.CursorShape.ArrowCursor)
-            if hasattr(self, "worker") and self.worker.isRunning():
-                self.worker.update_geometry(self.geometry())
+            if was_busy:
+                if hasattr(self, "control_bar") and self.control_bar:
+                    self.control_bar.sync_to_frame()
+                if hasattr(self, "worker") and self.worker.isRunning():
+                    self.worker.update_geometry(self.geometry())
             event.accept()
             return
         super().mouseReleaseEvent(event)

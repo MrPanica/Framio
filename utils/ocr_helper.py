@@ -475,6 +475,85 @@ def _extract_with_winocr(bgr: np.ndarray, lang: str = "auto") -> tuple[str, str]
     return full_result, "ru+en"
 
 
+COMMON_GAMING_ACRONYMS = {
+    "hp", "mp", "xp", "lvl", "fps", "atk", "def", "sp", "str", "dex", "int", "pts",
+    "dmg", "cd", "rpm", "qty", "max", "min", "sec", "ms", "cooldown", "hud", "ui", "npc"
+}
+VALID_SINGLE_EN = {"a", "i"}
+VALID_SINGLE_RU = {"и", "в", "к", "с", "у", "о", "я", "а"}
+
+
+def is_valid_ocr_text(text: str, width: float = 20.0, height: float = 15.0, bgr_crop: np.ndarray = None) -> bool:
+    """
+    Интеллектуальный фильтр ложных срабатываний OCR на природных объектах,
+    текстурах камней, травы, трещин и шумах рендера 3D-игр.
+    Отсекает нечитаемый мусор, сохраняя настоящие слова, цифры и элементы интерфейса.
+    """
+    import re
+    if not text:
+        return False
+    raw = text.strip()
+    clean = re.sub(r"^[^\w]+|[^\w]+$", "", raw)
+    if not clean:
+        return False
+
+    # 1. Геометрические ограничения (защита от горизонтальных полос, царапин, кабелей и шумов)
+    if height < 7 or width < 7:
+        return False
+    if width / max(1.0, height) > 35 or height / max(1.0, width) > 15:
+        return False
+
+    # 2. Повторяющиеся символы (текстуры, полосы типа |||, vvv, ___)
+    if re.search(r"(.)\1{2,}", clean):
+        return False
+
+    # 3. Доля буквенно-цифровых символов (отсекаем блоки, состоящие преимущественно из знаков препинания и спецсимволов)
+    letters_digits = re.findall(r"[\w\u0400-\u04FF\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]", clean)
+    if len(letters_digits) / max(1, len(clean)) < 0.60:
+        return False
+
+    # 4. Проверка CJK (иероглифы японского/китайского могут быть одиночными)
+    has_cjk = bool(re.search(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]", clean))
+    if has_cjk:
+        return True
+
+    # 5. Одиночные символы: разрешаем только легитимные слова 'a', 'i', русские предлоги и цифры
+    if len(clean) == 1:
+        if clean.isdigit():
+            return True
+        c_low = clean.lower()
+        if c_low in VALID_SINGLE_EN or c_low in VALID_SINGLE_RU:
+            return True
+        return False
+
+    # 6. Проверка слов на наличие гласных (отсекает абракадабру вроде kzt, v/.x, bdfg)
+    words = re.findall(r"[a-zA-Zа-яА-ЯёЁ]+", clean)
+    if not words and not any(ch.isdigit() for ch in clean):
+        return False
+
+    for word in words:
+        w_low = word.lower()
+        if len(w_low) >= 3 and w_low not in COMMON_GAMING_ACRONYMS:
+            has_vowel_en = bool(re.search(r"[aeiouy]", w_low))
+            has_vowel_ru = bool(re.search(r"[аеёиоуыэюя]", w_low))
+            if not has_vowel_en and not has_vowel_ru:
+                return False
+
+    # 7. Контрастность в области кадра (если передан срез изображения)
+    if bgr_crop is not None and bgr_crop.size > 0:
+        try:
+            if len(bgr_crop.shape) == 3:
+                gray = cv2.cvtColor(bgr_crop, cv2.COLOR_BGR2GRAY) if cv2 is not None else bgr_crop[:, :, 0]
+            else:
+                gray = bgr_crop
+            if float(np.std(gray)) < 8.5:
+                return False
+        except Exception:
+            pass
+
+    return True
+
+
 def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "auto") -> list[dict]:
     """
     Распознаёт текст и возвращает блоки с точными экранными координатами
@@ -483,6 +562,7 @@ def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "aut
     """
     bgr = _convert_to_bgr(image)
     if bgr is None or bgr.size == 0 or not _WINOCR_AVAILABLE:
+
         return []
 
     installed = get_available_ocr_languages()
@@ -594,14 +674,23 @@ def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "aut
                 min_y = min(ys) / scale_factor
                 max_r = max(x + w_val for x, w_val in zip(xs, ws)) / scale_factor
                 max_b = max(y + h_val for y, h_val in zip(ys, hs)) / scale_factor
-                med_h = float(np.median(hs)) / scale_factor
+                bw = max_r - min_x
+                bh = max_b - min_y
+
+                # Извлекаем фрагмент кадра для проверки контраста и отсечения текстур камней/фона
+                x1, y1 = max(0, int(min_x)), max(0, int(min_y))
+                x2, y2 = min(w, int(max_r)), min(h, int(max_b))
+                crop_sample = bgr[y1:y2, x1:x2] if (x2 > x1 and y2 > y1) else None
+
+                if not is_valid_ocr_text(chunk_txt, bw, bh, crop_sample):
+                    continue
 
                 blocks.append({
                     "text": chunk_txt,
                     "x": min_x,
                     "y": min_y,
-                    "width": max_r - min_x,
-                    "height": max_b - min_y,
+                    "width": bw,
+                    "height": bh,
                     "word_height": med_h
                 })
 

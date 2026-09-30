@@ -4563,19 +4563,35 @@ def test_translation_frame_and_translator():
         assert frame_win.worker is not None
         assert frame_win._topmost_timer is None
 
-        # Проверка внешней верхней панели управления и неосязаемости рамки
+        # Проверка внешней верхней панели управления и осязаемости рамки по умолчанию
         assert frame_win.header_frame is not None
         assert frame_win.control_bar.isWindow()
-        assert frame_win.passthrough_enabled
-        # Переключение неосязаемости (сквозной клик / режим настройки)
-        frame_win.set_passthrough(False)
+        # Новые рамки перевода сразу создаются осязаемыми/готовыми к изменению размера
         assert not frame_win.passthrough_enabled
+        # Проверка наличия иконки у кнопки добавления дополнительной рамки
+        assert not frame_win.control_bar.btn_add_frame.icon().isNull()
+
+        # Переключение неосязаемости (сквозной клик / режим настройки)
         frame_win.set_passthrough(True)
         assert frame_win.passthrough_enabled
+        frame_win.set_passthrough(False)
+        assert not frame_win.passthrough_enabled
 
         # Режим по умолчанию: "inplace" (поверх текста)
         assert frame_win.current_mode == "inplace"
         assert frame_win.worker._mode == "inplace"
+
+        # Проверка интеллектуального фильтра ложных срабатываний OCR на текстурах/камнях
+        from utils.ocr_helper import is_valid_ocr_text
+        assert not is_valid_ocr_text("|||||||")
+        assert not is_valid_ocr_text("vvvvvvv")
+        assert not is_valid_ocr_text("...---...")
+        assert not is_valid_ocr_text("kxrt")
+        assert not is_valid_ocr_text("x", width=4, height=4)
+        assert is_valid_ocr_text("Start Game", width=120, height=24)
+        assert is_valid_ocr_text("HP", width=25, height=15)
+        assert is_valid_ocr_text("LVL", width=30, height=15)
+        assert is_valid_ocr_text("Привет", width=80, height=20)
         assert frame_win.hud_window.isWindow()
         # HUD окно субтитров свободно перемещается по всему экрану
         frame_win.hud_window.move(QPoint(500, 700))

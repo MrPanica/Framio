@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.25] - 2026-10-01
+
+### English
+
+- **Smooth 60-144 FPS Window & Frame Dragging**: Completely eliminated stutter and micro-freezes when dragging or resizing translation frames and selection boxes. Removed OCR worker thread mutex contention during active mouse dragging, eliminated redundant coordinate sync passes between control bar and capture frame, and optimized toolbar geometry updates in overlay with cached dimensions.
+- **Immediate Interactive/Resizable Mode for Translation Frames**: Additional translation frames created via the "+" button or tray menu now spawn directly in resizable and interactive mode (`passthrough = False`), allowing users to immediately reposition and resize them without manually toggling edit mode.
+- **Plus Icon on Control Bar**: Added a crisp vector SVG plus icon to the control bar button (`btn_add_frame`), clearly indicating the action to spawn additional translation frames.
+- **False-Positive OCR Noise & Texture Filtering**: Implemented an intelligent noise filter (`is_valid_ocr_text`) in local OCR processing to reject non-text 3D gaming textures, rocks, terrain lines, scratches, repetitive patterns, and low-contrast artifacts while reliably preserving legitimate gaming acronyms (HP, LVL, MP, XP, etc.) and multilingual text.
+
+### Русский
+
+- **Плавное перемещение окон и рамок без рывков (60-144 FPS)**: Полностью устранены задержки и рывки при перетаскивании и изменении размера рамок перевода и рамок выделения. Устранена блокировка GUI-потока мьютексом OCR во время движения мыши, убрана избыточная синхронизация координат между панелью управления и рамкой, а также оптимизировано позиционирование панелей инструментов в оверлее с кэшированием габаритов.
+- **Интерактивный режим при создании рамок перевода**: Дополнительные рамки перевода, создаваемые через кнопку «+» или меню, теперь сразу появляются в осязаемом режиме с активными границами изменения размера (`passthrough = False`), позволяя сразу настроить их положение и размер без ручного переключения.
+- **Иконка плюсика на панели управления**: Добавлена векторная SVG-иконка плюсика для кнопки создания дополнительной рамки перевода (`btn_add_frame`).
+- **Интеллектуальный фильтр ложных срабатываний OCR на текстурах и камнях**: В модуль локального распознавания добавлен фильтр (`is_valid_ocr_text`), отсекающий шумные текстуры 3D-игр, природные объекты, камни, царапины, повторяющиеся полосы и артефакты фона, сохраняя при этом легитимные игровые термины (HP, LVL, MP, XP и др.) и многоязычный текст.
+
 ## [1.0.24] - 2026-09-30
 
 ### English

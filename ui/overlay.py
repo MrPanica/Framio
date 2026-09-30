@@ -1370,17 +1370,21 @@ class OverlayWindow(QWidget):
         # если зона достаточно высока, чтобы вместить полный тулбар — раскрываем.
         if hasattr(self.right_toolbar, "_set_more_tools_visible"):
             try:
-                self.right_toolbar._set_more_tools_visible(True)
-                h_right_full = float(self.right_toolbar.sizeHint().height())
-                self.right_toolbar._set_more_tools_visible(False)
-                h_right_compact = float(self.right_toolbar.sizeHint().height())
+                h_right_full = getattr(self.right_toolbar, "_cached_h_full", None)
+                if h_right_full is None:
+                    curr_vis = getattr(self.right_toolbar, "_more_tools_expanded", False)
+                    self.right_toolbar._set_more_tools_visible(True)
+                    h_right_full = float(self.right_toolbar.sizeHint().height())
+                    self.right_toolbar._set_more_tools_visible(curr_vis)
+                    self.right_toolbar._cached_h_full = h_right_full
+
                 zone_h = r.height()
                 auto_expand_right = zone_h >= h_right_full + 20 or r.height() == 0
                 user_expanded_tools = getattr(self.right_toolbar, "_user_expanded_tools", None)
-                if user_expanded_tools is not None:
-                    self.right_toolbar._set_more_tools_visible(user_expanded_tools)
-                else:
-                    self.right_toolbar._set_more_tools_visible(auto_expand_right)
+                target_expand = user_expanded_tools if user_expanded_tools is not None else auto_expand_right
+                if getattr(self.right_toolbar, "_more_tools_expanded", None) != target_expand:
+                    self.right_toolbar._set_more_tools_visible(target_expand)
+
                 h_right = float(self.right_toolbar.sizeHint().height())
                 w_right = float(self.right_toolbar.sizeHint().width())
             except (TypeError, ValueError, AttributeError):
@@ -1396,17 +1400,21 @@ class OverlayWindow(QWidget):
         # если зона достаточно широка, чтобы вместить полную нижнюю панель — раскрываем.
         if hasattr(self.bottom_toolbar, "_set_more_actions_visible"):
             try:
-                self.bottom_toolbar._set_more_actions_visible(True)
-                w_bot_full = float(self.bottom_toolbar.sizeHint().width())
-                self.bottom_toolbar._set_more_actions_visible(False)
-                w_bot_compact = float(self.bottom_toolbar.sizeHint().width())
+                w_bot_full = getattr(self.bottom_toolbar, "_cached_w_full", None)
+                if w_bot_full is None:
+                    curr_vis = getattr(self.bottom_toolbar, "_more_actions_expanded", False)
+                    self.bottom_toolbar._set_more_actions_visible(True)
+                    w_bot_full = float(self.bottom_toolbar.sizeHint().width())
+                    self.bottom_toolbar._set_more_actions_visible(curr_vis)
+                    self.bottom_toolbar._cached_w_full = w_bot_full
+
                 zone_w = r.width()
                 auto_expand_bottom = zone_w >= w_bot_full + 20 or r.width() == 0
                 user_expanded_actions = getattr(self.bottom_toolbar, "_user_expanded_actions", None)
-                if user_expanded_actions is not None:
-                    self.bottom_toolbar._set_more_actions_visible(user_expanded_actions)
-                else:
-                    self.bottom_toolbar._set_more_actions_visible(auto_expand_bottom)
+                target_expand_bot = user_expanded_actions if user_expanded_actions is not None else auto_expand_bottom
+                if getattr(self.bottom_toolbar, "_more_actions_expanded", None) != target_expand_bot:
+                    self.bottom_toolbar._set_more_actions_visible(target_expand_bot)
+
                 w_bot = float(self.bottom_toolbar.sizeHint().width())
                 h_bot = float(self.bottom_toolbar.sizeHint().height())
             except (TypeError, ValueError, AttributeError):
