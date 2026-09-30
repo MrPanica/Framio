@@ -181,12 +181,20 @@ def copy_images_to_clipboard(images: list[QImage], fmt: str = "png") -> bool:
     На Windows использует прямой Win32 API с одновременной регистрацией CF_DIB, PNG и image/png
     для 100% совместимости со всеми редакторами, мессенджерами и веб-приложениями.
     """
+    import os
+
     if not images or all(img.isNull() for img in images):
         return False
 
     valid_images = [img for img in images if not img.isNull()]
     if not valid_images:
         return False
+
+    # В headless / offscreen режиме (CI тесты) используем изолированный Qt in-memory буфер
+    app = QApplication.instance()
+    is_offscreen = (app is not None and app.platformName() == "offscreen") or (os.environ.get("QT_QPA_PLATFORM") == "offscreen")
+    if is_offscreen:
+        return _set_images_qt(valid_images, fmt)
 
     if sys.platform == "win32":
         try:
@@ -197,3 +205,4 @@ def copy_images_to_clipboard(images: list[QImage], fmt: str = "png") -> bool:
             print(f"[ClipboardHelper] Win32 copy error, falling back to Qt: {e}")
 
     return _set_images_qt(valid_images, fmt)
+
