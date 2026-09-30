@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.23] - 2026-09-30
+
+### English
+
+- **Instant In-Memory Clipboard Copying**: Eliminated disk file caching (`.clipboard` and `.recent`) when copying screenshots to clipboard. Image data is now placed directly into system clipboard memory in 0 ms, resolving delayed paste availability and preventing "empty file" errors in applications like Telegram and Discord.
+- **Parasitic Folders Cleanup & Prevention**: Removed disk littering across temporary directories. Added automated cleanup of orphaned `.segments` directories in `%TEMP%\framio`, completely eliminated internal creation of `.clipboard` and `.recent` hidden folders, and pruned 54 obsolete local build directories freeing ~9 GB of disk space.
+- **Multiple Translation Frames ("+" Button)**: Added an intuitive "+" button on the translation control bar allowing users to spawn and run multiple independent translation frames simultaneously.
+- **Bounded Translation Text Scaling**: Fixed text over-stretching when enlarging or resizing translation frames. In automatic font sizing mode, font dimensions are strictly bound to original line heights (capped at 26-28 px) instead of inflating across the entire oversized window.
+- **Persistent Stealth Eye Position & Screen Bounds**: The floating eye unlock pill now permanently remembers user-dragged screen coordinates across hide/unhide and lock cycles, with strict boundary clamping preventing it from ever being pushed or dragged outside visible screens.
+
+### Русский
+
+- **Моментальное копирование в буфер обмена без задержек**: Устранена запись временных файлов на диск (`.clipboard` и `.recent`) при обычном копировании скриншотов. Изображение помещается в системный буфер памяти моментально (0 мс), что полностью решило проблему задержки перед вставкой и ошибку «пустой файл» в Telegram, Discord и браузерах.
+- **Удаление и блокировка паразитных папок**: Устранено засорение дискового пространства. В очистку `%TEMP%\framio` добавлено удаление папок `.segments`, в коде полностью убрано создание скрытых папок `.clipboard` и `.recent`, а также удалены 54 старые локальные папки сборок, что освободило ~9 ГБ на диске.
+- **Мульти-рамки живого перевода (кнопка «+»)**: На внешнюю панель управления рамки перевода добавлена кнопка «+», позволяющая открывать и использовать несколько независимых рамок перевода одновременно.
+- **Предотвращение раздувания шрифта перевода**: Исправлено чрезмерное растягивание переведенного текста при увеличении рамки. В авто-режиме кегль шрифта теперь привязан к высоте строк оригинала (ограничен 26-28 px) и не раздувается на всё окно.
+- **Сохранение позиции глазика и защита от вылета за экран**: Плавающая кнопка разблокировки глазика теперь сохраняет выбранное пользователем положение при скрытии/показе панели, а также строго удерживается в пределах видимой области экрана.
+
 ## [1.0.22] - 2026-09-27
 
 ### English

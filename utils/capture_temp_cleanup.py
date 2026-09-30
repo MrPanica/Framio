@@ -27,15 +27,20 @@ def cleanup_stale_capture_temp_files(max_age_hours: int = 24) -> int:
         return 0
 
     for path in candidates:
-        if not path.is_file() or not path.name.startswith(prefixes):
+        if not path.name.startswith(prefixes):
             continue
         try:
             if path.stat().st_mtime >= cutoff:
                 continue
-            path.unlink()
-            removed += 1
+            if path.is_dir():
+                import shutil
+                shutil.rmtree(str(path), ignore_errors=True)
+                removed += 1
+            elif path.is_file():
+                path.unlink()
+                removed += 1
         except OSError:
-            # Файл может принадлежать ещё работающему процессу или быть
+            # Файл или каталог может принадлежать ещё работающему процессу или быть
             # временно заблокирован Windows — оставляем его до следующего запуска.
             continue
 

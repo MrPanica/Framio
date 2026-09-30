@@ -494,17 +494,6 @@ class FramioApp(QObject):
         if not path and (image is None or image.isNull()):
             return
         path = str(path) if path else ""
-        if not path and image is not None and not image.isNull():
-            cfg = getattr(self, "cfg", None)
-            cache_dir = Path(getattr(cfg, "save_dir_screenshots", "")) / ".recent"
-            if str(cache_dir) != ".recent":
-                try:
-                    cache_dir.mkdir(parents=True, exist_ok=True)
-                    cache_path = cache_dir / f"Framio_Recent_{time.time_ns()}.png"
-                    if image.save(str(cache_path), "PNG"):
-                        path = str(cache_path)
-                except Exception:
-                    pass
         if not label:
             label = Path(path).name if path else tr("tray_menu_recent_copy_image", name="Screenshot")
         item = {
@@ -614,11 +603,14 @@ class FramioApp(QObject):
         save_dir = getattr(cfg, "save_dir_screenshots", "")
         if not save_dir:
             return None
-        cache_dir = Path(save_dir) / ".recent"
+        target_dir = Path(save_dir)
         try:
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            path = cache_dir / f"Framio_Recent_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
-            return path if image.save(str(path), "PNG") else None
+            target_dir.mkdir(parents=True, exist_ok=True)
+            path = target_dir / f"Screenshot_Recent_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            if image.save(str(path), "PNG"):
+                item["path"] = str(path)
+                return path
+            return None
         except OSError:
             return None
 

@@ -1579,7 +1579,7 @@ class OverlayWindow(QWidget):
                     elif fmt == "webp":
                         self._set_images_on_clipboard([crop.toImage()], "webp")
                     else:
-                        clipboard.setPixmap(crop)
+                        self._set_images_on_clipboard([crop.toImage()], "png")
                     if getattr(self.cfg, "play_sound", True):
                         play_capture_sound()
                     self._notify(
@@ -5002,22 +5002,7 @@ class OverlayWindow(QWidget):
         # Моментально выставляем данные в системный буфер обмена
         QApplication.clipboard().setMimeData(mime)
 
-        try:
-            cfg = self.__dict__.get("cfg")
-            cache_base = getattr(cfg, "save_dir_screenshots", None) or (Path.cwd() / "Captures" / "Screenshots")
-            cache_root = Path(cache_base) / ".clipboard"
-            cache_root.mkdir(parents=True, exist_ok=True)
-            cache_paths = []
-            stamp = time.time_ns()
-            for index, image in enumerate(images, start=1):
-                cache_path = cache_root / f"Framio_Clipboard_{stamp}_{index}.png"
-                if image.save(str(cache_path), "PNG"):
-                    cache_paths.append(cache_path)
-            if cache_paths:
-                mime.setUrls([QUrl.fromLocalFile(str(path)) for path in cache_paths])
-                QApplication.clipboard().setMimeData(mime)
-        except Exception:
-            pass
+
 
     def copy_screenshot(self, fmt="standard", all_regions: bool = False):
         preserve_selection = self._should_preserve_selection_after_single_region_action(all_regions)
@@ -5082,7 +5067,7 @@ class OverlayWindow(QWidget):
                     refresh=False,
                 )
             if hasattr(app_inst, "_setup_tray_menu"):
-                app_inst._setup_tray_menu()
+                QTimer.singleShot(60, app_inst._setup_tray_menu)
         try:
             thumb = QPixmap.fromImage(images[0]) if images else None
             self._notify(

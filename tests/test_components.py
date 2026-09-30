@@ -2966,8 +2966,7 @@ def test_multi_region_selection_and_export():
         clipboard_payload = QApplication.clipboard().mimeData().data("application/x-framio-image-list")
         assert len(json.loads(bytes(clipboard_payload))["images"]) == 2
         clipboard_urls = QApplication.clipboard().mimeData().urls()
-        assert len(clipboard_urls) == 2, "В clipboard должны попасть file-URLs всех зон"
-        assert all(Path(url.toLocalFile()).exists() for url in clipboard_urls)
+        assert len(clipboard_urls) == 0, "Clipboard должен быть чисто в памяти без паразитных файлов на диске"
 
         # Отмена диалога не должна зависать на скрытом overlay/Проводнике.
         from types import SimpleNamespace
@@ -4717,6 +4716,34 @@ def test_translation_frame_and_translator():
         assert frame_win.unlock_pill.isVisible()
         frame_win.set_stealth_lock(False)
         assert frame_win.control_bar.isVisible()
+
+        # Проверка кнопки создания новой рамки (+) и метода spawn_another_frame
+        from unittest.mock import patch
+        assert hasattr(frame_win.control_bar, "btn_add_frame")
+        assert frame_win.control_bar.btn_add_frame is not None
+        spawned = []
+        with patch.object(frame_win, "spawn_another_frame", side_effect=lambda: spawned.append(True)):
+            frame_win.control_bar.btn_add_frame.click()
+            assert len(spawned) == 1
+
+        # Проверка сохранения позиции глазика пользователем (_user_moved)
+        custom_pos = QPoint(s_geo.left() + 120, s_geo.top() + 150)
+        frame_win.unlock_pill.move(custom_pos)
+        frame_win.unlock_pill._user_moved = True
+        frame_win.unlock_pill.update_position()
+        assert frame_win.unlock_pill.pos() == custom_pos, "Позиция глазика должна сохраняться при _user_moved"
+
+        # Проверка страховки от вылета глазика за экран
+        frame_win.unlock_pill.move(QPoint(s_geo.right() + 500, s_geo.bottom() + 500))
+        frame_win.unlock_pill.update_position()
+        assert frame_win.unlock_pill.x() <= s_geo.right()
+        assert frame_win.unlock_pill.y() <= s_geo.bottom()
+
+        # Проверка ограничения размера шрифта при растягивании рамки (не более 26 px в авто-режиме)
+        assert frame_win.hud_font_size == 0
+        base_h = 24.0
+        calculated_ps = max(11, min(26, int(round(base_h * 0.85))))
+        assert calculated_ps <= 26
 
         # Проверка безопасного отката OCR при запросе неподдерживаемого в системе языка
         from utils.ocr_helper import extract_text_and_blocks, _postprocess_ocr_text

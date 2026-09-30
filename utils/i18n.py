@@ -1650,6 +1650,7 @@ TRANSLATIONS = {
         "trans_settings_btn": "Настройки ▾",
 
         "trans_eye_tooltip": "Скрытый режим",
+        "trans_add_frame_tip": "Добавить еще одну рамку перевода",
 
         "trans_unlock_tooltip": "Нажмите на глазик, чтобы вернуть настройки",
 
@@ -3371,6 +3372,7 @@ TRANSLATIONS = {
         "trans_settings_btn": "Settings ▾",
 
         "trans_eye_tooltip": "Stealth mode",
+        "trans_add_frame_tip": "Add another translation frame",
 
         "trans_unlock_tooltip": "Click the eye to restore panel and settings",
 

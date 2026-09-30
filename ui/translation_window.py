@@ -997,14 +997,16 @@ class TranslationScannerWorker(QThread):
 
                 translated_full = " ".join(item["translated"] for item in translated_blocks) if translated_blocks else restore_punctuation(full_text, translate_text(full_text, source_lang=src, target_lang=tgt))
                 if not translated_blocks and full_text and translated_full:
+                    lines = [ln for ln in translated_full.split("\n") if ln.strip()]
+                    lines_cnt = max(1, len(lines))
                     translated_blocks.append({
                         "original": full_text,
                         "translated": translated_full,
                         "x": 20.0,
-                        "y": max(10.0, float(rh) * 0.35),
-                        "width": max(100.0, float(rw) - 40.0),
-                        "height": max(30.0, float(rh) * 0.25),
-                        "lines_count": max(1, len(translated_full.split("\n"))),
+                        "y": max(10.0, min(float(rh) * 0.35, 60.0)),
+                        "width": min(float(rw) - 40.0, max(140.0, float(rw) * 0.75)),
+                        "height": float(lines_cnt * 24.0),
+                        "lines_count": lines_cnt,
                         "line_height": 22.0,
                         "color_rgb": (248, 250, 252),
                         "bg_color_rgb": (15, 23, 42),
@@ -1052,6 +1054,7 @@ class EyeUnlockPill(QPushButton):
         self._drag_start = QPoint()
         self._start_pos = QPoint()
         self._has_dragged = False
+        self._user_moved = False
 
     def update_state(self):
         """Обновляет иконку и стиль в зависимости от активности функции перевода."""
@@ -1117,7 +1120,15 @@ class EyeUnlockPill(QPushButton):
             delta = event.globalPosition().toPoint() - self._drag_start
             if delta.manhattanLength() >= 3:
                 self._has_dragged = True
-                self.move(self._start_pos + delta)
+                self._user_moved = True
+                new_pos = self._start_pos + delta
+                screen = QGuiApplication.screenAt(new_pos) or (self.target_window.screen() if self.target_window else None) or QGuiApplication.primaryScreen()
+                screen_geo = screen.availableGeometry() if screen else QRect(0, 0, 1920, 1080)
+                pill_w = self.width() if self.width() > 0 else 16
+                pill_h = self.height() if self.height() > 0 else 16
+                px = max(screen_geo.left() + 2, min(new_pos.x(), screen_geo.right() - pill_w - 2))
+                py = max(screen_geo.top() + 2, min(new_pos.y(), screen_geo.bottom() - pill_h - 2))
+                self.move(px, py)
             event.accept()
             return
         super().mouseMoveEvent(event)
@@ -1145,35 +1156,45 @@ class EyeUnlockPill(QPushButton):
         if self.target_window:
             self.target_window._toggle_pause()
 
-    def update_position(self):
-        if self.target_window and self.target_window.isVisible():
-            geo = self.target_window.geometry()
-            screen = self.target_window.screen()
-            if not screen:
-                screen = QGuiApplication.screenAt(geo.center())
-            if not screen:
-                screen = QGuiApplication.primaryScreen()
-            screen_geo = screen.availableGeometry() if screen else QRect(0, 0, 1920, 1080)
+    def update_position(self, force: bool = False):
+        if not self.target_window:
+            return
+        screen = self.target_window.screen()
+        if not screen:
+            screen = QGuiApplication.screenAt(self.target_window.geometry().center())
+        if not screen:
+            screen = QGuiApplication.primaryScreen()
+        screen_geo = screen.availableGeometry() if screen else QRect(0, 0, 1920, 1080)
 
-            pill_w = self.width() if self.width() > 0 else 16
-            pill_h = self.height() if self.height() > 0 else 16
+        pill_w = self.width() if self.width() > 0 else 16
+        pill_h = self.height() if self.height() > 0 else 16
 
-            # Всегда размещаем ВНУТРИ рамки в правом верхнем углу
-            px = geo.right() - pill_w - 8
-            py = geo.top() + 8
+        if getattr(self, "_user_moved", False) and not force:
+            cur_x = self.x()
+            cur_y = self.y()
+            px = max(screen_geo.left() + 2, min(cur_x, screen_geo.right() - pill_w - 2))
+            py = max(screen_geo.top() + 2, min(cur_y, screen_geo.bottom() - pill_h - 2))
+            if px != cur_x or py != cur_y:
+                self.move(px, py)
+            return
 
-            # Гарантируем, что кнопка глазика останется в пределах экрана
-            if px + pill_w > screen_geo.right() - 4:
-                px = screen_geo.right() - pill_w - 4
-            if px < screen_geo.left() + 4:
-                px = screen_geo.left() + 4
+        geo = self.target_window.geometry()
+        # Всегда размещаем ВНУТРИ рамки в правом верхнем углу
+        px = geo.right() - pill_w - 8
+        py = geo.top() + 8
 
-            if py + pill_h > screen_geo.bottom() - 4:
-                py = screen_geo.bottom() - pill_h - 4
-            if py < screen_geo.top() + 4:
-                py = screen_geo.top() + 4
+        # Гарантируем, что кнопка глазика останется в пределах экрана
+        if px + pill_w > screen_geo.right() - 4:
+            px = screen_geo.right() - pill_w - 4
+        if px < screen_geo.left() + 4:
+            px = screen_geo.left() + 4
 
-            self.move(px, py)
+        if py + pill_h > screen_geo.bottom() - 4:
+            py = screen_geo.bottom() - pill_h - 4
+        if py < screen_geo.top() + 4:
+            py = screen_geo.top() + 4
+
+        self.move(px, py)
 
     def raise_to_topmost(self):
         if not self.isVisible():
@@ -1691,7 +1712,17 @@ class TranslationControlBar(QWidget):
         self.btn_eye.clicked.connect(lambda: self.frame_window.set_stealth_lock(True))
         inner_layout.addWidget(self.btn_eye)
 
-        # 10. Закрыть
+        # 10. Кнопка «+» — создать еще одну рамку перевода
+        self.btn_add_frame = QPushButton()
+        self.btn_add_frame.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_add_frame.setIcon(create_themed_icon("plus", is_dark=True, size=13, custom_color="#38bdf8"))
+        self.btn_add_frame.setToolTip(tr("trans_add_frame_tip", "Добавить еще одну рамку перевода"))
+        self.btn_add_frame.setFixedSize(26, 24)
+        self.btn_add_frame.setStyleSheet("QPushButton { border-color: rgba(56, 189, 248, 140); } QPushButton:hover { background-color: #0284c7; }")
+        self.btn_add_frame.clicked.connect(lambda: self.frame_window.spawn_another_frame())
+        inner_layout.addWidget(self.btn_add_frame)
+
+        # 11. Закрыть
         self.btn_close = QPushButton()
         self.btn_close.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_close.setIcon(create_themed_icon("close", is_dark=True, size=13))
@@ -1704,7 +1735,7 @@ class TranslationControlBar(QWidget):
         for w in (
             self.title_container, self.btn_lang, self.btn_mode, self.btn_pin,
             self.btn_passthrough, self.btn_settings, self.btn_pause, self.btn_copy,
-            self.btn_eye, self.btn_close
+            self.btn_eye, self.btn_add_frame, self.btn_close
         ):
             w.installEventFilter(self)
 
@@ -2593,6 +2624,26 @@ class TranslationFrameWindow(QWidget):
 
         self.update()
 
+    def spawn_another_frame(self):
+        """Создает и показывает еще одну независимую рамку перевода со смещением."""
+        geo = self.geometry()
+        new_geo = QRect(geo.x() + 40, geo.y() + 40, geo.width(), geo.height())
+        screen = self.screen()
+        if not screen:
+            screen = QGuiApplication.screenAt(geo.center()) or QGuiApplication.primaryScreen()
+        if screen:
+            s_geo = screen.availableGeometry()
+            if new_geo.right() > s_geo.right() or new_geo.bottom() > s_geo.bottom():
+                new_geo.moveTopLeft(QPoint(s_geo.left() + 50, s_geo.top() + 50))
+
+        app_inst = getattr(QApplication.instance(), "app_instance", None)
+        if app_inst and hasattr(app_inst, "start_translation_frame"):
+            app_inst.start_translation_frame(new_geo)
+        else:
+            win = TranslationFrameWindow(initial_rect=new_geo)
+            win.show()
+            win.raise_to_topmost()
+
     def _copy_translation(self):
         """Совместимость со старыми вызовами: копирует текст перевода."""
         self._copy_translation_text()
@@ -2962,9 +3013,9 @@ class TranslationFrameWindow(QWidget):
                     return f_cand, eff_w, eff_h, False
 
         # 2. Многострочный режим переноса по словам (если текст длиннее или уже был многострочным)
-        min_ps = max(11, int(round(ideal_ps * 0.80)))
+        min_ps = max(10, int(round(ideal_ps * 0.80)))
         wrap_w = min(max_frame_w, max(bw * 1.50, bw + 50.0, 110.0))
-        allowed_h = min(max_frame_h, max(bh * 2.8, line_h * 2.6 + 12.0, 56.0))
+        allowed_h = min(max_frame_h, max(bh * 1.5, float(lines_cnt + 2) * (ideal_ps * 1.35) + 12.0, 48.0))
 
         flags = int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap)
         best_f = None
@@ -3116,7 +3167,8 @@ class TranslationFrameWindow(QWidget):
                     if self.hud_font_size > 0:
                         ideal_ps = self.hud_font_size
                     else:
-                        ideal_ps = max(13, int(round(max(float(bh) * 0.82, float(line_h) * 0.88))))
+                        base_h = line_h if (line_h > 5 and line_h < 40) else min(24.0, max(12.0, bh / float(lines_cnt)))
+                        ideal_ps = max(11, min(26, int(round(base_h * 0.85))))
 
                     if self.match_font_family:
                         family = item.get("font_family", "Segoe UI")
