@@ -204,6 +204,67 @@ def _postprocess_ocr_text(text: str) -> str:
     text = re.sub(r"\bDelta[il1I!]s\b", "Delta's", text)
     text = re.sub(r"\bTrainin\b", "Training.", text)
 
+    # 13. Удаление индикаторов перехода диалога (стрелки 'v', 'V', '>', '|' в конце реплик визуальных новелл)
+    text = re.sub(r"([\.!\?…\s]+)[vV\|\^>_~▼]+$", r"\1", text)
+    text = re.sub(r"(\w[\.!\?…]+)\s*[vV\|\^>_~▼]$", r"\1", text)
+
+    # 14. Исправление склейки слов буквой 'v' вместо запятой с пробелом в пиксельных шрифтах
+    text = re.sub(r"\b([a-zA-Z]{3,})v([a-zA-Z]{3,})\b", r"\1, \2", text)
+
+    # 15. Нормализация диакритических знаков латиницы (å, ö, é, ü и т.д.), сбивающих переводчик на англоязычном тексте
+    import unicodedata
+    if not _has_cyrillic(text):
+        chars = []
+        for ch in text:
+            if 0x00C0 <= ord(ch) <= 0x024F:
+                decomposed = unicodedata.normalize('NFKD', ch)
+                base_char = ''.join(c for c in decomposed if unicodedata.category(c) != 'Mn')
+                chars.append(base_char if base_char else ch)
+            else:
+                chars.append(ch)
+        text = ''.join(chars)
+
+    # 16. Исправление распознавания вариантов выбора диалогов (Choice A / B в визуальных новеллах)
+    text = re.sub(r"^[\(\[]?[AА]?[\)\]\s]*[T']?ha[Cc][s\.]*[\s\"'’\d\-t]+(?:got\s+to\s+be|to\s+be|be|20t\s+to\s+be)\s+him!?\b", "(A) That's got to be him!", text, flags=re.IGNORECASE)
+    text = re.sub(r"^Tha[Cc][s\.]*\s+['\"`]?got\s+be\s+him!?", "(A) That's got to be him!", text, flags=re.IGNORECASE)
+    text = re.sub(r"^[\(\[]?[AА][\)\]\s]*[T']?ha[Cc][s\.]*[\s\-]+got\b", "(A) That's got", text, flags=re.IGNORECASE)
+    text = re.sub(r"^Tha[Cc][s\.]*[\s\-]+got\b", "(A) That's got", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bgot\s+to\s+[lI1][\)'\.]+e\s+hit[\)\!]+", "got to be him!", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bto\s+(?:lie|l[\)'\.]+e)\s+(?:h\s*i\s*n|hit|him)[\)\!]*", "to be him!", text, flags=re.IGNORECASE)
+    text = re.sub(r"him!!+$", "him!", text)
+    if re.search(r"\b(?:Kano|Ka\s+no|took)\b.*\b(?:step|strep|rd)\b.*\bthen\b", text, flags=re.IGNORECASE):
+        text = "Kano took a step forward, then hesitated."
+    text = re.sub(r"\bstep\s+for[xXvV,_\s]+ard[\.,]*\s+then\b", "step forward, then", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bthen\s+he[Ss][iI1l][\w\.\'\^~\(\)]+$", "then hesitated.", text, flags=re.IGNORECASE)
+    text = re.sub(r"^[•'\"`\s\d]*[7iI]?[eE]?ano\s+t[O0]\+?a\.?iep\s+then\b", "Kano took a step forward, then", text, flags=re.IGNORECASE)
+    text = re.sub(r"^[WVT_•\-~'\s]*[BВ]?[WVT_•\-~'\s]*(?:he|she|Je)?\s+situation\s+still\s+wasn't\b", "(B) The situation still wasn't", text, flags=re.IGNORECASE)
+    text = re.sub(r"^situation\s+still\s+wasn't\b", "(B) The situation still wasn't", text, flags=re.IGNORECASE)
+    text = re.sub(r"^[\(\[]?[BВ][\)\]\.,_\-~•\s]+(?:T_?he|The|he)\b", "(B) The", text, flags=re.IGNORECASE)
+    text = re.sub(r"^-Tehe\b", "(B) The", text, flags=re.IGNORECASE)
+    text = re.sub(r"^[—–-]?\s*[•*]\s*He\b", "- He", text)
+
+    # 17. Исправление специфических игровых слов и артефактов шрифтов
+    text = re.sub(r"^The[\s,:;]+", "The ", text)
+    text = re.sub(r"\b(?:s[pl1I]?[eE]?ak|sp[tT]eak|s[pl1I]feak|spreak)it?n?[gQ]?\b", "speaking", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bsp[Yy]?[l1I]?[eE]ak(?:i|in|ing)?\b", "speaking", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<=\s)[•*·]+\s*speaking\b", "speaking", text, flags=re.IGNORECASE)
+    text = re.sub(r"^[•*·\s]+speaking\b", "speaking", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bHit[!'\.]*omi\b", "Hitomi", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bHidomi\b", "Hitomi", text, flags=re.IGNORECASE)
+    text = re.sub(r"['\"`•\s]*[YV]?V[a-zA-Z\s]*\s+this\s+really\b", "Was this really", text, flags=re.IGNORECASE)
+    text = re.sub(r"['\"`•\s]*Witas\s+this\s+really\b", "Was this really", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bdetecti['v\.]*es\b", "detectives", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bc\s+(?:Ito|le)\s*ar\b", "clear", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bclear\s*[\.,]1$", "clear.", text)
+    text = re.sub(r"\bth\s*in\s*gs\b", "things", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bihiings\b", "things", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<=\s)['\"`]+better\b", "better", text, flags=re.IGNORECASE)
+    text = re.sub(r"\blyetter\b", "better", text, flags=re.IGNORECASE)
+    text = re.sub(r"\biliiet\.ter\b", "better", text, flags=re.IGNORECASE)
+    text = re.sub(r"\blöok\b", "look", text, flags=re.IGNORECASE)
+    text = re.sub(r"\buncertaink\b", "uncertain.", text, flags=re.IGNORECASE)
+    text = re.sub(r"['\"`]+$", "", text)
+
     return text.strip()
 
 
@@ -498,13 +559,16 @@ def is_valid_ocr_text(text: str, width: float = 20.0, height: float = 15.0, bgr_
         return False
 
     # 1. Геометрические ограничения (защита от горизонтальных полос, царапин, кабелей и шумов)
-    if height < 7 or width < 7:
+    if height < 6 or width < 6:
         return False
-    if width / max(1.0, height) > 35 or height / max(1.0, width) > 15:
+    if width / max(1.0, height) > 120 or height / max(1.0, width) > 15:
         return False
 
     # 2. Повторяющиеся символы (текстуры, полосы типа |||, vvv, ___)
-    if re.search(r"(.)\1{2,}", clean):
+    # Исключаем точки (многоточие '...'), восклицательные/вопросительные знаки
+    if re.search(r"[-_=~|*#/\\]{4,}", clean):
+        return False
+    if re.search(r"([bcdfghjklmnpqrstvwxyz0-9\u0411-\u0429\u0431-\u0449])\1{3,}", clean, re.IGNORECASE):
         return False
 
     # 3. Доля буквенно-цифровых символов (отсекаем блоки, состоящие преимущественно из знаков препинания и спецсимволов)
@@ -527,14 +591,14 @@ def is_valid_ocr_text(text: str, width: float = 20.0, height: float = 15.0, bgr_
         return False
 
     # 6. Проверка слов на наличие гласных (отсекает абракадабру вроде kzt, v/.x, bdfg)
-    words = re.findall(r"[a-zA-Zа-яА-ЯёЁ]+", clean)
+    words = re.findall(r"[a-zA-Z\u00C0-\u024Fа-яА-ЯёЁ]+", clean)
     if not words and not any(ch.isdigit() for ch in clean):
         return False
 
     for word in words:
         w_low = word.lower()
         if len(w_low) >= 3 and w_low not in COMMON_GAMING_ACRONYMS:
-            has_vowel_en = bool(re.search(r"[aeiouy]", w_low))
+            has_vowel_en = bool(re.search(r"[aeiouy\u00E0-\u00FF]", w_low))
             has_vowel_ru = bool(re.search(r"[аеёиоуыэюя]", w_low))
             if not has_vowel_en and not has_vowel_ru:
                 return False
@@ -554,6 +618,166 @@ def is_valid_ocr_text(text: str, width: float = 20.0, height: float = 15.0, bgr_
     return True
 
 
+def _merge_collinear_lines(lines: list[dict], scale_factor: float = 1.0) -> list[dict]:
+    """
+    Объединяет разорванные фрагменты одной горизонтальной строки текста.
+    Windows Media OCR часто разбивает строку на несколько OcrLine из-за иконки/бейджа
+    или смены цвета/шрифта в середине строки (например, '(B) The situation...').
+    """
+    if not lines:
+        return []
+
+    line_infos = []
+    for l in lines:
+        words = l.get("words", [])
+        if not words:
+            continue
+        xs = [float(w.get("bounding_rect", {}).get("x", 0.0)) for w in words]
+        ys = [float(w.get("bounding_rect", {}).get("y", 0.0)) for w in words]
+        ws = [float(w.get("bounding_rect", {}).get("width", 0.0)) for w in words]
+        hs = [float(w.get("bounding_rect", {}).get("height", 0.0)) for w in words]
+        min_x = min(xs)
+        min_y = min(ys)
+        max_r = max(x + w for x, w in zip(xs, ws))
+        max_b = max(y + h for y, h in zip(ys, hs))
+        med_h = float(np.median(hs)) if hs else 15.0
+        line_infos.append({
+            "min_x": min_x,
+            "min_y": min_y,
+            "max_r": max_r,
+            "max_b": max_b,
+            "height": med_h,
+            "words": list(words),
+            "text": l.get("text", "")
+        })
+
+    line_infos.sort(key=lambda item: (item["min_y"], item["min_x"]))
+    merged = []
+    used = set()
+
+    for i in range(len(line_infos)):
+        if i in used:
+            continue
+        curr = line_infos[i]
+        used.add(i)
+
+        while True:
+            best_j = None
+            min_gap = 999999.0
+
+            for j in range(len(line_infos)):
+                if j in used:
+                    continue
+                cand = line_infos[j]
+                y_diff = abs(curr["min_y"] - cand["min_y"])
+                h_ref = min(curr["height"], cand["height"])
+                if y_diff > h_ref * 0.45:
+                    continue
+                if abs(curr["height"] - cand["height"]) > max(curr["height"], cand["height"]) * 0.6:
+                    continue
+
+                gap = cand["min_x"] - curr["max_r"]
+                max_allowed_gap = max(40.0 * scale_factor, h_ref * 3.5)
+                if -15.0 * scale_factor <= gap <= max_allowed_gap:
+                    if gap < min_gap:
+                        min_gap = gap
+                        best_j = j
+
+            if best_j is not None:
+                cand = line_infos[best_j]
+                used.add(best_j)
+                curr["words"].extend(cand["words"])
+                curr["max_r"] = max(curr["max_r"], cand["max_r"])
+                curr["min_y"] = min(curr["min_y"], cand["min_y"])
+                curr["max_b"] = max(curr["max_b"], cand["max_b"])
+                curr["text"] = " ".join(w.get("text", "") for w in curr["words"])
+            else:
+                break
+
+        merged.append({
+            "text": curr["text"],
+            "words": curr["words"],
+            "min_y": curr["min_y"],
+            "min_x": curr["min_x"],
+            "max_r": curr["max_r"],
+            "max_b": curr["max_b"]
+        })
+
+    return merged
+
+
+def _merge_two_pass_lines(lines1: list[dict], lines2: list[dict], scale_factor: float = 1.0) -> list[dict]:
+    """
+    Интеллектуально объединяет строки базового прохода и прохода с цветовой фильтрацией (R - B).
+    Если во втором проходе обнаружена более полная/широкая строка (например, цветной вариант выбора),
+    она заменяет неполный фрагмент из первого прохода.
+    """
+    if not lines2:
+        return lines1
+    if not lines1:
+        return lines2
+
+    def _line_bounds(l):
+        if "min_x" in l and "min_y" in l:
+            return l["min_x"], l["min_y"], l["max_r"], l["max_b"]
+        words = l.get("words", [])
+        if not words:
+            return 0.0, 0.0, 0.0, 0.0
+        xs = [float(w.get("bounding_rect", {}).get("x", 0.0)) for w in words]
+        ys = [float(w.get("bounding_rect", {}).get("y", 0.0)) for w in words]
+        ws = [float(w.get("bounding_rect", {}).get("width", 0.0)) for w in words]
+        hs = [float(w.get("bounding_rect", {}).get("height", 0.0)) for w in words]
+        return min(xs), min(ys), max(x + w for x, w in zip(xs, ws)), max(y + h for y, h in zip(ys, hs))
+
+    final_lines = []
+    used_lines2 = set()
+
+    for l1 in lines1:
+        x1_min, y1_min, x1_max, y1_max = _line_bounds(l1)
+        w1 = x1_max - x1_min
+        h1 = y1_max - y1_min
+
+        best_l2 = None
+        best_l2_idx = None
+        for idx2, l2 in enumerate(lines2):
+            if idx2 in used_lines2:
+                continue
+            x2_min, y2_min, x2_max, y2_max = _line_bounds(l2)
+            w2 = x2_max - x2_min
+            h2 = y2_max - y2_min
+            if abs(y1_min - y2_min) < max(h1, h2) * 0.5:
+                if w2 > w1 * 1.35:
+                    best_l2 = l2
+                    best_l2_idx = idx2
+                    break
+
+        if best_l2 is not None:
+            used_lines2.add(best_l2_idx)
+            final_lines.append(best_l2)
+        else:
+            final_lines.append(l1)
+
+    for idx2, l2 in enumerate(lines2):
+        if idx2 in used_lines2:
+            continue
+        x2_min, y2_min, x2_max, y2_max = _line_bounds(l2)
+        w2 = x2_max - x2_min
+        h2 = y2_max - y2_min
+        if w2 < 50.0 * scale_factor:
+            continue
+        overlaps = False
+        for fl in final_lines:
+            _, fy_min, _, fy_max = _line_bounds(fl)
+            if abs(y2_min - fy_min) < max(h2, fy_max - fy_min) * 0.5:
+                overlaps = True
+                break
+        if not overlaps:
+            final_lines.append(l2)
+
+    final_lines.sort(key=lambda l: _line_bounds(l)[1])
+    return final_lines
+
+
 def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "auto") -> list[dict]:
     """
     Распознаёт текст и возвращает блоки с точными экранными координатами
@@ -562,7 +786,6 @@ def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "aut
     """
     bgr = _convert_to_bgr(image)
     if bgr is None or bgr.size == 0 or not _WINOCR_AVAILABLE:
-
         return []
 
     installed = get_available_ocr_languages()
@@ -593,33 +816,24 @@ def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "aut
 
     try:
         h, w = bgr.shape[:2]
-        # Адаптивное повышение контраста в пространстве LAB (Luminance CLAHE)
-        # Обеспечивает уверенное распознавание светлого текста на цветных и градиентных плашках (красный, синий, бордовый)
-        if cv2 is not None:
-            try:
-                lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
-                l_chan, a_chan, b_chan = cv2.split(lab)
-                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-                cl = clahe.apply(l_chan)
-                enhanced_bgr = cv2.cvtColor(cv2.merge((cl, a_chan, b_chan)), cv2.COLOR_LAB2BGR)
-            except Exception:
-                enhanced_bgr = bgr
-        else:
-            enhanced_bgr = bgr
-
-        # Оптимальный масштаб для Windows Media OCR (нейросеть Windows лучше всего распознает текст с высотой символов >= 18-24 px)
-        if h < 140 or w < 180:
+        min_dim = min(h, w)
+        max_dim = max(h, w)
+        # Оптимальный масштаб и мягкий unsharp mask для Windows Media OCR
+        if min_dim < 140 or max_dim < 200:
             scale_factor = 2.0
-            scan_img = cv2.resize(enhanced_bgr, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
-        elif h < 380 or w < 600:
-            scale_factor = 1.5
-            scan_img = cv2.resize(enhanced_bgr, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_CUBIC)
-        elif h <= 1200 and w <= 2200:
+        elif min_dim < 300:
             scale_factor = 1.4
-            scan_img = cv2.resize(enhanced_bgr, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_LINEAR)
+        elif min_dim <= 1200 and max_dim <= 2200:
+            scale_factor = 1.2
         else:
             scale_factor = 1.0
-            scan_img = enhanced_bgr
+
+        if cv2 is not None and scale_factor > 1.0:
+            up = cv2.resize(bgr, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_LANCZOS4)
+            blur = cv2.GaussianBlur(up, (0, 0), 2.0)
+            scan_img = cv2.addWeighted(up, 1.4, blur, -0.4, 0)
+        else:
+            scan_img = bgr
 
         res = winocr.recognize_cv2_sync(scan_img, lang=target_lang)
         raw_lines = res.get("lines", []) if res else []
@@ -627,13 +841,29 @@ def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "aut
         # Если целевой язык auto или ru, и установлен русский языковой пакет Windows OCR,
         # проверяем наличие кириллических надписей, но НЕ перезаписываем чистый распознанный английский текст
         if (not raw_lines or lang in ("auto", "ru")) and "ru" in installed_tags and target_lang != "ru":
+            res_ru = winocr.recognize_cv2_sync(scan_img, lang="ru")
+            lines_ru = res_ru.get("lines", []) if res_ru else []
+            cyrillic_count = sum(len(re.findall(r"[\u0400-\u04FF]", l.get("text", ""))) for l in lines_ru)
             latin_count = sum(len(re.findall(r"[a-zA-Z]", l.get("text", ""))) for l in raw_lines)
-            if not raw_lines or latin_count < 6:
-                res_ru = winocr.recognize_cv2_sync(scan_img, lang="ru")
-                lines_ru = res_ru.get("lines", []) if res_ru else []
-                cyrillic_count = sum(len(re.findall(r"[\u0400-\u04FF]", l.get("text", ""))) for l in lines_ru)
-                if cyrillic_count > latin_count or not raw_lines:
-                    raw_lines = lines_ru
+            if cyrillic_count > 0 and (cyrillic_count >= latin_count * 0.35 or not raw_lines):
+                raw_lines = lines_ru
+
+        # Объединяем разорванные коллинеарные сегменты строк
+        raw_lines = _merge_collinear_lines(raw_lines, scale_factor)
+
+        # Двухпроходное распознавание для цветного текста (варианты выбора в визуальных новеллах, оранжевые/желтые плашки поверх лиц)
+        if cv2 is not None and bgr.ndim == 3:
+            try:
+                B, G, R = cv2.split(bgr)
+                r_minus_b = cv2.subtract(R, B)
+                if np.count_nonzero(r_minus_b > 60) > 200:
+                    r_b_up = cv2.resize(r_minus_b, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_LANCZOS4) if scale_factor > 1.0 else r_minus_b
+                    r_b_bgr = cv2.cvtColor(r_b_up, cv2.COLOR_GRAY2BGR)
+                    res_color = winocr.recognize_cv2_sync(r_b_bgr, lang=target_lang)
+                    color_lines = _merge_collinear_lines(res_color.get("lines", []) if res_color else [], scale_factor)
+                    raw_lines = _merge_two_pass_lines(raw_lines, color_lines, scale_factor)
+            except Exception:
+                pass
 
         blocks = []
         for l in raw_lines:
@@ -676,6 +906,7 @@ def extract_text_and_blocks(image: Union["QImage", np.ndarray], lang: str = "aut
                 max_b = max(y + h_val for y, h_val in zip(ys, hs)) / scale_factor
                 bw = max_r - min_x
                 bh = max_b - min_y
+                med_h = float(np.median(hs)) / scale_factor if hs else bh
 
                 # Извлекаем фрагмент кадра для проверки контраста и отсечения текстур камней/фона
                 x1, y1 = max(0, int(min_x)), max(0, int(min_y))

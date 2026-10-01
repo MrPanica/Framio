@@ -2,7 +2,7 @@
 
 Framio is a portable Windows app for taking screenshots, recording screen areas as MP4 or GIF, extracting text offline with local Windows OCR, and translating on-screen text in real-time. It can work with one area, several areas, the whole desktop, or a complete application window.
 
-The current release is `1.0.25`. See [CHANGELOG.md](CHANGELOG.md) for the release history.
+The current release is `1.0.26`. See [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## English
 
@@ -39,6 +39,7 @@ Framio includes an intelligent screen translation frame:
 - **Two display modes**:
   - **In-place overlay**: Translates text directly over the original on-screen words, automatically detecting font sizes, colors, and line coordinates. Whole-sentence translation preserves context across multiple lines, and words are distributed line-by-line directly on top of each original line without drawing across line gaps.
   - **HUD Subtitles**: A movable floating subtitle window that can be positioned anywhere across multi-monitor setups, ideal for game dialogue and video streams.
+- **Instant Force Refresh**: Dedicated refresh button on the control bar to re-scan and translate the active screen area immediately on demand.
 - **Multiple Translation Frames ("+" Button)**: Spawn and run multiple independent translation frames simultaneously across different screen regions or windows.
 - **Smart Diff Optimization**: Scans the selected frame continuously at high speed, consuming near-zero CPU resources on static frames and refreshing immediately when text changes.
 - **Click-Through Transparency (`WS_EX_TRANSPARENT`)**: When translation is active, mouse clicks pass directly through the frame into the underlying game or application.
@@ -154,7 +155,7 @@ The GitHub Actions workflow runs the tests, builds all three Windows packages, u
 
 ## Русский
 
-Текущая версия — `1.0.25`. История изменений находится в [CHANGELOG.md](CHANGELOG.md).
+Текущая версия — `1.0.26`. История изменений находится в [CHANGELOG.md](CHANGELOG.md).
 
 ### Быстрый запуск
 
@@ -189,6 +190,7 @@ Framio оснащён плавающей рамкой перевода с инт
 - **Два режима отображения**:
   - **In-place (поверх текста)**: Перевод отображается прямо поверх оригинального текста на экране с точным повторением кегля шрифта, цвета и координат строк. Перевод предложения целиком сохраняет контекст многострочных диалогов и субтитров, а слова распределяются построчно строго по соответствующим строкам оригинала без перекрытия межстрочных интервалов.
   - **HUD-окно субтитров**: Независимая перемещаемая панель субтитров, которую можно разместить в любом месте экрана (включая второй монитор), что идеально подходит для диалогов в играх и стримов.
+- **Принудительное обновление**: Отдельная кнопка на панели управления для немедленного пересканирования и перевода активной области экрана по требованию.
 - **Мульти-рамки перевода (кнопка «+»)**: Создание и одновременная работа нескольких независимых рамок перевода в разных областях экрана или окнах.
 - **Оптимизация Smart Diff**: Непрерывное сканирование кадра практически не расходует ресурсы процессора на статичном изображении и мгновенно обновляет перевод при смене текста.
 - **Сквозные клики (`WS_EX_TRANSPARENT`)**: В режиме активного перевода рамка становится неосязаемой для мыши, позволяя кликать сквозь неё прямо в элементы игры или программы.

@@ -4570,6 +4570,16 @@ def test_translation_frame_and_translator():
         assert not frame_win.passthrough_enabled
         # Проверка наличия иконки у кнопки добавления дополнительной рамки
         assert not frame_win.control_bar.btn_add_frame.icon().isNull()
+        # Проверка кнопки принудительного обновления и отсутствия иконки Google Translate
+        assert hasattr(frame_win.control_bar, "btn_refresh")
+        assert not frame_win.control_bar.btn_refresh.icon().isNull()
+        assert not hasattr(frame_win.control_bar, "lbl_icon")
+
+        from unittest.mock import patch
+        refresh_called = []
+        with patch.object(frame_win, "force_refresh_translation", side_effect=lambda: refresh_called.append(True)):
+            frame_win.control_bar.btn_refresh.click()
+            assert len(refresh_called) == 1
 
         # Переключение неосязаемости (сквозной клик / режим настройки)
         frame_win.set_passthrough(True)
@@ -4589,9 +4599,29 @@ def test_translation_frame_and_translator():
         assert not is_valid_ocr_text("kxrt")
         assert not is_valid_ocr_text("x", width=4, height=4)
         assert is_valid_ocr_text("Start Game", width=120, height=24)
+        assert is_valid_ocr_text("Все исправления (восстановление раздельных блоков и отступов, сохранение оригинальных цветов текста)", width=750, height=14)
         assert is_valid_ocr_text("HP", width=25, height=15)
         assert is_valid_ocr_text("LVL", width=30, height=15)
         assert is_valid_ocr_text("Привет", width=80, height=20)
+        assert is_valid_ocr_text("Hehehe...", width=115, height=21)
+        assert is_valid_ocr_text("Hehehe...v", width=115, height=21)
+        assert is_valid_ocr_text("Nooooo!", width=80, height=20)
+        assert is_valid_ocr_text("Wait... What???", width=140, height=20)
+
+        # Проверка пост-обработки OCR для диалогов и пиксельных шрифтов
+        from utils.ocr_helper import _postprocess_ocr_text
+        assert _postprocess_ocr_text("Hehehe...v") == "Hehehe..."
+        assert _postprocess_ocr_text("howevervregardless of how") == "however, regardless of how"
+
+        # Проверка распознавания насыщенных цветов текста (например, желтый цвет имен/реплик)
+        from ui.translation_window import extract_visual_props
+        import numpy as np
+        import cv2
+        yellow_test = np.full((30, 100, 3), (25, 20, 18), dtype=np.uint8)
+        cv2.putText(yellow_test, "Yellow", (5, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (20, 215, 245), 2)
+        y_props = extract_visual_props(yellow_test)
+        assert y_props["color_rgb"][0] > 180 and y_props["color_rgb"][1] > 180 and y_props["color_rgb"][2] < 60
+
         assert frame_win.hud_window.isWindow()
         # HUD окно субтитров свободно перемещается по всему экрану
         frame_win.hud_window.move(QPoint(500, 700))
@@ -4733,6 +4763,30 @@ def test_translation_frame_and_translator():
         frame_win.set_stealth_lock(False)
         assert frame_win.control_bar.isVisible()
 
+        # Проверка синхронного скрытия нескольких рамок и единого глазика
+        frame_win2 = TranslationFrameWindow(initial_rect=QRectF(200, 200, 400, 200).toRect())
+        try:
+            assert frame_win2.isWindow()
+            # Сворачивание первой рамки должно синхронно скрыть обе рамки, но показать РОВНО ОДИН глазик
+            frame_win.set_stealth_lock(True)
+            assert frame_win.is_locked_stealth
+            assert frame_win2.is_locked_stealth
+            assert frame_win.control_bar.isHidden()
+            assert frame_win2.control_bar.isHidden()
+            assert frame_win.unlock_pill.isVisible()
+            assert frame_win2.unlock_pill.isHidden()  # Второй глазик скрыт, чтобы не засорять экран
+
+            # Клик по единственному глазику должен восстановить обе рамки
+            frame_win.unlock_pill._on_clicked()
+            assert not frame_win.is_locked_stealth
+            assert not frame_win2.is_locked_stealth
+            assert frame_win.control_bar.isVisible()
+            assert frame_win2.control_bar.isVisible()
+            assert frame_win.unlock_pill.isHidden()
+            assert frame_win2.unlock_pill.isHidden()
+        finally:
+            frame_win2.close()
+
         # Проверка кнопки создания новой рамки (+) и метода spawn_another_frame
         from unittest.mock import patch
         assert hasattr(frame_win.control_bar, "btn_add_frame")
@@ -4806,6 +4860,27 @@ def test_translation_frame_and_translator():
         assert not _is_hover_match("Start the new adventure now and save the world", "Start")
         assert not _is_hover_match("In", "Into the deep dark forest")
         assert not _is_hover_match("Ok", "This is an okay sentence")
+
+        # Проверка сохранения цвета текста (желтый, красный и т.д. без принудительного превращения в белый)
+        from ui.translation_window import extract_visual_props, should_group_lines
+        img_yellow = np.zeros((30, 80, 3), dtype=np.uint8) + 25
+        img_yellow[10:20, 20:60] = [0, 255, 255] # yellow in BGR
+        v_yellow = extract_visual_props(img_yellow)
+        assert v_yellow["color_rgb"] == (255, 255, 0), f"Yellow text color must be preserved, got {v_yellow['color_rgb']}"
+
+        img_red = np.zeros((30, 80, 3), dtype=np.uint8) + 70
+        img_red[10:20, 20:60] = [30, 30, 220] # red in BGR
+        v_red = extract_visual_props(img_red)
+        assert v_red["color_rgb"] == (220, 30, 30), f"Red text color must be preserved, got {v_red['color_rgb']}"
+
+        # Проверка сохранения отступов: строки с отступом вправо (абзацы, списки) не должны склеиваться
+        line_parent = {"text": "Main item:", "x": 20, "y": 100, "width": 100, "height": 20, "word_height": 20}
+        line_indented = {"text": "Indented description", "x": 60, "y": 125, "width": 150, "height": 20, "word_height": 20}
+        assert not should_group_lines(line_parent, line_indented), "Indented lines must not be merged into previous line"
+
+        # Проверка разделения по точным переносам строк
+        exact_lines = split_translation_to_lines(["Line 1", "Line 2"], "Первая строка\nВторая строка")
+        assert exact_lines == ["Первая строка", "Вторая строка"]
 
         # Проверка защиты z-order при открытом меню
         frame_win._menu_open = True
@@ -5076,13 +5151,49 @@ def test_native_win32_clipboard_copy():
     assert mime.hasFormat("application/x-framio-image-list")
     payload = json.loads(bytes(mime.data("application/x-framio-image-list")).decode("ascii"))
     assert len(payload["images"]) == 2
-    print("  -> Нативное копирование в буфер обмена Win32/Qt (CF_DIB, PNG, multi-region) успешно протестировано.")
+def test_ocr_choice_and_dialogue_postprocessing_and_collinear():
+    """Проверка объединения коллинеарных OcrLine и очистки артефактов в репликах и вариантах выбора (A)/(B)."""
+    from utils.ocr_helper import _postprocess_ocr_text, _merge_collinear_lines
+    from ui.translation_window import extract_visual_props
+
+    # 1. Постобработка вариантов выбора и диалоговых реплик
+    assert _postprocess_ocr_text("The young man started spYéaking") == "The young man started speaking"
+    assert _postprocess_ocr_text("enthusiastically to Hidomi.") == "enthusiastically to Hitomi."
+    assert _postprocess_ocr_text("VVas this really the kidnapper?") == "Was this really the kidnapper?"
+    assert _postprocess_ocr_text("A ThaCs got to l)'.e hit))!") == "(A) That's got to be him!"
+    assert _postprocess_ocr_text("Kano took a step forx, ard. then heSilt.iitQQ(l.") == "Kano took a step forward, then hesitated."
+    assert _postprocess_ocr_text("-Tehe situation still wasn't entirely clear .1") == "(B) The situation still wasn't entirely clear."
+    assert _postprocess_ocr_text("•He needed to get a better look at thin gs.") == "- He needed to get a better look at things."
+
+    # 2. Объединение коллинеарных разорванных строк OCR (badge + text)
+    line_b1 = {
+        "text": "(B) The situation still wasn't entirely",
+        "words": [{"text": "word1", "bounding_rect": {"x": 50, "y": 300, "width": 400, "height": 30}}]
+    }
+    line_b2 = {
+        "text": "clear.",
+        "words": [{"text": "clear.", "bounding_rect": {"x": 470, "y": 302, "width": 60, "height": 28}}]
+    }
+    merged = _merge_collinear_lines([line_b1, line_b2], scale_factor=1.0)
+    assert len(merged) == 1
+    assert "clear." in merged[0]["text"]
+    assert merged[0]["words"][0]["text"] == "word1"
+    assert merged[0]["words"][1]["text"] == "clear."
+
+    # 3. Цветопередача: белый текст на темном фоне остается белым, а не грязно-бурым
+    img_white_text = np.zeros((30, 100, 3), dtype=np.uint8) + 40
+    img_white_text[5:25, 10:90] = [215, 215, 215]
+    v_white = extract_visual_props(img_white_text)
+    assert v_white["color_rgb"] in ((215, 215, 215), (255, 255, 255))
+
+    print("  -> Распознавание диалогов, вариантов выбора (A)/(B) и коллинеарных строк успешно протестировано.")
 
 
 if __name__ == "__main__":
     from tempfile import TemporaryDirectory
     with TemporaryDirectory() as tmp_dir:
         tmp_p = Path(tmp_dir)
+        test_ocr_choice_and_dialogue_postprocessing_and_collinear()
         test_shutter_sound_and_quick_drag_and_toast()
         test_dynamic_text_editing_and_filter_history()
         test_region_filters_are_isolated_mass_filter_and_escape_closes_all()

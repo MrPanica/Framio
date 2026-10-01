@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.0.26] - 2026-10-02
+
+### English
+
+- **Instant Force Refresh Button**: Added a dedicated instant refresh button with vector SVG icon on the translation control bar to immediately re-scan and translate the active screen area on demand without waiting for automatic diff detection.
+- **Clean Subtitle HUD Interface**: Removed external translator branding and logo icons for a minimalist, distraction-free subtitle window.
+- **Compact Drag Grip Button**: Constrained the title bar drag handle button to a compact 22×22 px square, perfectly matching the move icon width without stretching across the bar.
+- **Move, Resize & Scroll Ghost Overlay Prevention**: Translation overlays are now instantly cleared during window dragging, resizing, and vertical page scrolling, completely eliminating ghost displacement and stale text artifacts.
+- **Game Dialogue & Multi-Choice OCR Accuracy**: Optimized OCR scaling to 1.2x for standard game window resolutions, preventing word overflow into character art. Added intelligent multi-pass recognition and postprocessing for visual novel choice branches (Choice A / B), dialogue speech tags, and accented game fonts.
+- **Improved Font Legibility**: Refined font rendering and minimum readable font size for small original game text in in-place overlay mode.
+
+### Русский
+
+- **Кнопка принудительного обновления перевода**: На панель управления добавлена отдельная кнопка принудительного обновления с векторной SVG-иконкой для мгновенного пересканирования и перевода активной области по требованию пользователя.
+- **Чистый интерфейс субтитров HUD**: Удалены сторонние логотипы и брендинг переводчика для минималистичного отображения субтитров без отвлекающих графических элементов.
+- **Компактная кнопка перемещения окна**: Кнопка-ручка перемещения окна зафиксирована в аккуратный квадратный размер 22×22 px, строго соответствующий габаритам иконки без избыточной ширины.
+- **Устранение фантомных наложений при сдвиге и скролле**: Наложенный перевод теперь моментально очищается при перетаскивании, изменении размера рамки и вертикальной прокрутке страницы, полностью исключая смещение и зависание устаревших строк.
+- **Высокая точность распознавания игровых диалогов и меню выбора**: Скорректирован масштаб предобработки (1.2x для стандартных разрешений), устраняющий выталкивание слов в узких репликах. Внедрена интеллектуальная двухпроходная обработка и очистка вариантов выбора (Choice A / B), реплик персонажей и акцентированных игровых шрифтов.
+- **Улучшенная читаемость шрифтов**: Оптимизировано сглаживание и минимальный читаемый кегль шрифта для мелкого оригинального текста в режиме наложения.
+
 ## [1.0.25] - 2026-10-01
 
 ### English

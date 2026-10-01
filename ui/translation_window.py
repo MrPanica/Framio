@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import (
     QPainter, QPen, QColor, QBrush, QFont, QCursor, QPaintEvent, QMouseEvent,
-    QPainterPath, QLinearGradient, QFontMetrics, QAction, QPixmap
+    QPainterPath, QLinearGradient, QFontMetrics, QAction, QPixmap, QGuiApplication
 )
 
 from utils.screen_lock import safe_grab_screen_bgr, user32
@@ -330,25 +330,56 @@ def extract_visual_props(crop_bgr: np.ndarray) -> dict:
         diff = np.linalg.norm(crop_bgr.astype(float) - bg_med_bgr.astype(float), axis=2)
         max_d = float(np.max(diff)) if diff.size > 0 else 0.0
 
-        if max_d >= 25.0:
-            # Отбираем именно ядро глифов (самые контрастные пиксели, отсекая полутени)
-            text_thresh = max(24.0, max_d * 0.52)
-            text_mask = diff >= text_thresh
-            if np.count_nonzero(text_mask) >= 3:
-                text_pixels = crop_bgr[text_mask]
-                pts_bgr = np.median(text_pixels, axis=0).astype(int)
-                color_rgb = (int(pts_bgr[2]), int(pts_bgr[1]), int(pts_bgr[0]))
-                fg_lum = 0.299 * color_rgb[0] + 0.587 * color_rgb[1] + 0.114 * color_rgb[2]
-                if abs(fg_lum - bg_lum) < 45:
-                    color_rgb = (255, 255, 255) if bg_lum < 128 else (15, 23, 42)
+        # Определяем контрастные пиксели глифов относительно фона
+        gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
+        rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+        c_max = np.max(rgb, axis=2).astype(int)
+        c_min = np.min(rgb, axis=2).astype(int)
+        chroma = c_max - c_min
+
+        if bg_lum < 128:
+            # Светлый текст на темном фоне
+            pct = np.percentile(gray, 85)
+            glyph_mask = gray >= max(float(pct), bg_lum + 25.0)
+            if np.count_nonzero(glyph_mask) < 6:
+                glyph_mask = gray >= pct
+        else:
+            # Темный текст на светлом фоне
+            pct = np.percentile(gray, 15)
+            glyph_mask = gray <= min(float(pct), bg_lum - 25.0)
+            if np.count_nonzero(glyph_mask) < 6:
+                glyph_mask = gray <= pct
+
+        color_rgb = None
+        if np.count_nonzero(glyph_mask) >= 6:
+            glyph_rgb = rgb[glyph_mask]
+            glyph_chroma = chroma[glyph_mask]
+            med_c = float(np.median(glyph_chroma))
+            top_c = float(np.percentile(glyph_chroma, 75))
+
+            if top_c >= 30.0 and med_c >= 18.0:
+                # Выраженный цветной текст (желтый, оранжевый, красный, зеленый и т.д.)
+                col_pixels = glyph_rgb[glyph_chroma >= 20.0]
+                if len(col_pixels) > 0:
+                    pts = np.median(col_pixels, axis=0).astype(int)
+                    color_rgb = (int(pts[0]), int(pts[1]), int(pts[2]))
+                else:
+                    pts = np.median(glyph_rgb, axis=0).astype(int)
+                    color_rgb = (int(pts[0]), int(pts[1]), int(pts[2]))
             else:
-                color_rgb = (255, 255, 255) if bg_lum < 128 else (15, 23, 42)
+                # Нейтральный текст (белый / черный)
+                pts = np.median(glyph_rgb, axis=0).astype(int)
+                fg_lum = 0.299 * pts[0] + 0.587 * pts[1] + 0.114 * pts[2]
+                if abs(fg_lum - bg_lum) >= 40:
+                    color_rgb = (int(pts[0]), int(pts[1]), int(pts[2]))
+                else:
+                    color_rgb = (255, 255, 255) if bg_lum < 128 else (15, 23, 42)
         else:
             color_rgb = (255, 255, 255) if bg_lum < 128 else (15, 23, 42)
 
         # Определение жирности шрифта (жирный только при плотном заполнении глифами)
         text_density = float(np.count_nonzero(diff > 25.0)) / float(max(1, h * w))
-        is_bold = (text_density > 0.32)
+        is_bold = (text_density > 0.48)
 
         return {
             "color_rgb": color_rgb,
@@ -407,11 +438,19 @@ def should_group_lines(prev_line: dict, curr_line: dict) -> bool:
     curr_x = float(curr_line.get("x", 0))
     curr_w = float(curr_line.get("width", 50))
 
+    # Если следующая строка имеет явный отступ вправо (абзац, подпункт, отдельный блок) — не объединять
+    if (curr_x - prev_x) > max(20.0, prev_lh * 1.0):
+        return False
+
+    # Если предыдущая строка имела отступ, а следующая сильно сдвинута влево — не объединять
+    if (prev_x - curr_x) > max(35.0, prev_lh * 2.0):
+        return False
+
     h_overlap = (curr_x < (prev_x + prev_w + 25.0)) and ((curr_x + curr_w) > (prev_x - 25.0))
-    left_aligned = abs(curr_x - prev_x) < max(40.0, prev_w * 0.30)
+    left_aligned = abs(curr_x - prev_x) < max(25.0, prev_w * 0.20)
     prev_center = prev_x + prev_w / 2.0
     curr_center = curr_x + curr_w / 2.0
-    center_aligned = abs(curr_center - prev_center) < max(50.0, prev_w * 0.30)
+    center_aligned = abs(curr_center - prev_center) < max(35.0, prev_w * 0.25)
 
     if not (h_overlap or left_aligned or center_aligned):
         return False
@@ -463,6 +502,11 @@ def split_translation_to_lines(line_texts: list[str], full_translation: str) -> 
         return []
     if len(line_texts) == 1:
         return [full_translation.strip()]
+
+    # Если перевод уже содержит переносы строк, совпадающие с числом строк оригинала
+    split_lines = [l.strip() for l in full_translation.split("\n") if l.strip()]
+    if len(split_lines) == len(line_texts):
+        return split_lines
 
     words = full_translation.strip().split()
     if not words:
@@ -610,14 +654,20 @@ def _is_hover_match(new_text: str, prev_text: str) -> bool:
             if len_min >= 4:
                 return True
 
-    # 2. Если один является подстрокой другого при схожей длине (>= 48%)
-    if len_min >= 5 and (len_min / float(len_max)) >= 0.48:
-        if c_n in c_p or c_p in c_n:
-            return True
+    # 2. Если один является подстрокой другого при схожей длине и одинаковом числе слов
+    n_words = n_lower.split()
+    p_words = p_lower.split()
+    if len_min >= 5 and (len_min / float(len_max)) >= 0.75:
+        if len(n_words) == len(p_words) and abs(len(c_n) - len(c_p)) <= 3:
+            if c_n in c_p or c_p in c_n:
+                return True
 
     # 3. Высокое лексическое сходство
     if ratio >= 0.65 and (len_min / float(len_max)) >= 0.60:
-        return True
+        if len(n_words) == len(p_words) or abs(len(n_words) - len(p_words)) <= 1:
+            # Защита от расширения предложений: если одно предложение длиннее на 4+ символа и является префиксом
+            if not ((c_n.startswith(c_p) or c_p.startswith(c_n)) and abs(len(c_n) - len(c_p)) >= 4):
+                return True
 
     # 4. Характерные глитчи Windows OCR при наведении на кнопки меню
     has_mixed = bool(re.search(r"[a-zA-Z]", new_text) and re.search(r"[\u0400-\u04FF]", new_text))
@@ -689,6 +739,13 @@ class TranslationScannerWorker(QThread):
             self._last_ocr_text = ""
             self._stable_blocks = []
 
+    def force_refresh(self):
+        with QMutexLocker(self._mutex):
+            self._last_frame_small = None
+            self._last_ocr_text = ""
+            self._stable_blocks = []
+            self._force_refresh_pending = True
+
     def set_mode(self, mode: str):
         with QMutexLocker(self._mutex):
             self._mode = mode
@@ -702,6 +759,8 @@ class TranslationScannerWorker(QThread):
             self._last_frame_small = None
             self._last_ocr_text = ""
             self._stable_blocks = []
+            self._force_refresh_pending = True
+        self.translation_ready.emit("", "", [])
 
     def set_languages(self, src: str, tgt: str):
         with QMutexLocker(self._mutex):
@@ -768,8 +827,12 @@ class TranslationScannerWorker(QThread):
                     self.msleep(interval)
                     continue
 
+                with QMutexLocker(self._mutex):
+                    force_now = getattr(self, "_force_refresh_pending", False)
+                    self._force_refresh_pending = False
+
                 # Smart Diff: уменьшаем кадр до 240x135 и проверяем изменение
-                if use_diff:
+                if use_diff and not force_now:
                     try:
                         small_gray = cv2.cvtColor(cv2.resize(frame_bgr, (240, 135), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
                     except Exception:
@@ -785,6 +848,10 @@ class TranslationScannerWorker(QThread):
                             continue
 
                     self._last_frame_small = small_gray
+                elif force_now:
+                    self._last_frame_small = None
+                    self._last_ocr_text = ""
+                    self._stable_blocks = []
 
                 # Запуск OCR
                 raw_blocks = extract_text_and_blocks(frame_bgr, lang=src)
@@ -881,7 +948,7 @@ class TranslationScannerWorker(QThread):
                             if _is_hover_match(b_text, prev_orig):
                                 translated_list[idx] = prev_trans
                                 b["text"] = prev_orig
-                                prev_s["ttl"] = 4
+                                matched_stable["ttl"] = 4
                                 matched_prev_indices.add(matched_p_idx)
                                 continue
 
@@ -890,12 +957,32 @@ class TranslationScannerWorker(QThread):
                         if matched_p_idx is not None:
                             matched_prev_indices.add(matched_p_idx)
 
-                    # Hysteresis retention: если большинство блоков экрана стабильны,
-                    # удерживаем временно пропавшие из-за курсора или артефактов блоки на 3 кадра
-                    if self._stable_blocks and len(matched_prev_indices) >= max(1, len(self._stable_blocks) // 2):
+                    # Проверяем вертикальный сдвиг строк (скролл экрана пользователем)
+                    is_scrolled = False
+                    if self._stable_blocks and matched_prev_indices:
+                        for p_i, prev_s in enumerate(self._stable_blocks):
+                            if p_i in matched_prev_indices:
+                                for b in valid_blocks:
+                                    if _is_hover_match(b.get("text", "").strip(), prev_s["orig"]):
+                                        if abs(float(b.get("y", 0)) - prev_s["y"]) > 8.0:
+                                            is_scrolled = True
+                                            break
+                            if is_scrolled:
+                                break
+
+                    if is_scrolled:
+                        self._stable_blocks = []
+                        matched_prev_indices = set()
+
+                    # Hysteresis retention: если стабильны все блоки кроме одного (случайный блик курсора),
+                    # кратковременно удерживаем этот 1 блок. При скролле или смене кадра блоки не воскрешаются
+                    if not is_scrolled and self._stable_blocks and len(self._stable_blocks) > 1 and len(matched_prev_indices) == len(self._stable_blocks) - 1:
                         for p_i, prev_s in enumerate(self._stable_blocks):
                             if p_i not in matched_prev_indices:
-                                curr_ttl = prev_s.get("ttl", 3) - 1
+                                has_v_overlap = any(abs(float(b.get("y", 0)) - prev_s["y"]) < max(16.0, prev_s["height"] * 0.7) for b in valid_blocks)
+                                if has_v_overlap:
+                                    continue
+                                curr_ttl = prev_s.get("ttl", 2) - 1
                                 if curr_ttl > 0:
                                     prev_s["ttl"] = curr_ttl
                                     valid_blocks.append({
@@ -1004,23 +1091,26 @@ class TranslationScannerWorker(QThread):
 
                 translated_full = " ".join(item["translated"] for item in translated_blocks) if translated_blocks else restore_punctuation(full_text, translate_text(full_text, source_lang=src, target_lang=tgt))
                 if not translated_blocks and full_text and translated_full:
-                    lines = [ln for ln in translated_full.split("\n") if ln.strip()]
-                    lines_cnt = max(1, len(lines))
-                    translated_blocks.append({
-                        "original": full_text,
-                        "translated": translated_full,
-                        "x": 20.0,
-                        "y": max(10.0, min(float(rh) * 0.35, 60.0)),
-                        "width": min(float(rw) - 40.0, max(140.0, float(rw) * 0.75)),
-                        "height": float(lines_cnt * 24.0),
-                        "lines_count": lines_cnt,
-                        "line_height": 22.0,
-                        "color_rgb": (248, 250, 252),
-                        "bg_color_rgb": (15, 23, 42),
-                        "is_bold": True,
-                        "is_italic": False,
-                        "font_family": "Segoe UI"
-                    })
+                    fallback_visual = extract_visual_props(frame_bgr)
+                    fb_lines = [ln.strip() for ln in translated_full.split("\n") if ln.strip()]
+                    lines_cnt = max(1, len(fb_lines))
+                    base_y = max(10.0, min(float(rh) * 0.25, 40.0))
+                    for i, l_text in enumerate(fb_lines):
+                        translated_blocks.append({
+                            "original": full_text if lines_cnt == 1 else l_text,
+                            "translated": l_text,
+                            "x": 20.0,
+                            "y": base_y + float(i * 26.0),
+                            "width": min(float(rw) - 40.0, max(140.0, float(rw) * 0.75)),
+                            "height": 24.0,
+                            "lines_count": 1,
+                            "line_height": 22.0,
+                            "color_rgb": fallback_visual["color_rgb"],
+                            "bg_color_rgb": fallback_visual.get("bg_color_rgb", (15, 23, 42)),
+                            "is_bold": fallback_visual["is_bold"],
+                            "is_italic": fallback_visual.get("is_italic", False),
+                            "font_family": fallback_visual["font_family"]
+                        })
                 with QMutexLocker(self._mutex):
                     if self._paused or self._menu_open or self._tooltip_active or (time.time() < self._menu_cooldown_until):
                         continue
@@ -1038,11 +1128,13 @@ class TranslationScannerWorker(QThread):
 class EyeUnlockPill(QPushButton):
     """
     Автономная миниатюрная плавающая кнопка разблокировки глазика.
-    Сделана сверхкомпактной (16x16 px, ровно в 2 раза меньше обычной 28x28 px).
-    Свободно перемещается по экрану как ЛЕВОЙ, так и ПРАВОЙ кнопкой мыши.
-    Одиночный клик левой кнопкой (без перемещения) возвращает панель управления.
-    Одиночный клик правой кнопкой (без перемещения) отключает/включает режим перевода (зачеркнутый глазик).
+    Размер 22x22 px: сверхкомпактная и аккуратная, при этом удобная для клика и перемещения мышью.
+    Свободно перемещается по экрану как ЛЕВОЙ, так и ПРАВОЙ кнопкой мыши с надёжным захватом курсора.
+    Одиночный клик левой кнопкой (без перемещения) возвращает панели управления всех рамок.
+    Одиночный клик правой кнопкой (без перемещения) отключает/включает перевод всех рамок.
     """
+    _shared_user_pos: QPoint | None = None
+
     def __init__(self, target_window: TranslationFrameWindow):
         super().__init__()
         self.target_window = target_window
@@ -1066,9 +1158,12 @@ class EyeUnlockPill(QPushButton):
     def update_state(self):
         """Обновляет иконку и стиль в зависимости от активности функции перевода."""
         is_paused = getattr(self.target_window, "is_paused", False)
+        app_inst = QApplication.instance()
+        active_count = len([w for w in getattr(app_inst, "_active_translation_windows", []) if isinstance(w, TranslationFrameWindow)])
+        count_suffix = f" ({active_count})" if active_count > 1 else ""
         if is_paused:
             self.setIcon(create_themed_icon("eye_off", is_dark=True, size=10, custom_color="#f87171"))
-            self.setToolTip(tr("trans_unlock_disabled_tooltip", "Перевод отключен. Кликните ПКМ для включения, ЛКМ для возврата настроек, зажмите для перемещения."))
+            self.setToolTip(tr("trans_unlock_disabled_tooltip", "Перевод отключен{count}. ПКМ: включить, ЛКМ: вернуть панели, зажмите для перемещения.").format(count=count_suffix))
             self.setStyleSheet("""
                 QPushButton {
                     background-color: rgba(15, 23, 42, 245);
@@ -1084,7 +1179,7 @@ class EyeUnlockPill(QPushButton):
             """)
         else:
             self.setIcon(create_themed_icon("eye", is_dark=True, size=10, custom_color="#38bdf8"))
-            self.setToolTip(tr("trans_unlock_tooltip", "Перетащите ЛКМ/ПКМ в любое место. Кликните ЛКМ для возврата настроек, ПКМ для отключения перевода."))
+            self.setToolTip(tr("trans_unlock_tooltip", "Скрытый режим{count}. ЛКМ: вернуть панели, ПКМ: пауза, зажмите для перемещения.").format(count=count_suffix))
             self.setStyleSheet("""
                 QPushButton {
                     background-color: rgba(15, 23, 42, 235);
@@ -1103,52 +1198,58 @@ class EyeUnlockPill(QPushButton):
         super().enterEvent(event)
         if self.target_window and hasattr(self.target_window, "worker"):
             self.target_window.worker.set_tooltip_active(True)
-        tip = self.toolTip()
-        if tip:
-            show_stealth_tooltip(QCursor.pos(), tip, self)
 
     def leaveEvent(self, event):
         super().leaveEvent(event)
-        QToolTip.hideText()
         if self.target_window and hasattr(self.target_window, "worker"):
             self.target_window.worker.set_tooltip_active(False)
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
-            self._drag_start = event.globalPosition().toPoint()
-            self._start_pos = self.pos()
+            QToolTip.hideText()
+            self._is_dragging = True
             self._has_dragged = False
+            self._drag_start = QCursor.pos()
+            self._start_pos = self.pos()
             event.accept()
             return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        if event.buttons() & (Qt.MouseButton.LeftButton | Qt.MouseButton.RightButton):
-            delta = event.globalPosition().toPoint() - self._drag_start
-            if delta.manhattanLength() >= 3:
+        if getattr(self, "_is_dragging", False) and (event.buttons() & (Qt.MouseButton.LeftButton | Qt.MouseButton.RightButton)):
+            delta = QCursor.pos() - self._drag_start
+            if delta.manhattanLength() >= 2:
                 self._has_dragged = True
                 self._user_moved = True
                 new_pos = self._start_pos + delta
-                screen = QGuiApplication.screenAt(new_pos) or (self.target_window.screen() if self.target_window else None) or QGuiApplication.primaryScreen()
-                screen_geo = screen.availableGeometry() if screen else QRect(0, 0, 1920, 1080)
+
+                # Ограничение перемещения: границы виртуального экрана (все мониторы компьютера)
+                desktop_rect = QRect()
+                for s in QGuiApplication.screens():
+                    desktop_rect = desktop_rect.united(s.availableGeometry())
+                if desktop_rect.isEmpty():
+                    desktop_rect = QRect(0, 0, 1920, 1080)
+
                 pill_w = self.width() if self.width() > 0 else 16
                 pill_h = self.height() if self.height() > 0 else 16
-                px = max(screen_geo.left() + 2, min(new_pos.x(), screen_geo.right() - pill_w - 2))
-                py = max(screen_geo.top() + 2, min(new_pos.y(), screen_geo.bottom() - pill_h - 2))
+
+                px = max(desktop_rect.left(), min(new_pos.x(), desktop_rect.right() - pill_w))
+                py = max(desktop_rect.top(), min(new_pos.y(), desktop_rect.bottom() - pill_h))
+
+                EyeUnlockPill._shared_user_pos = QPoint(px, py)
                 self.move(px, py)
             event.accept()
             return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton:
+        if getattr(self, "_is_dragging", False):
+            self._is_dragging = False
             if not self._has_dragged:
-                self._on_clicked()
-            event.accept()
-            return
-        elif event.button() == Qt.MouseButton.RightButton:
-            if not self._has_dragged:
-                self._on_right_clicked()
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self._on_clicked()
+                elif event.button() == Qt.MouseButton.RightButton:
+                    self._on_right_clicked()
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -1156,50 +1257,54 @@ class EyeUnlockPill(QPushButton):
     def _on_clicked(self):
         self.hide()
         if self.target_window:
-            self.target_window.set_stealth_lock(False)
+            self.target_window.set_stealth_lock(False, propagate=True)
 
     def _on_right_clicked(self):
-        """Отключает или возобновляет функцию перевода с отображением перечеркнутого глазика."""
-        if self.target_window:
-            self.target_window._toggle_pause()
+        """Отключает или возобновляет функцию перевода для всех активных рамок."""
+        app_inst = QApplication.instance()
+        target_paused = not getattr(self.target_window, "is_paused", False)
+        for w in list(getattr(app_inst, "_active_translation_windows", [])):
+            if isinstance(w, TranslationFrameWindow):
+                if w.is_paused != target_paused:
+                    w._toggle_pause()
+        self.update_state()
 
     def update_position(self, force: bool = False):
         if not self.target_window:
             return
-        screen = self.target_window.screen()
-        if not screen:
-            screen = QGuiApplication.screenAt(self.target_window.geometry().center())
-        if not screen:
-            screen = QGuiApplication.primaryScreen()
-        screen_geo = screen.availableGeometry() if screen else QRect(0, 0, 1920, 1080)
+
+        desktop_rect = QRect()
+        for s in QGuiApplication.screens():
+            desktop_rect = desktop_rect.united(s.availableGeometry())
+        if desktop_rect.isEmpty():
+            desktop_rect = QRect(0, 0, 1920, 1080)
 
         pill_w = self.width() if self.width() > 0 else 16
         pill_h = self.height() if self.height() > 0 else 16
 
+        if EyeUnlockPill._shared_user_pos is not None and not force:
+            px = max(desktop_rect.left(), min(EyeUnlockPill._shared_user_pos.x(), desktop_rect.right() - pill_w))
+            py = max(desktop_rect.top(), min(EyeUnlockPill._shared_user_pos.y(), desktop_rect.bottom() - pill_h))
+            self.move(px, py)
+            return
+
         if getattr(self, "_user_moved", False) and not force:
             cur_x = self.x()
             cur_y = self.y()
-            px = max(screen_geo.left() + 2, min(cur_x, screen_geo.right() - pill_w - 2))
-            py = max(screen_geo.top() + 2, min(cur_y, screen_geo.bottom() - pill_h - 2))
+            px = max(desktop_rect.left(), min(cur_x, desktop_rect.right() - pill_w))
+            py = max(desktop_rect.top(), min(cur_y, desktop_rect.bottom() - pill_h))
             if px != cur_x or py != cur_y:
                 self.move(px, py)
             return
 
         geo = self.target_window.geometry()
-        # Всегда размещаем ВНУТРИ рамки в правом верхнем углу
+        # По умолчанию размещаем в правом верхнем углу рамки
         px = geo.right() - pill_w - 8
         py = geo.top() + 8
 
-        # Гарантируем, что кнопка глазика останется в пределах экрана
-        if px + pill_w > screen_geo.right() - 4:
-            px = screen_geo.right() - pill_w - 4
-        if px < screen_geo.left() + 4:
-            px = screen_geo.left() + 4
-
-        if py + pill_h > screen_geo.bottom() - 4:
-            py = screen_geo.bottom() - pill_h - 4
-        if py < screen_geo.top() + 4:
-            py = screen_geo.top() + 4
+        # Гарантируем, что кнопка глазика останется в пределах виртуального экрана
+        px = max(desktop_rect.left() + 2, min(px, desktop_rect.right() - pill_w - 2))
+        py = max(desktop_rect.top() + 2, min(py, desktop_rect.bottom() - pill_h - 2))
 
         self.move(px, py)
 
@@ -1628,22 +1733,20 @@ class TranslationControlBar(QWidget):
 
         # 1. Заголовок и маркер перемещения всей системы
         self.title_container = QWidget()
+        self.title_container.setFixedSize(22, 22)
         title_box = QHBoxLayout(self.title_container)
-        title_box.setContentsMargins(5, 2, 5, 2)
-        title_box.setSpacing(4)
+        title_box.setContentsMargins(4, 4, 4, 4)
+        title_box.setSpacing(0)
+        title_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title_container.setStyleSheet("background-color: rgba(30, 41, 59, 160); border-radius: 4px;")
         self.title_container.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
         self.title_container.setToolTip(tr("trans_drag_tooltip", "Перемещение"))
 
         self.drag_grip = QLabel(self)
         self.drag_grip.setPixmap(get_svg_pixmap("move", color="#94a3b8", size=13))
+        self.drag_grip.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.drag_grip.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         title_box.addWidget(self.drag_grip)
-
-        self.lbl_icon = QLabel(self)
-        self.lbl_icon.setPixmap(get_svg_pixmap("translate", color="#60a5fa", size=14))
-        self.lbl_icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        title_box.addWidget(self.lbl_icon)
 
         self.lbl_title = QLabel("")  # Сохраняем атрибут для совместимости
         inner_layout.addWidget(self.title_container)
@@ -1691,7 +1794,16 @@ class TranslationControlBar(QWidget):
         self.btn_settings.clicked.connect(self._show_settings_menu)
         inner_layout.addWidget(self.btn_settings)
 
-        # 7. Пауза / Пуск
+        # 7. Принудительное обновление перевода
+        self.btn_refresh = QPushButton()
+        self.btn_refresh.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_refresh.setIcon(create_themed_icon("refresh", is_dark=True, size=13))
+        self.btn_refresh.setToolTip(tr("trans_refresh_tip", "Обновить перевод в кадре (F5)"))
+        self.btn_refresh.setFixedSize(26, 24)
+        self.btn_refresh.clicked.connect(lambda: self.frame_window.force_refresh_translation())
+        inner_layout.addWidget(self.btn_refresh)
+
+        # 8. Пауза / Пуск
         self.btn_pause = QPushButton()
         self.btn_pause.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_pause.setIcon(create_themed_icon("pause", is_dark=True, size=13))
@@ -1700,7 +1812,7 @@ class TranslationControlBar(QWidget):
         self.btn_pause.clicked.connect(self.frame_window._toggle_pause)
         inner_layout.addWidget(self.btn_pause)
 
-        # 8. Копировать перевод
+        # 9. Копировать перевод
         self.btn_copy = QPushButton()
         self.btn_copy.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_copy.setIcon(create_themed_icon("copy", is_dark=True, size=13))
@@ -2120,6 +2232,13 @@ class TranslationControlBar(QWidget):
             return
         super().mouseReleaseEvent(event)
 
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_F5:
+            self.frame_window.force_refresh_translation()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
 
 class TranslationFrameWindow(QWidget):
     """
@@ -2217,7 +2336,7 @@ class TranslationFrameWindow(QWidget):
         self.is_locked_stealth = False  # Режим скрытия по кнопке глазика
         self.passthrough_enabled = False # По умолчанию рамка создаётся осязаемой и готовой к изменению размера
 
-        self.bg_opacity = 0.85
+        self.bg_opacity = 0.95
         self.bg_theme = "slate"
         self.hud_font_size = 0   # 0 = Авто
         try:
@@ -2534,23 +2653,32 @@ class TranslationFrameWindow(QWidget):
                 self.control_bar.raise_to_topmost()
         self.update()
 
-    def set_stealth_lock(self, locked: bool):
+    def set_stealth_lock(self, locked: bool, propagate: bool = True):
         """
         Включает или выключает режим маскировки по кнопке «Глазик».
-        В скрытом режиме тулбар скрыт, отображается только мини-глазик 16x16,
+        В скрытом режиме тулбар скрыт, отображается ровно один мини-глазик для всех окон,
         а клики проходят сквозь рамку.
         """
+        if propagate:
+            app_inst = QApplication.instance()
+            for w in list(getattr(app_inst, "_active_translation_windows", [])):
+                if isinstance(w, TranslationFrameWindow) and w is not self:
+                    w.set_stealth_lock(locked, propagate=False)
+
         self.is_locked_stealth = locked
         if locked:
             if hasattr(self, "control_bar"):
                 self.control_bar.hide()
             if hasattr(self, "hud_window"):
                 self.hud_window.hide()
-            self.unlock_pill.update_position()
-            self.unlock_pill.update_state()
-            self.unlock_pill.show()
-            self.unlock_pill.raise_to_topmost()
             self.set_passthrough(True)
+            if propagate:
+                self.unlock_pill.update_position()
+                self.unlock_pill.update_state()
+                self.unlock_pill.show()
+                self.unlock_pill.raise_to_topmost()
+            else:
+                self.unlock_pill.hide()
         else:
             self.unlock_pill.hide()
             if hasattr(self, "control_bar"):
@@ -2790,6 +2918,21 @@ class TranslationFrameWindow(QWidget):
         if hasattr(self, "worker"):
             self.worker.set_smart_diff(checked)
 
+    def force_refresh_translation(self):
+        """Немедленно сбрасывает кэш кадра и запускает внеочередное распознавание и перевод."""
+        if hasattr(self, "worker") and self.worker:
+            self.worker.force_refresh()
+        show_stealth_tooltip(QCursor.pos(), tr("trans_refreshing", "Обновление перевода..."), self)
+        if hasattr(self, "worker"):
+            self.worker.set_tooltip_active(False)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_F5:
+            self.force_refresh_translation()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     @pyqtSlot(str, str, list)
     def _on_translation_ready(self, original: str, translated: str, blocks: list):
         if self.is_paused or getattr(self, "_menu_open", False):
@@ -2821,6 +2964,8 @@ class TranslationFrameWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self.translated_blocks = []
+        self.update()
         self._update_hud_geometry()
         if hasattr(self, "control_bar") and self.control_bar and not getattr(self.control_bar, "_is_dragging", False):
             self.control_bar.sync_to_frame()
@@ -2832,6 +2977,8 @@ class TranslationFrameWindow(QWidget):
 
     def moveEvent(self, event):
         super().moveEvent(event)
+        self.translated_blocks = []
+        self.update()
         if hasattr(self, "control_bar") and self.control_bar and not getattr(self.control_bar, "_is_dragging", False):
             self.control_bar.sync_to_frame()
         if hasattr(self, "unlock_pill") and self.unlock_pill.isVisible():
@@ -2941,7 +3088,9 @@ class TranslationFrameWindow(QWidget):
                 if rect.left() < avail.left():
                     rect.setLeft(avail.left())
 
+            self.translated_blocks = []
             self.setGeometry(rect)
+            self.update()
             event.accept()
             return
 
@@ -2955,7 +3104,9 @@ class TranslationFrameWindow(QWidget):
                 avail = screen.availableGeometry()
                 new_pos.setX(max(avail.left(), min(new_pos.x(), avail.right() - self.width() + 1)))
                 new_pos.setY(max(avail.top(), min(new_pos.y(), avail.bottom() - self.height() + 1)))
+            self.translated_blocks = []
             self.move(new_pos)
+            self.update()
             event.accept()
             return
 
@@ -2971,6 +3122,8 @@ class TranslationFrameWindow(QWidget):
             self.active_handle = self.HANDLE_NONE
             self.setCursor(Qt.CursorShape.ArrowCursor)
             if was_busy:
+                self.translated_blocks = []
+                self.update()
                 if hasattr(self, "control_bar") and self.control_bar:
                     self.control_bar.sync_to_frame()
                 if hasattr(self, "worker") and self.worker.isRunning():
@@ -3005,38 +3158,43 @@ class TranslationFrameWindow(QWidget):
         """
         # 1. Пробуем уместить на 1 строке, если исходный текст был 1 строка
         if lines_cnt == 1:
-            target_1line_w = min(max_frame_w, max(bw * 1.65, bw + 60.0))
+            target_1line_w = min(max_frame_w, max(bw * 1.50, bw + 60.0))
             f = QFont(family, 10, weight)
             f.setPixelSize(ideal_ps)
             f.setItalic(is_italic)
+            f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+            f.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
             fm = QFontMetrics(f)
             adv = float(fm.horizontalAdvance(text))
             fh = float(fm.height())
             if adv <= target_1line_w and fh <= max_frame_h:
-                eff_w = min(max_frame_w, max(bw, adv + 10.0))
-                eff_h = min(max_frame_h, max(bh, fh + 4.0))
+                eff_w = min(max_frame_w, max(bw + 6.0, adv + 12.0))
+                eff_h = min(max_frame_h, max(bh + 4.0, fh + 6.0))
                 return f, eff_w, eff_h, False
 
-            # Если немного не влезло, пробуем уместить на 1 строке с минимальным уменьшением шрифта (до 85%)
+            # Если немного не влезло, пробуем уместить на 1 строке с небольшим уменьшением шрифта (не мельче 12 px)
             min_1line_ps = max(12, int(round(ideal_ps * 0.85)))
             for ps in range(ideal_ps - 1, min_1line_ps - 1, -1):
                 f_cand = QFont(family, 10, weight)
                 f_cand.setPixelSize(ps)
                 f_cand.setItalic(is_italic)
+                f_cand.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+                f_cand.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
                 fm_cand = QFontMetrics(f_cand)
                 cand_adv = float(fm_cand.horizontalAdvance(text))
                 cand_fh = float(fm_cand.height())
                 if cand_adv <= target_1line_w and cand_fh <= max_frame_h:
-                    eff_w = min(max_frame_w, max(bw, cand_adv + 10.0))
-                    eff_h = min(max_frame_h, max(bh, cand_fh + 4.0))
+                    eff_w = min(max_frame_w, max(bw + 6.0, cand_adv + 12.0))
+                    eff_h = min(max_frame_h, max(bh + 4.0, cand_fh + 6.0))
                     return f_cand, eff_w, eff_h, False
 
         # 2. Многострочный режим переноса по словам (если текст длиннее или уже был многострочным)
-        min_ps = max(10, int(round(ideal_ps * 0.80)))
-        wrap_w = min(max_frame_w, max(bw * 1.50, bw + 50.0, 110.0))
-        allowed_h = min(max_frame_h, max(bh * 1.5, float(lines_cnt + 2) * (ideal_ps * 1.35) + 12.0, 48.0))
+        min_ps = max(12, int(round(ideal_ps * 0.80)))
+        wrap_w = min(max_frame_w, max(bw * 1.35, bw + 20.0, 40.0))
+        est_lines = max(2, lines_cnt)
+        allowed_h = min(max_frame_h, max(bh + 6.0, float(est_lines) * (ideal_ps * 1.35) + 8.0))
 
-        flags = int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap)
+        flags = int(Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap)
         best_f = None
         best_w = wrap_w
         best_h = allowed_h
@@ -3045,25 +3203,29 @@ class TranslationFrameWindow(QWidget):
             f = QFont(family, 10, weight)
             f.setPixelSize(ps)
             f.setItalic(is_italic)
+            f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+            f.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
             fm = QFontMetrics(f)
             r = fm.boundingRect(QRect(0, 0, int(wrap_w), 9999), flags, text)
             if r.height() <= allowed_h and r.width() <= wrap_w:
                 best_f = f
-                cand_w = min(wrap_w, max(bw, float(r.width()) + 12.0))
+                cand_w = min(wrap_w, max(bw + 6.0, float(r.width()) + 12.0))
                 r_check = fm.boundingRect(QRect(0, 0, int(cand_w), 9999), flags, text)
                 best_w = cand_w
-                best_h = min(allowed_h, max(bh, float(r_check.height()) + 6.0))
+                best_h = min(allowed_h, max(bh + 4.0, float(r_check.height()) + 6.0))
                 break
 
         if best_f is None:
             best_f = QFont(family, 10, weight)
             best_f.setPixelSize(min_ps)
             best_f.setItalic(is_italic)
+            best_f.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+            best_f.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
             fm = QFontMetrics(best_f)
             r = fm.boundingRect(QRect(0, 0, int(wrap_w), 9999), flags, text)
-            best_w = min(max_frame_w, max(bw, float(r.width()) + 12.0))
+            best_w = min(max_frame_w, max(bw + 6.0, float(r.width()) + 12.0))
             r_check = fm.boundingRect(QRect(0, 0, int(best_w), 9999), flags, text)
-            best_h = min(max_frame_h, max(bh, float(r_check.height()) + 6.0))
+            best_h = min(max_frame_h, max(bh + 4.0, float(r_check.height()) + 6.0))
 
         return best_f, best_w, best_h, True
 
@@ -3186,8 +3348,9 @@ class TranslationFrameWindow(QWidget):
                     if self.hud_font_size > 0:
                         ideal_ps = self.hud_font_size
                     else:
-                        base_h = line_h if (line_h > 5 and line_h < 40) else min(24.0, max(12.0, bh / float(lines_cnt)))
-                        ideal_ps = max(11, min(26, int(round(base_h * 0.85))))
+                        # Если мелкий оригинальный текст, обеспечиваем нормальный, комфортный для глаз размер шрифта (не менее 13-14 px)
+                        base_h = line_h if (line_h > 5 and line_h < 50) else min(28.0, max(14.0, bh / float(lines_cnt)))
+                        ideal_ps = max(13, min(26, int(round(base_h * 0.88))))
 
                     if self.match_font_family:
                         family = item.get("font_family", "Segoe UI")
@@ -3199,20 +3362,29 @@ class TranslationFrameWindow(QWidget):
                         weight = QFont.Weight.Normal
                         is_italic = False
 
+                    # Доступная ширина от позиции bx до правого края рамки с отступом безопасности
+                    avail_w = max(30.0, float(w - bx - 8.0))
+                    # Для строгого сохранения отступа bx передаем avail_w как доступную ширину для размещения
+                    block_max_w = min(max_frame_w, avail_w)
+                    block_max_h = max(20.0, float(h - by - 4.0))
+
                     font, eff_w, eff_h, is_multiline = self._layout_text_block(
                         txt, family, weight, is_italic,
                         ideal_ps=ideal_ps, bw=bw, bh=bh,
                         lines_cnt=lines_cnt, line_h=line_h,
-                        max_frame_w=max_frame_w, max_frame_h=max_frame_h
+                        max_frame_w=block_max_w, max_frame_h=block_max_h
                     )
 
-                    orig_cx = bx + bw / 2.0
-                    orig_cy = by + bh / 2.0
+                    # Выравнивание строго по исходному отступу bx без смещения влево
+                    draw_x = float(int(round(max(2.0, min(float(w - 30.0), bx)))))
+                    draw_y = float(int(round(max(2.0, min(float(h - eff_h - 2.0), by - (eff_h - bh) / 2.0)))))
 
-                    draw_x = max(2.0, min(float(w - eff_w - 2.0), orig_cx - eff_w / 2.0))
-                    draw_y = max(2.0, min(float(h - eff_h - 2.0), orig_cy - eff_h / 2.0))
-
-                    bg_rect = QRectF(draw_x, draw_y, eff_w, eff_h)
+                    # Фоновая плашка обязана перекрывать как минимум весь исходный текст bw/bh,
+                    # чтобы не торчали куски букв оригинала (например 'th' в Edgeworth или остаток диалога)
+                    box_w = float(int(round(max(bw + 8.0, eff_w + 10.0))))
+                    box_h = float(int(round(max(bh + 4.0, eff_h + 4.0))))
+                    box_w = min(float(w - draw_x - 2.0), box_w)
+                    bg_rect = QRectF(draw_x - 3.0, draw_y, box_w, box_h)
 
                     if not ignore_control_bar and hasattr(self, "control_bar") and self.control_bar and not self.control_bar.isHidden() and not self.is_locked_stealth:
                         cb_geo = self.control_bar.geometry()
@@ -3232,19 +3404,28 @@ class TranslationFrameWindow(QWidget):
 
                     if self.match_text_color and "color_rgb" in item and item["color_rgb"]:
                         cr, cg, cb = item["color_rgb"]
+                        chroma = max(cr, cg, cb) - min(cr, cg, cb)
                         t_lum = 0.299 * cr + 0.587 * cg + 0.114 * cb
                         b_lum = 0.299 * br + 0.587 * bg + 0.114 * bb
-                        if abs(t_lum - b_lum) < 55:
-                            text_color = QColor(255, 255, 255) if b_lum < 128 else QColor(15, 23, 42)
-                        else:
+                        if chroma >= 22:
+                            # Сохраняем насыщенный цвет (желтый, оранжевый, красный, зеленый, лазурный)
+                            if t_lum < 165:
+                                boost = min(2.5, 180.0 / max(1.0, t_lum))
+                                cr = min(255, int(cr * boost))
+                                cg = min(255, int(cg * boost))
+                                cb = min(255, int(cb * boost))
                             text_color = QColor(int(cr), int(cg), int(cb))
+                        else:
+                            # Монохромный / нейтральный текст: гарантируем контрастность с фоном
+                            text_color = QColor(255, 255, 255) if b_lum < 128 else QColor(15, 23, 42)
                     else:
                         text_color = QColor(248, 250, 252)
 
                     painter.setFont(font)
                     painter.setPen(text_color)
-                    flags = int(Qt.AlignmentFlag.AlignCenter | (Qt.TextFlag.TextWordWrap if is_multiline else 0))
-                    painter.drawText(bg_rect, flags, txt)
+                    text_rect = QRectF(draw_x + 3.0, draw_y + 1.0, eff_w + 4.0, eff_h)
+                    flags = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter | (Qt.TextFlag.TextWordWrap if is_multiline else 0))
+                    painter.drawText(text_rect, flags, txt)
                 except Exception:
                     pass
 
@@ -3305,7 +3486,16 @@ class TranslationFrameWindow(QWidget):
         if hasattr(self, "hud_window") and self.hud_window:
             self.hud_window.close()
         if hasattr(self, "unlock_pill") and self.unlock_pill:
+            was_pill_visible = self.unlock_pill.isVisible()
             self.unlock_pill.close()
+            if was_pill_visible and app_inst:
+                for w in list(getattr(app_inst, "_active_translation_windows", [])):
+                    if isinstance(w, TranslationFrameWindow) and w is not self and w.is_locked_stealth:
+                        w.unlock_pill.update_position()
+                        w.unlock_pill.update_state()
+                        w.unlock_pill.show()
+                        w.unlock_pill.raise_to_topmost()
+                        break
         if hasattr(self, "worker") and self.worker.isRunning():
             self.worker.stop()
         self.closed.emit()
