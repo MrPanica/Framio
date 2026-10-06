@@ -372,18 +372,29 @@ class CaptureWorker(QThread):
                         # Считаем точное количество кадров, которое должно быть в видео к этому моменту
                         now = time.perf_counter()
                         if rec_start_time is None:
-                            rec_start_time = now
-                            expected_frames = 1
-                            deficit = 0
-                        else:
-                            elapsed = now - rec_start_time - self.total_paused_duration
-                            expected_frames = max(1, int(round(elapsed * self.fps)))
-                            deficit = expected_frames - frame_count_written
+                            # Записываем первый проверочный кадр для инициализации кодека и пайпа
+                            if isinstance(self.video_recorder, VideoRecorder):
+                                self.video_recorder.write_frame(frame_bgr)
+                            else:
+                                self.video_recorder.add_frame(frame_bgr)
+                            frame_count_written = 1
+                            rec_start_time = time.perf_counter()
+                            continue
 
-                        # Если захват кадра занял больше времени, повторяем кадр нужное число раз,
-                        # чтобы скорость воспроизведения видео строго равнялась 1.0x (без ускорения)
-                        # и звук оставался идеально синхронизирован
-                        repeat_count = max(1, min(deficit, self.fps * 2)) if deficit > 0 else 1
+                        elapsed = now - rec_start_time - self.total_paused_duration
+                        expected_frames = max(1, int(round(elapsed * self.fps)))
+                        deficit = expected_frames - frame_count_written
+
+                        # Защита от лавинного переполнения пайпа FFmpeg (pipe backpressure) при старте:
+                        # никогда не сбрасываем десятки кадров разом, устраняя 5-6 секундный лаг
+                        if deficit > 2:
+                            repeat_count = 2
+                            frame_count_written = expected_frames
+                        elif deficit > 0:
+                            repeat_count = min(deficit, 2)
+                        else:
+                            repeat_count = 1
+
                         for _ in range(repeat_count):
                             if isinstance(self.video_recorder, VideoRecorder):
                                 self.video_recorder.write_frame(frame_bgr)
@@ -411,6 +422,11 @@ class CaptureWorker(QThread):
             print(f"[CaptureWorker] Ошибка в цикле записи: {e}")
             self.error_occurred.emit(str(e))
         finally:
+            try:
+                from utils.screen_lock import release_cached_capture_resources
+                release_cached_capture_resources()
+            except Exception:
+                pass
             self._finalize_recording()
 
     def _emit_progress(self, percent: int, stage_desc: str):

@@ -2493,6 +2493,7 @@ class RegionActionHeader(QFrame):
     copy_clicked = pyqtSignal(str)
     copy_text_clicked = pyqtSignal(str)
     live_translate_clicked = pyqtSignal()
+    translate_and_copy_clicked = pyqtSignal()
     record_video_started = pyqtSignal(dict)
     record_gif_started = pyqtSignal(dict)
     mass_filter_selected = pyqtSignal(str)
@@ -2562,9 +2563,11 @@ class RegionActionHeader(QFrame):
         self.btn_mass_copy_text.clicked.connect(self._show_ocr_popup)
         layout.addWidget(self.btn_mass_copy_text)
 
-        self.btn_mass_translate = ModernButton(tr("region_mass_translate_short", "Перевод"), tr("action_all_translate", "Открыть рамку динамического перевода для зоны"))
+        self.btn_mass_translate = ModernButton(tr("region_mass_translate_short", "Перевод"), tr("action_all_translate", "Открыть рамку динамического перевода для зоны (ПКМ — перевести и скопировать)"))
         self.btn_mass_translate.setIcon(create_themed_icon("translate", self.is_dark, size=14))
         self.btn_mass_translate.clicked.connect(self.live_translate_clicked.emit)
+        self.btn_mass_translate.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.btn_mass_translate.customContextMenuRequested.connect(self._show_translate_popup)
         layout.addWidget(self.btn_mass_translate)
 
         self.btn_mass_video = ModernButton(tr("region_mass_video_short", "Видео"), tr("action_all_video", "Записывать видео всех зон"))
@@ -2676,6 +2679,15 @@ class RegionActionHeader(QFrame):
         if self.popup_filter is not None:
             self.popup_filter.set_filter(self.mass_filter_selection)
             self.popup_filter.set_parameters(self.mass_filter_params)
+
+    def _show_translate_popup(self, pos=None):
+        menu = QMenu(self)
+        menu.setStyleSheet(get_context_menu_style(self.is_dark))
+        act_frame = menu.addAction(create_themed_icon("translate", self.is_dark, size=14), tr("trans_open_frame_action", "Открыть рамку динамического перевода"))
+        act_frame.triggered.connect(self.live_translate_clicked.emit)
+        act_copy = menu.addAction(create_themed_icon("copy", self.is_dark, size=14), tr("trans_copy_action", "Перевести и скопировать перевод в буфер"))
+        act_copy.triggered.connect(self.translate_and_copy_clicked.emit)
+        show_smart_popup(self.btn_mass_translate, menu)
 
 
 class WholeAreaFilterPopup(QFrame):
@@ -2800,6 +2812,7 @@ class BottomActionToolbar(QFrame):
     copy_clicked = pyqtSignal(str)
     copy_text_clicked = pyqtSignal(str)
     live_translate_clicked = pyqtSignal()
+    translate_and_copy_clicked = pyqtSignal()
     scrolling_screenshot_requested = pyqtSignal()
     search_image_requested = pyqtSignal(str)
     record_video_started = pyqtSignal(dict)
@@ -2867,11 +2880,13 @@ class BottomActionToolbar(QFrame):
         layout.addWidget(self.btn_copy_text)
 
         # 2.2 Перманентная рамка динамического перевода экрана
-        self.btn_translate = ModernButton("", tr("action_translate_tip", "Динамический перевод текста в рамке (плавающая рамка перевода)"))
+        self.btn_translate = ModernButton("", tr("action_translate_tip", "Динамический перевод текста в рамке (ЛКМ — открыть рамку, ПКМ — перевести и скопировать)"))
         self.btn_translate.setFixedSize(28, 28)
         self.btn_translate.setIcon(create_themed_icon("translate", self.is_dark, size=16))
         self.btn_translate.setIconSize(QSize(16, 16))
         self.btn_translate.clicked.connect(self.live_translate_clicked.emit)
+        self.btn_translate.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.btn_translate.customContextMenuRequested.connect(self._show_translate_popup)
         layout.addWidget(self.btn_translate)
 
         self.popup_ocr = OcrLanguagePopup(self)
@@ -3111,6 +3126,15 @@ class BottomActionToolbar(QFrame):
     def _show_ocr_popup(self):
         show_smart_popup(self.btn_copy_text, self.popup_ocr)
 
+    def _show_translate_popup(self, pos=None):
+        menu = QMenu(self)
+        menu.setStyleSheet(get_context_menu_style(self.is_dark))
+        act_frame = menu.addAction(create_themed_icon("translate", self.is_dark, size=14), tr("trans_open_frame_action", "Открыть рамку динамического перевода"))
+        act_frame.triggered.connect(self.live_translate_clicked.emit)
+        act_copy = menu.addAction(create_themed_icon("copy", self.is_dark, size=14), tr("trans_copy_action", "Перевести область и скопировать перевод в буфер"))
+        act_copy.triggered.connect(self.translate_and_copy_clicked.emit)
+        show_smart_popup(self.btn_translate, menu)
+
     def _show_search_menu(self):
         show_smart_popup(self.btn_search, self.popup_search)
 
@@ -3130,6 +3154,9 @@ class BottomActionToolbar(QFrame):
         )
         menu.addAction(create_themed_icon("scan_text", self.is_dark, size=14), tr("action_all_copy_text", "Скопировать текст со всех зон (OCR)")).triggered.connect(
             lambda: self.all_regions_action.emit("copy_text")
+        )
+        menu.addAction(create_themed_icon("translate", self.is_dark, size=14), tr("action_all_translate_copy", "Перевести все зоны и скопировать в буфер")).triggered.connect(
+            lambda: self.all_regions_action.emit("translate_copy")
         )
         menu.addSeparator()
         menu.addAction(tr("action_all_video", "Записывать видео всех зон")).triggered.connect(

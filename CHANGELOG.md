@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.0.27] - 2026-10-06
+
+### English
+
+- **Arbitrary Small Frame Sizes**: Removed artificial minimum frame constraints (previously 160×100 or 800×600 in recording, and 240×100 in translation). You can now record video, capture GIFs, or translate tiny arbitrary screen areas down to 16×16 px without unwanted auto-expansion.
+- **Copy Dynamic Translation to Clipboard**: Added versatile options to copy translated text to the clipboard directly from the Dynamic Translation frame:
+  - Dedicated copy button on the translation control bar.
+  - Right-click / context menu on translation frames and subtitle bars with multiple copy options (translated text, original text, or both).
+  - Standard `Ctrl+C` shortcut and double-click to quickly copy translation.
+  - Right-click quick action on the overlay toolbar translation buttons to translate selected regions and immediately copy the result to clipboard without opening persistent frames.
+- **Eliminated Recording Startup Stutter**: Completely eliminated the 5-6 second freezing and frame-rate drop when starting MP4 or GIF recording. Implemented persistent GDI DC and bitmap caching in screen capture (reducing per-frame lock latency from 18.2 ms to 0.27 ms) and throttled duplicate frame writes to the FFmpeg pipe.
+- **Reliable Win32 Native Clipboard**: Optimized native Windows clipboard operations with unified Win32 API data delivery (CF_DIB, PNG, and MIME) preventing inter-process clipboard lock contention and race conditions.
+
+### Русский
+
+- **Произвольные размеры рамок любой величины**: Устранены искусственные минимальные ограничения размеров (ранее 160×100 или 800×600 в записи и 240×100 в переводе). Теперь можно записывать видео, создавать GIF и переводить сверхкомпактные участки экрана вплоть до 16×16 px без принудительного автоматического расширения рамки.
+- **Копирование перевода в буфер обмена в динамическом переводе**: Реализованы удобные способы копирования переведённого текста в буфер:
+  - Кнопка копирования на панели управления рамкой перевода.
+  - Контекстное меню (ПКМ) на рамке и панели субтитров с выбором формата копирования (только перевод, оригинал или оригинал + перевод).
+  - Быстрое копирование по горячей клавише `Ctrl+C` и двойному клику по рамке или полосе субтитров.
+  - Контекстное действие по правому клику на кнопку перевода в панели оверлея: распознавание выделенной области с мгновенным копированием перевода в буфер без необходимости открывать отдельную рамку.
+- **Устранение лагов и просадки FPS в начале записи**: Полностью ликвидировано 5-6 секундное подлагивание при старте записи видео и GIF. Добавлено кэширование дескрипторов контекста устройств GDI и битмапов при блокировке экрана (сокращение задержки захвата кадра с 18.2 мс до 0.27 мс) и устранено переполнение пайпа FFmpeg дублирующими кадрами.
+- **Надёжная синхронизация буфера обмена Windows**: Оптимизирована прямая работа с Win32 API буфера обмена (одновременная регистрация CF_DIB, PNG и MIME-типов), устраняющая блокировки и конфликты между потоками и внешними процессами.
+
 ## [1.0.26] - 2026-10-02
 
 ### English

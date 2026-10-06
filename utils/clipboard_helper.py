@@ -198,11 +198,10 @@ def copy_images_to_clipboard(images: list[QImage], fmt: str = "png") -> bool:
 
     if sys.platform == "win32":
         try:
-            ok = _set_images_win32(valid_images, fmt)
-            if ok:
+            if _set_images_win32(valid_images, fmt):
                 return True
         except Exception as e:
-            print(f"[ClipboardHelper] Win32 copy error, falling back to Qt: {e}")
+            print(f"[ClipboardHelper] Win32 copy error: {e}")
 
     return _set_images_qt(valid_images, fmt)
 

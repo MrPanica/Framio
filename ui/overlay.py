@@ -263,6 +263,7 @@ class OverlayWindow(QWidget):
         self.bottom_toolbar.copy_clicked.connect(self.copy_screenshot)
         self.bottom_toolbar.copy_text_clicked.connect(self.copy_ocr_text)
         self.bottom_toolbar.live_translate_clicked.connect(self.open_translation_frame)
+        self.bottom_toolbar.translate_and_copy_clicked.connect(lambda: self.translate_and_copy_text(all_regions=False))
         self.bottom_toolbar.scrolling_screenshot_requested.connect(self.start_scrolling_screenshot)
         self.bottom_toolbar.search_image_requested.connect(self.search_image)
         self.bottom_toolbar.record_video_started.connect(lambda p: self.start_recording("video", p))
@@ -283,6 +284,7 @@ class OverlayWindow(QWidget):
         self.region_header.copy_clicked.connect(lambda fmt: self.copy_screenshot(fmt, all_regions=True))
         self.region_header.copy_text_clicked.connect(lambda lang: self.copy_ocr_text(lang, all_regions=True))
         self.region_header.live_translate_clicked.connect(self.open_translation_frame)
+        self.region_header.translate_and_copy_clicked.connect(lambda: self.translate_and_copy_text(all_regions=True))
         self.region_header.record_video_started.connect(lambda p: self.start_recording("video", p, all_regions=True))
         self.region_header.record_gif_started.connect(lambda p: self.start_recording("gif", p, all_regions=True))
         self.region_header.mass_filter_selected.connect(self._on_mass_filter_changed)
@@ -819,6 +821,8 @@ class OverlayWindow(QWidget):
             self.copy_screenshot("standard", all_regions=True)
         elif action == "copy_text":
             self.copy_ocr_text("auto", all_regions=True)
+        elif action == "translate_copy":
+            self.translate_and_copy_text(all_regions=True)
         elif action == "video":
             self.start_recording("video", all_regions=True)
         elif action == "gif":
@@ -5121,6 +5125,84 @@ class OverlayWindow(QWidget):
                     QSystemTrayIcon.MessageIcon.Warning,
                     3500,
                     icon_name="scan_text"
+                )
+            except Exception:
+                pass
+
+        if preserve_selection:
+            self._restore_single_recording_overlay_after_action()
+        else:
+            self.close_overlay()
+
+    def translate_and_copy_text(self, all_regions: bool = False):
+        """
+        Извлекает текст из выбранных зон с помощью OCR, переводит его на русский язык
+        и моментально помещает переведённый текст в буфер обмена.
+        """
+        preserve_selection = self._should_preserve_selection_after_single_region_action(all_regions)
+        if not preserve_selection:
+            self.setWindowOpacity(0.0)
+            self._hide_toolbars()
+            self.badge.hide()
+            self.hide()
+            QApplication.processEvents()
+
+        images = self.get_cropped_images(all_regions=all_regions)
+        if not preserve_selection:
+            self.clear_regions()
+            self._clear_interactive_selection()
+
+        if not images:
+            if preserve_selection:
+                self._restore_single_recording_overlay_after_action()
+            else:
+                self.close_overlay()
+            return
+
+        from utils.ocr_helper import extract_text_from_image
+        from utils.translator import translate_text
+
+        extracted_translated = []
+        for index, img in enumerate(images, start=1):
+            text, _ = extract_text_from_image(img, lang="auto")
+            if text and text.strip():
+                translated = translate_text(text.strip(), source_lang="auto", target_lang="ru")
+                if translated and translated.strip():
+                    if len(images) > 1:
+                        extracted_translated.append(f"[{tr('region_zone_badge', 'Зона {index}', index=index)}]\n{translated.strip()}")
+                    else:
+                        extracted_translated.append(translated.strip())
+
+        full_translation = "\n\n".join(extracted_translated).strip()
+
+        if full_translation:
+            QApplication.clipboard().setText(full_translation)
+
+            preview = full_translation[:120].replace("\n", " ").strip()
+            if len(full_translation) > 120:
+                preview += "..."
+
+            try:
+                thumb = QPixmap.fromImage(images[0]) if images else None
+                self._notify(
+                    tr("notif_trans_copied_title", "Перевод скопирован в буфер обмена"),
+                    preview,
+                    QSystemTrayIcon.MessageIcon.Information,
+                    3500,
+                    thumbnail_pixmap=thumb,
+                    copy_data=full_translation,
+                    icon_name="translate"
+                )
+            except Exception as e:
+                print(f"[Overlay] Translation notify error: {e}")
+        else:
+            try:
+                self._notify(
+                    tr("notif_ocr_no_text_title", "Текст не найден"),
+                    tr("notif_trans_no_text_body", "На выбранной области изображения текст для перевода не обнаружен."),
+                    QSystemTrayIcon.MessageIcon.Warning,
+                    3500,
+                    icon_name="translate"
                 )
             except Exception:
                 pass

@@ -365,20 +365,23 @@ class RecordingFrameWindow(QWidget):
 
         screen_geo = QApplication.primaryScreen().geometry()
 
+        min_limit_w = 160 if self.capture_mask else 16
+        min_limit_h = 100 if self.capture_mask else 16
+
         if self.is_fullscreen:
             self.inner_x = screen_geo.left()
             self.inner_y = screen_geo.top()
             self.inner_w = screen_geo.width()
             self.inner_h = screen_geo.height()
-        elif rect is None or rect.width() < 32 or rect.height() < 32:
+        elif rect is None or rect.width() < 16 or rect.height() < 16:
             init_w, init_h = 800, 600
             init_x = screen_geo.left() + (screen_geo.width() - init_w) // 2
             init_y = screen_geo.top() + (screen_geo.height() - init_h) // 2
             min_top = screen_geo.top() + BORDER_THICKNESS
             self.inner_x = max(screen_geo.left() + BORDER_THICKNESS, min(init_x, screen_geo.right() - init_w - BORDER_THICKNESS))
             self.inner_y = max(min_top, min(init_y, screen_geo.bottom() - init_h - BORDER_THICKNESS))
-            self.inner_w = max(160, min(init_w, screen_geo.width() - 2 * BORDER_THICKNESS))
-            self.inner_h = max(100, min(init_h, screen_geo.height() - 2 * BORDER_THICKNESS - HEADER_HEIGHT))
+            self.inner_w = max(min_limit_w, min(init_w, screen_geo.width() - 2 * BORDER_THICKNESS))
+            self.inner_h = max(min_limit_h, min(init_h, screen_geo.height() - 2 * BORDER_THICKNESS - HEADER_HEIGHT))
         else:
             init_x = int(rect.x())
             init_y = int(rect.y())
@@ -387,8 +390,8 @@ class RecordingFrameWindow(QWidget):
             min_top = screen_geo.top() + BORDER_THICKNESS
             self.inner_x = max(screen_geo.left() + BORDER_THICKNESS, min(init_x, screen_geo.right() - init_w - BORDER_THICKNESS))
             self.inner_y = max(min_top, min(init_y, screen_geo.bottom() - init_h - BORDER_THICKNESS))
-            self.inner_w = max(160, min(init_w, screen_geo.width() - 2 * BORDER_THICKNESS))
-            self.inner_h = max(100, min(init_h, screen_geo.height() - 2 * BORDER_THICKNESS - HEADER_HEIGHT))
+            self.inner_w = max(min_limit_w, min(init_w, screen_geo.width() - 2 * BORDER_THICKNESS))
+            self.inner_h = max(min_limit_h, min(init_h, screen_geo.height() - 2 * BORDER_THICKNESS - HEADER_HEIGHT))
 
         # Маска хранится в локальных координатах исходной зоны. Это нужно
         # для того, чтобы при изменении размера окна рамка и кадр использовали
@@ -1173,10 +1176,13 @@ class RecordingFrameWindow(QWidget):
         """Адаптирует элементы шапки под узкие размеры рамки записи, чтобы Stop и Cancel всегда оставались доступны."""
         if not hasattr(self, "header_frame") or self.header_frame is None:
             return
+        if getattr(self, "header_collapsed", False):
+            return
 
         is_narrow = width < 500
         is_very_narrow = width < 380
         is_tiny = width < 300
+        is_micro = width < 120
 
         if hasattr(self, "lbl_size") and self.lbl_size is not None:
             self.lbl_size.setVisible(not is_narrow)
@@ -1194,9 +1200,13 @@ class RecordingFrameWindow(QWidget):
             self.btn_filter.setVisible(not is_tiny)
 
         if hasattr(self, "lbl_mode") and self.lbl_mode is not None:
-            if is_very_narrow:
+            if is_micro:
+                self.lbl_mode.setVisible(False)
+            elif is_very_narrow:
+                self.lbl_mode.setVisible(True)
                 self.lbl_mode.setText("⋮⋮")
             else:
+                self.lbl_mode.setVisible(True)
                 mode_text = "REC MP4" if self.mode == "video" else "REC GIF"
                 if self.region_index is not None and self.region_count > 1:
                     mode_text += f" · {self.region_index}"
@@ -1216,7 +1226,7 @@ class RecordingFrameWindow(QWidget):
             self._sync_rec_toolbar_position()
             return
 
-        win_w = self.inner_w + 2 * BORDER_THICKNESS
+        win_w = max(70, self.inner_w + 2 * BORDER_THICKNESS)
         header_w = win_w
         header_x = 0
         header_y = self.inner_h + BORDER_THICKNESS if self.header_on_bottom else 0
@@ -1251,7 +1261,7 @@ class RecordingFrameWindow(QWidget):
             win_y = self.inner_y - BORDER_THICKNESS
             if not self.header_on_bottom:
                 win_y -= head_h
-            win_w = self.inner_w + 2 * BORDER_THICKNESS
+            win_w = max(70, self.inner_w + 2 * BORDER_THICKNESS)
             win_h = self.inner_h + 2 * BORDER_THICKNESS + head_h
 
             self.setGeometry(win_x, win_y, win_w, win_h)
@@ -1947,17 +1957,17 @@ class RecordingFrameWindow(QWidget):
             # Иначе горизонтальное изменение слева меняло только визуальную
             # рамку, но не фактическую ширину области записи.
             if self.active_handle in (1, 7, 8):
-                new_w = max(160, self.start_inner_w - dx)
+                new_w = max(16, self.start_inner_w - dx)
                 self.inner_x = self.start_inner_x + (self.start_inner_w - new_w)
                 self.inner_w = new_w
             if self.active_handle in (3, 4, 5):
-                self.inner_w = max(160, self.start_inner_w + dx)
+                self.inner_w = max(16, self.start_inner_w + dx)
             if self.active_handle in (1, 2, 3):
-                new_h = max(100, self.start_inner_h - dy)
+                new_h = max(16, self.start_inner_h - dy)
                 self.inner_y = max(min_top, self.start_inner_y + (self.start_inner_h - new_h))
                 self.inner_h = new_h
             if self.active_handle in (5, 6, 7):
-                self.inner_h = max(100, self.start_inner_h + dy)
+                self.inner_h = max(16, self.start_inner_h + dy)
 
             self._sync_geometry()
             return

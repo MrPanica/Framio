@@ -1473,6 +1473,28 @@ class TranslationHudWindow(QWidget):
             return
         super().mouseReleaseEvent(event)
 
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton and self.frame_window:
+            self.frame_window._copy_translation_text()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def contextMenuEvent(self, event):
+        if self.frame_window:
+            self.frame_window._show_frame_context_menu(event.globalPos() if hasattr(event, "globalPos") else QCursor.pos())
+            event.accept()
+            return
+        super().contextMenuEvent(event)
+
+    def keyPressEvent(self, event):
+        if (event.key() == Qt.Key.Key_C and (event.modifiers() & Qt.KeyboardModifier.ControlModifier)) or event.matches(QKeySequence.StandardKey.Copy):
+            if self.frame_window:
+                self.frame_window._copy_translation_text()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
     def showEvent(self, event):
         super().showEvent(event)
         if sys.platform == "win32":
@@ -1816,9 +1838,11 @@ class TranslationControlBar(QWidget):
         self.btn_copy = QPushButton()
         self.btn_copy.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.btn_copy.setIcon(create_themed_icon("copy", is_dark=True, size=13))
-        self.btn_copy.setToolTip(tr("trans_copy_menu_tooltip", "Копировать"))
+        self.btn_copy.setToolTip(tr("trans_copy_menu_tooltip", "Копировать перевод в буфер [Ctrl+C] (ПКМ — варианты)"))
         self.btn_copy.setFixedSize(26, 24)
-        self.btn_copy.clicked.connect(self._show_copy_menu)
+        self.btn_copy.clicked.connect(self._on_copy_clicked)
+        self.btn_copy.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.btn_copy.customContextMenuRequested.connect(lambda pos: self._show_copy_menu())
         inner_layout.addWidget(self.btn_copy)
 
         # 9. Кнопка «Глазик» — переход в скрытый режим
@@ -1996,6 +2020,10 @@ class TranslationControlBar(QWidget):
         menu = create_stealth_menu(self)
         self._populate_pin_menu(menu)
         self._exec_menu_safe(menu, self.btn_pin)
+
+    def _on_copy_clicked(self):
+        if self.frame_window:
+            self.frame_window._copy_translation_text()
 
     def _show_copy_menu(self):
         menu = create_stealth_menu(self)
@@ -2293,11 +2321,11 @@ class TranslationFrameWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
-        self.setMinimumSize(240, 100)
+        self.setMinimumSize(20, 20)
 
         if initial_rect is not None and initial_rect.isValid() and not initial_rect.isEmpty():
-            w = max(240, initial_rect.width())
-            h = max(100, initial_rect.height())
+            w = max(20, initial_rect.width())
+            h = max(20, initial_rect.height())
             x = initial_rect.x()
             y = initial_rect.y()
             screen = QApplication.screenAt(initial_rect.center())
@@ -2792,6 +2820,12 @@ class TranslationFrameWindow(QWidget):
     def _copy_translation_text(self):
         """Копирует распознанный переведенный текст в буфер обмена."""
         txt = self.translated_text.strip()
+        if not txt and getattr(self, "translated_blocks", None):
+            txt = "\n".join(
+                b.get("text", "").strip()
+                for b in self.translated_blocks
+                if b.get("text", "").strip()
+            ).strip()
         if txt:
             QApplication.clipboard().setText(txt)
             show_stealth_tooltip(QCursor.pos(), tr("trans_copied", "Перевод скопирован в буфер!"), self)
@@ -2931,7 +2965,70 @@ class TranslationFrameWindow(QWidget):
             self.force_refresh_translation()
             event.accept()
             return
+        if (event.key() == Qt.Key.Key_C and (event.modifiers() & Qt.KeyboardModifier.ControlModifier)) or event.matches(QKeySequence.StandardKey.Copy):
+            self._copy_translation_text()
+            event.accept()
+            return
         super().keyPressEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton and not self.passthrough_enabled and not self.is_locked_stealth:
+            self._copy_translation_text()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def contextMenuEvent(self, event):
+        if self.passthrough_enabled or self.is_locked_stealth:
+            return
+        self._show_frame_context_menu(event.globalPos() if hasattr(event, "globalPos") else QCursor.pos())
+
+    def _show_frame_context_menu(self, pos: QPoint):
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #1e1e24;
+                color: #e4e4e7;
+                border: 1px solid #3f3f46;
+                border-radius: 6px;
+                padding: 4px;
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 12px;
+            }
+            QMenu::item {
+                padding: 6px 24px 6px 12px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #3b82f6;
+                color: #ffffff;
+            }
+        """)
+        act_copy = menu.addAction(create_themed_icon("copy", is_dark=True, size=14), tr("trans_copy_text", "Копировать текст перевода [Ctrl+C]"))
+        act_copy.triggered.connect(self._copy_translation_text)
+
+        act_img = menu.addAction(create_themed_icon("crop", is_dark=True, size=14), tr("trans_copy_image", "Копировать изображение с переводом"))
+        act_img.triggered.connect(self._copy_translation_image)
+
+        menu.addSeparator()
+        act_refresh = menu.addAction(create_themed_icon("refresh", is_dark=True, size=14), tr("trans_btn_refresh", "Принудительно обновить [F5]"))
+        act_refresh.triggered.connect(self.force_refresh_translation)
+
+        menu.addSeparator()
+        act_close = menu.addAction(create_themed_icon("close", is_dark=True, size=14), tr("trans_close_btn", "Закрыть рамку перевода [Esc]"))
+        act_close.triggered.connect(self.close)
+
+        was_paused = self.is_paused
+        if hasattr(self, "worker") and self.worker:
+            self.worker.set_paused(True)
+        self._menu_open = True
+        try:
+            menu.exec(pos)
+        finally:
+            self._menu_open = False
+            self._menu_closed_time = time.time()
+            if hasattr(self, "worker") and self.worker and not was_paused:
+                self.worker.set_paused(False)
 
     @pyqtSlot(str, str, list)
     def _on_translation_ready(self, original: str, translated: str, blocks: list):
@@ -3060,7 +3157,7 @@ class TranslationFrameWindow(QWidget):
         if self.is_resizing:
             delta = event.globalPosition().toPoint() - self.drag_start_pos
             rect = QRect(self.initial_geometry)
-            min_w, min_h = 240, 100
+            min_w, min_h = 20, 20
 
             if self.active_handle in (self.HANDLE_TL, self.HANDLE_L, self.HANDLE_BL):
                 new_w = max(min_w, rect.width() - delta.x())
