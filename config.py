@@ -138,6 +138,9 @@ class AppConfig:
         self.save_dir_screenshots = normalize_portable_path(self.save_dir_screenshots, "Screenshots", self.is_portable)
         self.save_dir_videos = normalize_portable_path(self.save_dir_videos, "Videos", self.is_portable)
         self.save_dir_gifs = normalize_portable_path(self.save_dir_gifs, "GIFs", self.is_portable)
+        if self.hotkey_live_translator and self.hotkey_live_translator.replace(" ", "").lower() == "ctrl+shift+t":
+            self.hotkey_live_translator = ""
+
 
     @property
     def screenshots_path(self) -> Path:
@@ -242,7 +245,11 @@ class ConfigManager:
                 with open(self.config_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     self.config = AppConfig(**{k: v for k, v in data.items() if k in AppConfig.__dataclass_fields__})
-                
+                    raw_trans = data.get("hotkey_live_translator", "")
+                    if raw_trans and raw_trans.replace(" ", "").lower() == "ctrl+shift+t":
+                        self.config.hotkey_live_translator = ""
+                        needs_save = True
+
                 # Проверяем, изменились ли пути при переносе программы
                 if self.config.is_portable:
                     new_screens = normalize_portable_path(self.config.save_dir_screenshots, "Screenshots", True)
